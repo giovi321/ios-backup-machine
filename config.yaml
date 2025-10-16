@@ -1,0 +1,16 @@
+# /etc/iosbackup/config.yaml
+backup_dir: "/media/iosbackup/"
+marker_file: ".foldermarker"
+disk_device: "/dev/mmcblk1"
+orientation: "landscape_right"
+owner_lines:
+  - "Property of Giovanni Crapelli"
+  - "+39  3371331193  -  write@giovannicrapelli.com"
+  - "Reward if found $$$"
+error_codes:
+  "100": "Snapshot failure at path"
+  "103": "Backup directory is wrong"
+  "105": "Insufficient free disk space on backup drive"
+  "106": "No space left for the backup"
+  "208": "Wrong iPhone password"
+  "-4":  "iPhone disconnected during backup"
