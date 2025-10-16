@@ -43,23 +43,21 @@ If the device is unplugged mid-backup, the process stops safely and the screen s
 ## Hardware
 
 | Component | Purpose | Rationale |
-||-|--|
+|------------|----------|-----------|
 | **Radxa Zero 3W (8GB eMMC)** | Main controller | eMMC is faster and more reliable than a microSD |
 | **Waveshare 2.13" e-Paper HAT V4 (250×122)** | Status display | Persistent output, readable, low power |
 | **PiSugar 3** | UPS and safe shutdown | Prevents corruption on power loss |
 | **MicroSD card** | Backup storage | Dedicated storage separate from OS |
 
 
-
 ## Software
 
 | Component | Role |
-|||
+|------------|------|
 | **Armbian (Trixie)** | Base OS |
 | **Python 3.13** | Runtime for backup and display scripts |
 | **libimobiledevice** | iPhone communication (`idevicebackup2`, `idevicepair`) |
 | **udev + systemd** | Automation and event handling |
-
 
 
 ## Directory layout
