@@ -1,0 +1,17 @@
+[Unit]
+Description=Show ownership message on e-ink display
+After=multi-user.target
+
+[Service]
+Type=oneshot
+User=root
+Environment="EPD_GPIO_CHIP=/dev/gpiochip3"
+Environment="EPD_PIN_DC=17"
+Environment="EPD_PIN_RST=1"
+Environment="EPD_PIN_BUSY=10"
+Environment="EPD_SPI_DEV=/dev/spidev3.0"
+Environment="EPD_SPI_HZ=2000000"
+ExecStart=/root/iosbackupmachine/bin/python3 /root/boot-message.py
+
+[Install]
+WantedBy=multi-user.target
