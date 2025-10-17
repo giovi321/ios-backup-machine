@@ -130,11 +130,11 @@ error_codes:
 Follow the [Radxa Zero 3W official guide](https://docs.radxa.com/en/zero/zero3/low-level-dev/install-os-on-emmc).  
 In short:
 ```bash
-sudo apt install rkdeveloptool
-sudo rkdeveloptool db rk356x_spl_loader_ddr1056_v1.12.109_no_check_todly.bin
+apt install rkdeveloptool
+rkdeveloptool db rk356x_spl_loader_ddr1056_v1.12.109_no_check_todly.bin
 xz -d Armbian_community_25.11.0-trunk.334_Radxa-zero3_trixie_vendor_6.1.115_minimal.img.xz
-sudo rkdeveloptool wl 0 Armbian_community_25.11.0-trunk.334_Radxa-zero3_trixie_vendor_6.1.115_minimal.img
-sudo rkdeveloptool rd
+rkdeveloptool wl 0 Armbian_community_25.11.0-trunk.334_Radxa-zero3_trixie_vendor_6.1.115_minimal.img
+rkdeveloptool rd
 ```
 
 ### 2. Enable I2C and SPI
@@ -147,8 +147,8 @@ Reboot.
 
 ### 3. Install dependencies
 ```bash
-sudo apt update
-sudo apt install -y python3 python3-venv python3-pil python3-periphery   libimobiledevice6 libimobiledevice-utils usbmuxd
+apt update
+apt install -y python3 python3-venv python3-pil python3-periphery   libimobiledevice6 libimobiledevice-utils usbmuxd
 ```
 
 ### 4. Create Python virtual environment
@@ -176,9 +176,9 @@ ln -s /root/e-Paper/RaspberryPi_JetsonNano/python/lib/waveshare_epd   /root/iosb
 ```bash
 cp ios-backup-machine/*.rules /etc/udev/rules.d/
 cp ios-backup-machine/*.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable boot-message
-sudo udevadm control --reload-rules
+systemctl daemon-reload
+systemctl enable boot-message
+udevadm control --reload-rules
 ```
 
 ### 7. Prepare backup storage
@@ -197,8 +197,28 @@ cp /root/ios-backup-machine/[pisugar]config.json /etc/pisugar/config.json
 ```
 Set the time of the RTC based on the current time of the Radxa Zero:
 ```bash
-sudo apt install netcat-traditional
+apt install netcat-traditional
 echo "rtc_pi2rtc" | nc -q 1 127.0.0.1 8423
+```
+## First run
+The first run must be done using idevicebackup2 "stand alone" because you need to set the backup encryption passphrase.
+Disable the udev rule `90-iosbackupmachine.rules` to prevent the program from starting
+```
+mv /etc/udev/rules.d/90-iosbackupmachine.rules /etc/udev/rules.d/90-iosbackupmachine.rules.disabled
+udevadm control --reload-rules
+```
+plug your iOS device and run `idevicebackup2 backup --full /media/iosbackup`
+It is going to take quite a lot of time, depending on the memory and memory usage of your iOS device.
+Now you can re-enable the udev rule to autostart the backup when you plug the iPhone:
+```
+mv /etc/udev/rules.d/90-iosbackupmachine.rules.disabled /etc/udev/rules.d/90-iosbackupmachine.rules
+udevadm control --reload-rules
+```
+
+## Restoring a backup
+To restore a backup simply plug your iOS device in a computer, plug the microSD card in the same computer and run:
+```
+idevicebackup2 restore --password <your backup password> /media/sdcard/iosbackup/
 ```
 
 ## Logs
