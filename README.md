@@ -16,9 +16,7 @@
 When you plug in your iPhone, the system automatically runs an encrypted `idevicebackup2` backup to local storage, shows progress and messages on an e-ink display, and logs all activity locally — **no iCloud, no iTunes, you own your data.**
 
 ![Normal_operation](https://github.com/user-attachments/assets/a126f7bf-9173-4a85-b462-f8181bd77aae)
-![IMG_6877](https://github.com/user-attachments/assets/8bebb288-53ca-482d-a418-e910bc9b130c) ![IMG_6878](https://github.com/user-attachments/assets/1d56cab9-2bf2-4d89-b602-baab1d78901d)
-
-
+![Image1](https://github.com/user-attachments/assets/ad25ccd2-f37a-4c2c-8e6d-7c4e2cc3e813) ![Image2](https://github.com/user-attachments/assets/3cb907d4-79ae-432c-adbc-7edcc4c48e93)
 
 ## Objective
 A **self-contained iOS backup appliance** with no reliance on Apple services or computers.  
