@@ -207,7 +207,11 @@ Disable the udev rule `90-iosbackupmachine.rules` to prevent the program from st
 mv /etc/udev/rules.d/90-iosbackupmachine.rules /etc/udev/rules.d/90-iosbackupmachine.rules.disabled
 udevadm control --reload-rules
 ```
-plug your iOS device and run `idevicebackup2 backup --full /media/iosbackup`
+plug your iOS device and run
+```
+idevicebackup2 encryption on /media/iosbackup
+idevicebackup2 backup --full /media/iosbackup
+```
 It is going to take quite a lot of time, depending on the memory and memory usage of your iOS device.
 Now you can re-enable the udev rule to autostart the backup when you plug the iPhone:
 ```
