@@ -1,0 +1,10 @@
+verbosity=1
+bootlogo=false
+console=both
+extraargs=cma=256M
+overlay_prefix=rk35xx
+fdtfile=rockchip/rk3566-radxa-zero3.dtb
+rootdev=UUID=76eee137-2368-4154-afee-f633053b654f
+rootfstype=ext4
+overlays=rk3568-spi3-m1-cs0-spidev rk3568-i2c3-m0
+usbstoragequirks=0x2537:0x1066:u,0x2537:0x1068:u

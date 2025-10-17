@@ -1,0 +1,10 @@
+[Unit]
+Description=Show unplug notice and stop backup
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/root
+ExecStart=/root/unplug-notify.sh
+StandardOutput=append:/var/log/iosbackup/autostart.log
+StandardError=append:/var/log/iosbackup/autostart.log
