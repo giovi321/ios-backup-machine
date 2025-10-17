@@ -30,7 +30,9 @@ All backups stay local on the microSD card and can be restored anytime using too
 ## How it works
 
 ### Normal operation
-- Plug in your iPhone → the backup starts automatically.  
+- Turn on the iOS Backup Machine (press once the UPS's power button and then keep pressed until all LEDs light up)
+- Wait for the boot to complete (you will see a screen refresh)
+- Plug in your iPhone → the backup starts automatically.
 - The display:
   - prompts to unlock the phone if needed
   - shows encryption status
