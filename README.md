@@ -239,6 +239,7 @@ backup-YYYYMMDD-HHMMSS.log
 - [ ] Add MQTT reporting of backup
 - [ ] Add partial refresh of the display (not sure if it is supported)
 - [ ] Filter iOS devices connected (i.e., start the backup only when a certain iPhone is connected)
+- [ ] Add web interface?
 
 ## License
 MIT License  
