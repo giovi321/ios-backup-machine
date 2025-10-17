@@ -101,12 +101,12 @@ If the device is unplugged mid-backup, the process stops safely and the screen s
 Edit `/root/config.yaml`:
 
 ```yaml
-backup_dir: /media/iosbackup/
-marker_file: .foldermarker
-disk_device: /dev/mmcblk1
-orientation: landscape_right
+backup_dir: /media/iosbackup/ # where the backup is saved
+marker_file: .foldermarker    # file that tells the script that the microSD card was mounted correctly. if this file is missing, then the microSD card is not mounted and the backup will not run.
+disk_device: /dev/mmcblk1     # name of the microSD card node. it is needed to measure the space utilization at the end of the backup
+orientation: landscape_right  # you can orient the screen the other way (landscape_left)
 
-owner_lines:
+owner_lines:                  # You can write whatever you wans as long as it fits in the screen (there are no automatic line breaks)
   - "Property of Titius Caius"
   - "+33 123 456 7890 - write@titiuscaius.com"
   - "Reward if found €€€"
