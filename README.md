@@ -212,6 +212,7 @@ backup-YYYYMMDD-HHMMSS.log
 - [ ] Use iPhone hotspot over USB to give the iOS backup machine internet connectivity
 - [ ] Add MQTT reporting of backup
 - [ ] Add partial refresh of the display (not sure if it is supported)
+- [ ] Filter iOS devices connected (i.e., start the backup only when a certain iPhone is connected)
 
 ## License
 MIT License  
