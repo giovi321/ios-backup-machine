@@ -1,13 +1,13 @@
-[![License](https://img.shields.io/github/license/giovi321/ios-backup-machine)(LICENSE)]
+[![License](https://img.shields.io/github/license/giovi321/ios-backup-machine)](LICENSE)
 [![Python 3.13](https://img.shields.io/badge/Python-3.13-blue?logo=python&logoColor=white)](https://www.python.org/downloads/release/python-3130/)
-[![Armbian](https://img.shields.io/badge/OS-Armbian-orange?logo=armbian)]([https://www.armbian.com](https://www.armbian.com/radxa-zero-3/))
-[![Offline](https://img.shields.io/badge/network-offline--only-critical.svg)]
+[![Armbian](https://img.shields.io/badge/OS-Armbian-orange?logo=armbian)](https://www.armbian.com/radxa-zero-3/)
+![Offline](https://img.shields.io/badge/network-offline--only-critical.svg)
 
-[![Hardware](https://img.shields.io/badge/Board-Radxa%20Zero%203W-lightgrey.svg)(https://radxa.com/products/zeros/zero3w/)]
-[![Display](https://img.shields.io/badge/Display-Waveshare%202.13%E2%80%9D%20ePaper-lightgrey.svg)(https://github.com/waveshareteam/e-Paper)]
-[![UPS](https://img.shields.io/badge/UPS-PiSugar%203-green.svg)(https://github.com/PiSugar/)]
+[![Hardware](https://img.shields.io/badge/Board-Radxa%20Zero%203W-lightgrey.svg)](https://radxa.com/products/zeros/zero3w/)
+[![Display](https://img.shields.io/badge/Display-Waveshare%202.13%E2%80%9D%20ePaper-lightgrey.svg)](https://github.com/waveshareteam/e-Paper)
+[![UPS](https://img.shields.io/badge/UPS-PiSugar%203-green.svg)](https://github.com/PiSugar)
 
-[![Issues](https://img.shields.io/github/issues/giovi321/ios-backup-machine)](https://github.com/giovi321/ios-backup-machine/issues)]
+[![Issues](https://img.shields.io/github/issues/giovi321/ios-backup-machine)](https://github.com/giovi321/ios-backup-machine/issues)
 
 
 
