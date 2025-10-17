@@ -1,0 +1,16 @@
+# /root/config.yaml
+backup_dir: /media/iosbackup/
+marker_file: .foldermarker
+disk_device: /dev/mmcblk1
+orientation: landscape_right
+owner_lines:
+  - "Property of Titius Caius"
+  - "+33 123 456 7890 - write@titiuscaius.com"
+  - "Reward if found €€€"
+error_codes:
+  "100": "Snapshot failure at path"
+  "103": "Backup directory is wrong"
+  "105": "Insufficient free disk space on backup drive"
+  "106": "No space left for the backup"
+  "208": "Wrong iPhone password"
+  "-4":  "iPhone disconnected during backup"
