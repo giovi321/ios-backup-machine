@@ -208,6 +208,11 @@ Each run creates a file:
 backup-YYYYMMDD-HHMMSS.log
 ```
 
+## New features to be implemented
+- [ ] Use iPhone hotspot over USB to give the iOS backup machine internet connectivity
+- [ ] Add MQTT reporting of backup
+- [ ] Add partial refresh of the display (not sure if it is supported)
+
 ## License
 MIT License  
 Includes code adapted from Waveshare’s [e-Paper library](https://github.com/waveshareteam/e-Paper).
