@@ -17,7 +17,7 @@ When you plug in your iPhone, the system automatically runs an encrypted `idevic
 
 ![Normal_operation](https://github.com/user-attachments/assets/a126f7bf-9173-4a85-b462-f8181bd77aae)
 
-![Image1](https://github.com/user-attachments/assets/7157f609-55a1-4e36-8f4f-1f1a2a04d888) ![Image2](https://github.com/user-attachments/assets/d473ad1f-d80a-4214-8b85-8363d4b1f9a8)
+![Image2](https://github.com/user-attachments/assets/d473ad1f-d80a-4214-8b85-8363d4b1f9a8)
 
 
 ## Objective
