@@ -96,7 +96,6 @@ If the device is unplugged mid-backup, the process stops safely and the screen s
 ├── iosbackupmachine.py              # Main program
 ├── iosbackupmachine.service         # Systemd service triggered by udev
 ├── [pisugar]config.json             # UPS configuration template
-├── pisugar-power-manager.sh         # UPS installation helper
 ├── unplug-notify.py                 # Handle unplug events
 ├── unplug-notify.service            # Service triggered by unplug rule
 └── unplug-notify.sh                 # Script to call unplug-notify.py
