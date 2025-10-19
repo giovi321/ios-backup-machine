@@ -1,3 +1,5 @@
-ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="05ac", ATTR{idProduct}=="12a8", \
-  ENV{ID_SERIAL_SHORT}!="00008110-001A0D942EEA401E", TAG+="systemd", \
-  ENV{SYSTEMD_WANTS}="iosbackup@%E{ID_SERIAL_SHORT}.service"
+ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="05ac", ATTR{idProduct}=="12a8", TAG+="systemd", ENV{SYSTEMD_WANTS}="iosbackupmachine.service"
+ACTION=="remove", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", \
+  ENV{PRODUCT}=="5ac/*", \
+  RUN+="/usr/bin/logger -t UDEVTEST 'unplug rule fired'", \
+  RUN+="/bin/systemctl --no-block start unplug-notify.service"

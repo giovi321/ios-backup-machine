@@ -8,3 +8,10 @@ WorkingDirectory=/root
 ExecStart=/root/unplug-notify.sh
 StandardOutput=append:/var/log/iosbackup/autostart.log
 StandardError=append:/var/log/iosbackup/autostart.log
+Environment=EPD_GPIO_CHIP=/dev/gpiochip3
+Environment=EPD_PIN_DC=17
+Environment=EPD_PIN_RST=1
+Environment=EPD_PIN_BUSY=10
+Environment=EPD_SPI_DEV=/dev/spidev3.0
+Environment=EPD_SPI_HZ=2000000
+Environment=IOSBACKUP_CONFIG=/root/config.yaml
