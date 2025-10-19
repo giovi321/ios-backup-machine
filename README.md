@@ -86,7 +86,7 @@ If the device is unplugged mid-backup, the process stops safely and the screen s
 /root/
 ├── Case ios backup machine_v8.stl   # 3D printable case
 ├── 90-iosbackupmachine.rules        # Starts backup on iPhone plug-in
-├── 91-unplug-notify.rules           # Stops backup when unplugged
+                                     # and stops it when unplugged
 ├── armbianEnv.txt                   # Overlays for SPI/I2C
 ├── boot-message.py                  # Shows owner info at boot
 ├── boot-message.service             # Systemd service for above
