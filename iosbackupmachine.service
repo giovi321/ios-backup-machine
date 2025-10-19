@@ -18,9 +18,9 @@ Environment=EPD_SPI_DEV=/dev/spidev3.0
 Environment=EPD_SPI_HZ=2000000
 Environment=IOSBACKUP_CONFIG=/root/config.yaml
 # logs
-ExecStartPre=/bin/mkdir -p /var/log/iosbackup
-StandardOutput=append:/var/log/iosbackup/autostart.log
-StandardError=append:/var/log/iosbackup/autostart.log
+ExecStartPre=/bin/mkdir -p /var/log/iosbackupmachine
+StandardOutput=append:/var/log/iosbackupmachine/autostart.log
+StandardError=append:/var/log/iosbackupmachine/autostart.log
 # behavior
 Restart=no
 KillMode=process

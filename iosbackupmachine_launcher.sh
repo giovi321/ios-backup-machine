@@ -1,5 +1,5 @@
 #!/bin/bash
-LOGFILE=/var/log/iosbackup/autostart.log
+LOGFILE=/var/log/iosbackupmachine/autostart.log
 VENV=/root/iosbackupmachine
 SCRIPT=/root/iosbackupmachine.py
 

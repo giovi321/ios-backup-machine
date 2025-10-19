@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-LOG=/var/log/iosbackup/autostart.log
+LOG=/var/log/iosbackupmachine/autostart.log
 VENV=/root/iosbackupmachine
 PY="$VENV/bin/python3"
 NOTIFY=/root/unplug-notify.py

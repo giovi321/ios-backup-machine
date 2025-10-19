@@ -6,8 +6,8 @@ Type=oneshot
 User=root
 WorkingDirectory=/root
 ExecStart=/root/unplug-notify.sh
-StandardOutput=append:/var/log/iosbackup/autostart.log
-StandardError=append:/var/log/iosbackup/autostart.log
+StandardOutput=append:/var/log/iosbackupmachine/autostart.log
+StandardError=append:/var/log/iosbackupmachine/autostart.log
 Environment=EPD_GPIO_CHIP=/dev/gpiochip3
 Environment=EPD_PIN_DC=17
 Environment=EPD_PIN_RST=1
