@@ -45,7 +45,12 @@ All backups stay local on the microSD card and can be restored anytime using too
   - displays success confirmation and timestamp  
   - shows owner info (persistent on screen even after power off or power loss)
 
+**In case you unplug the iPhone**
 If the device is unplugged mid-backup, the process stops safely and the screen shows the interruption timestamp.
+
+**Interactive functions**
+- If you push the additional button of the PiSugar UPS, it shows for 10 seconds on the e-ink
+- More to be implemented
 
 ### UPS integration
 - **Battery protection**: backup stops cleanly if battery <30%.  
@@ -88,14 +93,17 @@ If the device is unplugged mid-backup, the process stops safely and the screen s
 ├── 90-iosbackupmachine.rules        # Starts backup on iPhone plug-in
                                      # and stops it when unplugged
 ├── armbianEnv.txt                   # Overlays for SPI/I2C
-├── boot-message.py                  # Shows owner info at boot
-├── boot-message.service             # Systemd service for above
+├── owner-message.py                 # Shows owner info on the e-ink screen
+├── owner-message.service            # Systemd service for above
 ├── config.yaml                      # Main configuration
 ├── epdconfig.py                     # Display configuration
 ├── iosbackupmachine_launcher.sh     # Launch script
 ├── iosbackupmachine.py              # Main program
 ├── iosbackupmachine.service         # Systemd service triggered by udev
+├── last-backup.py                   # Shows last backup info and memory available
+├── last-backup.service              # Systemd service for above
 ├── [pisugar]config.json             # UPS configuration template
+├── shutdown.sh                      # Shows owner info on screen and turns off device
 ├── unplug-notify.py                 # Handle unplug events
 ├── unplug-notify.service            # Service triggered by unplug rule
 └── unplug-notify.sh                 # Script to call unplug-notify.py
