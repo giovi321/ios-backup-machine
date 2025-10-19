@@ -10,7 +10,7 @@ from PIL import Image, ImageDraw, ImageFont
 from waveshare_epd import epd2in13_V4, epdconfig
 
 CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/config.yaml")
-LOG_DIR = "/var/log/iosbackup"
+LOG_DIR = "/var/log/iosbackupmachine"
 IDLE_REFRESH_SEC = 4
 TITLE = "iOS Backup Machine"
 
