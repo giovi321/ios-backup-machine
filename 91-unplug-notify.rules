@@ -1,2 +1,0 @@
-# Apple iPhone removed → ask systemd to run unplug notifier
-ACTION=="remove", SUBSYSTEM=="usb", ENV{ID_VENDOR_ID}=="05ac", TAG+="systemd", ENV{SYSTEMD_WANTS}="unplug-notify.service"
