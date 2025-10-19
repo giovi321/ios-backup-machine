@@ -351,7 +351,7 @@ def run_backup(panel, logf):
 
     tee_and_parse(proc, logf, feed_parser)
     proc.wait(); rc = proc.returncode
-    ts_end = datetime.now().strftime("%Y-%m-%d %H:%M")
+    ts_end = datetime.now().strftime("%H:%M / %d %b %Y")
     if rc == 0:
         usage = get_disk_usage_pct(CFG["disk_device"])
         usage_str = f"{usage}%" if usage is not None else "n/a"
