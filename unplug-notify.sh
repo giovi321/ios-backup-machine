@@ -35,6 +35,14 @@ if [[ -n "${pids:-}" ]]; then
   kill -KILL $pids 2>/dev/null || true
 fi
 
+pids2=$(pgrep -f "idevicebackup2" || true)
+if [[ -n "${pids2:-}" ]]; then
+  echo "$(date '+%F %T') [unplug-notify] killing PIDs: $pids2" >>"$LOG"
+  kill -TERM $pids2 || true
+  sleep 0.5
+  kill -KILL $pids2 2>/dev/null || true
+fi
+
 # Release any stuck GPIO handles
 "$PY" - <<'PY' || true
 from waveshare_epd import epdconfig
