@@ -153,7 +153,7 @@ Reboot.
 ### 3. Install dependencies
 ```bash
 apt update
-apt install -y python3 python3-venv python3-pil python3-periphery   libimobiledevice6 libimobiledevice-utils usbmuxd
+apt install -y python3 python3-venv python3-pil python3-periphery libimobiledevice-1.0-6 libimobiledevice-utils usbmuxd
 ```
 
 ### 4. Create Python virtual environment
