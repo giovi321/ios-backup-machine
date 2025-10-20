@@ -204,8 +204,8 @@ Install from official script and add out config file:
 ```bash
 wget https://cdn.pisugar.com/release/pisugar-power-manager.sh
 bash pisugar-power-manager.sh -c release
-rm /etc/pisugar/config.json
-cp /root/ios-backup-machine/[pisugar]config.json /etc/pisugar/config.json
+rm /etc/pisugar-server/config.json
+cp /root/ios-backup-machine/[pisugar]config.json /etc/pisugar-server/config.json
 ```
 Set the time of the RTC based on the current time of the Radxa Zero:
 ```bash
