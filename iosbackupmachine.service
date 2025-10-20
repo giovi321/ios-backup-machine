@@ -1,7 +1,7 @@
 [Unit]
-Description=iOS Backup Machine for UDID %I
-After=network-online.target usbmuxd.service
-Wants=network-online.target
+Description=iOS Backup Machine
+After=local-fs.target usbmuxd.service
+Wants=usbmuxd.service
 
 [Service]
 Type=simple
@@ -27,5 +27,4 @@ KillMode=process
 TimeoutStopSec=5s
 
 [Install]
-WantedBy=multi-user.target
-UNIT
+WantedBy=basic.target
