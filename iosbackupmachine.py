@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import os, re, sys, time, subprocess
+import os, re, sys, time, subprocess, threading
 from datetime import datetime
 from periphery.gpio import GPIOError
 
@@ -19,7 +19,7 @@ def load_config(path):
     cfg.setdefault("marker_file", ".foldermarker")
     cfg.setdefault("disk_device", "/dev/mmcblk1")
     cfg.setdefault("orientation", "landscape_right")
-    cfg.setdefault("owner_lines", ["Property owner", "contact", "message"])
+    cfg.setdefault("owner_lines", ["Name", "telephone", "email", "message"])
     cfg.setdefault("error_codes", {})
     cfg.setdefault("env", {})
     ec = {}
@@ -33,10 +33,17 @@ CFG = load_config(CONFIG_PATH)
 for k, v in CFG.get("env", {}).items():
     os.environ[k] = str(v)
 
+CUSTOM_FONT = CFG.get("font_path")
+
 def font(sz):
-    try: return ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", sz)
-    except Exception: return ImageFont.load_default()
-F_SM, F_MD, F_LG = font(12), font(14), font(20)
+    try:
+        return ImageFont.truetype(CUSTOM_FONT, sz)
+    except Exception:
+        return ImageFont.load_default()
+
+F_SM = font(12)
+F_MD = font(12)
+F_LG = font(12)
 
 class Panel:
     def __init__(self):
@@ -59,6 +66,22 @@ class Panel:
         self._init_full(first=True)
         self.epd.Clear(0xFF)
         self._mode = "full"
+
+        self._force_partial = False
+        self._partial_count = 0
+        self._partial_reset_every = 100
+
+    def prepare_partial(self, base_img=None):
+        # set a white base if none provided, then enter partial mode
+        if base_img is None:
+            LW, LH = self._logical_size()
+            base_img = Image.new('1', (LW, LH), 255)
+            base_img = self._rotate_for_display(base_img)
+            if base_img.size != (self.pw, self.ph):
+                base_img = base_img.resize((self.pw, self.ph))
+        self._display_set_base_then_partial(base_img)
+        self._force_partial = True
+        self._partial_count = 0
 
     def _safe_init_call(self, fn):
         # Handle EBUSY by releasing lines and retrying once.
@@ -168,12 +191,23 @@ class Panel:
                 fill_w = int(max(0, min(100, percent)) * (w - 4) / 100)
                 if fill_w > 0:
                     drw.rectangle((x+2, y+2, x+2+fill_w, y+h-2), fill=0)
+
+                # centered percent label and background box
                 pct = f"{percent:3d}%"
-                ptw, pth = self._text_wh(drw, pct, F_MD)
-                px = x + (w - ptw) // 2
-                py = y + (h - pth) // 2 - 1
-                drw.rectangle((px - 2, py,   px + ptw + 2, py + pth + 1), fill=255)
-                drw.text((px, py), pct, font=F_MD, fill=0)
+                cx = x + w // 2
+                cy = y + h // 2
+                try:
+                    bbox = drw.textbbox((cx, cy), pct, font=F_MD, anchor="mm")
+                    pad = 2
+                    bg = (bbox[0] - pad, bbox[1] - pad, bbox[2] + pad, bbox[3] + pad)
+                    drw.rectangle(bg, fill=255)
+                    drw.text((cx, cy), pct, font=F_MD, fill=0, anchor="mm")
+                except TypeError:
+                    ptw, pth = self._text_wh(drw, pct, F_MD)
+                    px = cx - ptw // 2
+                    py = cy - pth // 2
+                    drw.rectangle((px - 2, py - 2, px + ptw + 2, py + pth + 2), fill=255)
+                    drw.text((px, py), pct, font=F_MD, fill=0)
 
                 lines = [p for p in subtitle.split("\n") if p.strip()]
                 y2 = y + h + 6
@@ -210,9 +244,20 @@ class Panel:
         if out.size != (self.pw, self.ph):  # safety. try to avoid resize churn for partials.
             out = out.resize((self.pw, self.ph))
 
-        # Partial only for progress frames; full for everything else
-        if show_header and (percent is not None):
+        # choose refresh path
+        use_partial = show_header and ((percent is not None) or self._force_partial)
+
+        # optional hygiene: force an occasional full refresh to clear ghosting
+        if use_partial and self._partial_count >= self._partial_reset_every:
+            self._display_full(out)
+            # re-enter partial on next frame
+            self._partial_ready = False
+            self._partial_count = 0
+            return
+
+        if use_partial:
             self._display_set_base_then_partial(out)
+            self._partial_count += 1
         else:
             self._display_full(out)
 
@@ -221,6 +266,45 @@ class Panel:
         finally:
             try: epdconfig.module_exit()
             except Exception: pass
+
+class Animator:
+    """1 Hz UI animator so the bottom-right squares always animate."""
+    def __init__(self, panel):
+        self.panel = panel
+        self.lock = threading.Lock()
+        self.state = {
+            "subtitle": "",
+            "percent": None,
+            "animate": True,
+            "center_block": None,
+            "show_tail_lines": None,
+            "show_header": True,
+        }
+        self.running = False
+        self.thread = None
+
+    def set(self, **kwargs):
+        with self.lock:
+            self.state.update(kwargs)
+
+    def _tick(self):
+        while self.running:
+            with self.lock:
+                s = dict(self.state)
+            # draw at 1 Hz so the four squares animate each second
+            self.panel.draw(**s)
+            time.sleep(1)
+
+    def start(self):
+        if self.running: return
+        self.running = True
+        self.thread = threading.Thread(target=self._tick, daemon=True)
+        self.thread.start()
+
+    def stop(self):
+        self.running = False
+        if self.thread:
+            self.thread.join(timeout=1)
 
 def ensure_dir(p): os.makedirs(p, exist_ok=True)
 
@@ -285,7 +369,7 @@ def get_disk_usage_pct(device_path: str):
         print(f"[WARN] df failed for {device_path}: {e}")
     return None
 
-def run_backup(panel, logf):
+def run_backup(panel, logf, ui):
     check_backup_mount(panel, logf)
     cmd = ["idevicebackup2", "backup", CFG["backup_dir"]]
     print(f"[CMD] {' '.join(cmd)}", flush=True)
@@ -294,16 +378,20 @@ def run_backup(panel, logf):
     pct, encrypted, last_ui = None, False, 0
     last_pct = None
     cur_line = ""
-    panel.draw(
-        "Welcome.\nEnter device password when prompted.\nBackup will start soon.",
-        percent=None, animate=False, show_header=True
+
+    ui.set(
+        subtitle="Welcome.\nEnter device password when prompted.\nBackup will start soon.",
+        percent=None, animate=True, show_header=True
     )
 
     def error_and_exit(user_msg, code=None, tail=None):
-        panel.draw(f"Error: {user_msg}", percent=pct if pct is not None else 0, animate=False, show_tail_lines=([tail] if tail else None), show_header=True)
-        center = "Wrong device password."
+        ui.set(subtitle=f"Error: {user_msg}", percent=pct if pct is not None else 0,
+               show_tail_lines=([tail] if tail else None), animate=True, show_header=True)
         if logf: logf.write(f"[ERROR] {user_msg} code={code} tail='{tail or ''}'\n")
-        panel.sleep(); sys.exit(1)
+        time.sleep(2)
+        ui.stop()
+        panel.sleep()
+        sys.exit(1)
 
     def feed_parser(tok: str):
         nonlocal cur_line, pct, encrypted, last_ui, last_pct
@@ -322,14 +410,14 @@ def run_backup(panel, logf):
                 encrypted = False
 
             if ln.startswith("Sending '") and "Status.plist" in ln:
-                panel.draw("Preparing backup...", percent=pct, show_header=True)
+                ui.set(subtitle="Preparing backup...", percent=pct, animate=True, show_header=True)
 
             m = re.search(r"(\d+)%\s*[Ff]inished", ln)
             if m:
                 pct = int(m.group(1))
                 if pct != last_pct:
                     subtitle = "Backing up (encrypted)..." if encrypted else "Backing up (not encrypted)..."
-                    panel.draw(subtitle, percent=pct, show_header=True)
+                    ui.set(subtitle=subtitle, percent=pct, animate=True, show_header=True)
                     last_pct = pct
                     last_ui = time.time()
 
@@ -342,10 +430,10 @@ def run_backup(panel, logf):
             cur_line += tok
             if time.time() - last_ui >= IDLE_REFRESH_SEC:
                 if pct is None:
-                    panel.draw("Starting backup...", percent=None, show_header=True)
+                    ui.set(subtitle="Starting backup...", percent=None, animate=True, show_header=True)
                 else:
                     subtitle = "Backing up (encrypted)..." if encrypted else "Backing up (not encrypted)..."
-                    panel.draw(subtitle, percent=pct, show_header=True)
+                    ui.set(subtitle=subtitle, percent=pct, animate=True, show_header=True)
                 last_ui = time.time()
 
     tee_and_parse(proc, logf, feed_parser)
@@ -357,35 +445,42 @@ def run_backup(panel, logf):
         owner = CFG["owner_lines"]
         center = (
             f"Backup completed at {ts_end}.\n"
-            f"{usage_str} memory usage.\n \n"
-            f"{owner[0]}\n{owner[1]}\n{owner[2]}"
+            f"{usage_str} memory usage.\n"
+            f"  \n"
+            f"{owner[0]}\n{owner[1]}\n{owner[2]}\n{owner[3]}"
         )
+        ui.stop()
         panel.draw("", percent=None, animate=False, center_block=center, show_header=False)
         if logf: logf.write(f"[OK] completed at {ts_end} usage={usage_str}\n")
+        time.sleep(2)
+        return 0
     else:
         error_and_exit("Unknown error.\nCheck logs.", None, "rc!=0")
-    time.sleep(2)
-    return rc
-
 
 def main():
     logf, logpath = log_open()
     print(f"[LOG] writing to {logpath}")
     if logf: logf.write(f"[LOG] writing to {logpath}\n")
     p = Panel()
+    p.prepare_partial()  # enable partial for text screens
+
+    ui = Animator(p)
+    ui.start()
     try:
-        p.draw("Waiting for iPhone...", percent=None, animate=False, show_header=True)
+        ui.set(subtitle="Waiting for iPhone...", percent=None, animate=True, show_header=True)
         while True:
             if device_present():
-                p.draw("Device detected. Preparing...", percent=None, animate=False, show_header=True)
+                ui.set(subtitle="Device detected. Preparing...", percent=None, animate=True, show_header=True)
                 try: subprocess.run(["idevicepair", "validate"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 except Exception: pass
-                run_backup(p, logf); break
+                run_backup(p, logf, ui); break
             else:
-                time.sleep(2)
+                time.sleep(0.3)
     except KeyboardInterrupt:
         if logf: logf.write("[INTERRUPT]\n")
     finally:
+        try: ui.stop()
+        except Exception: pass
         try: p.sleep()
         except Exception: pass
         try: logf.close()

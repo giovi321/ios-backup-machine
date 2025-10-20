@@ -23,6 +23,8 @@ CFG = load_config(CONFIG_PATH)
 for k, v in CFG.get("env", {}).items():
     os.environ[k] = str(v)
 
+CUSTOM_FONT = CFG.get("font_path")
+
 # Normalize paths
 def normpath(p):
     if not p: return p
@@ -39,13 +41,13 @@ print(f"[DBG] orientation={ORIENT}", file=sys.stderr)
 
 def font(sz):
     try:
-        return ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", sz)
+        return ImageFont.truetype(CUSTOM_FONT, sz)
     except Exception:
         return ImageFont.load_default()
 
-F_TITLE = font(16)
+F_TITLE = font(14)
 F_TIME  = font(14)
-F_USAGE = font(13)
+F_USAGE = font(14)
 
 def text_wh(d, t, f):
     try:

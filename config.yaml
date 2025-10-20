@@ -3,9 +3,11 @@ backup_dir: /media/iosbackup/
 marker_file: .foldermarker
 disk_device: /dev/mmcblk1
 orientation: landscape_right
+font_path: "/root/UbuntuMono-Regular.ttf"
 owner_lines:
   - "Property of Titius Caius"
-  - "+33 123 456 7890 - write@titiuscaius.com"
+  - "+33 123 456 7890"
+  - "write@titiuscaius.com"
   - "Reward if found €€€"
 error_codes:
   "100": "Snapshot failure at path"
