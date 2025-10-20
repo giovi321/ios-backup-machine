@@ -1,6 +1,4 @@
-
 #!/usr/bin/env python3
-# ios_backup_display_epaper.py (config-enabled, orientation-correct drawing)
 import os, re, sys, time, subprocess
 from datetime import datetime
 from periphery.gpio import GPIOError
@@ -41,51 +39,6 @@ def font(sz):
 F_SM, F_MD, F_LG = font(12), font(14), font(20)
 
 class Panel:
-    def _try_init(self, partial=False, attempts=2):
-        for i in range(attempts):
-            try:
-                if partial:
-                    if hasattr(self.epd, "init_Part"): self.epd.init_Part()
-                    elif "mode" in self.epd.init.__code__.co_varnames: self.epd.init(1)
-                    else: self.epd.init()
-                else:
-                    if hasattr(self.epd, "init_Full"): self.epd.init_Full()
-                    elif "mode" in self.epd.init.__code__.co_varnames: self.epd.init(0)
-                    else: self.epd.init()
-                return
-            except GPIOError as e:
-                if e.errno != 16 or i == attempts - 1:
-                    raise
-                try: epdconfig.module_exit()
-                except Exception: pass
-                time.sleep(0.2)
-
-    def _init_full(self):
-        self._try_init(partial=False)
-
-    def _init_part(self):
-        self._try_init(partial=True)
-
-    def _display_full(self, img):
-        buf = self.epd.getbuffer(img)
-        self._init_full()
-        if hasattr(self.epd, "display"):
-            self.epd.display(buf)
-        else:
-            self.epd.display_Base(buf)
-        self._partial_base_set = False
-
-    def _display_set_base_then_partial(self, img):
-        buf = self.epd.getbuffer(img)
-        if hasattr(self.epd, "display_Base") and hasattr(self.epd, "display_Partial"):
-            if not getattr(self, "_partial_base_set", False):
-                self._init_full(); self.epd.display_Base(buf); self._init_part(); self._partial_base_set = True
-            else:
-                self._init_part()
-            self.epd.display_Partial(buf)
-        else:
-            self._display_full(img)
-
     def __init__(self):
         try: epdconfig.module_exit()
         except Exception: pass
@@ -93,34 +46,92 @@ class Panel:
         self.pw, self.ph = self.epd.width, self.epd.height
         self.orient = str(CFG.get("orientation","landscape_right")).lower()
         self.anim = 0
+        self._mode = "none"          # "none" | "full" | "partial"
+        self._partial_ready = False
 
-        if hasattr(self.epd, "init_Full"):
-            self.epd.init_Full()
-        else:
-            try:
-                if "mode" in self.epd.init.__code__.co_varnames:
-                    self.epd.init(0)
-                else:
-                    self.epd.init()
-            except AttributeError:
-                self.epd.init()
+        # resolve API variants once
+        self._disp       = getattr(self.epd, "display", None)
+        self._disp_base  = getattr(self.epd, "display_Base", None) or getattr(self.epd, "displayPartBaseImage", None)
+        self._disp_part  = getattr(self.epd, "display_Partial", None) or getattr(self.epd, "displayPartial", None)
+        self._init_full0 = getattr(self.epd, "init_Full", None)
+        self._init_part0 = getattr(self.epd, "init_Part", None) or getattr(self.epd, "init_fast", None)
+
+        self._init_full(first=True)
         self.epd.Clear(0xFF)
-        self._partial_base_set = False
+        self._mode = "full"
+
+    def _safe_init_call(self, fn):
+        # Handle EBUSY by releasing lines and retrying once.
+        try:
+            fn(); return
+        except GPIOError as e:
+            if getattr(e, "errno", None) == 16:
+                try: epdconfig.module_exit()
+                except Exception: pass
+                time.sleep(0.2)
+                fn(); return
+            raise
+
+    def _init_full(self, first=False):
+        if not first and self._mode == "full":
+            return  # already in full
+        if self._init_full0:
+            self._safe_init_call(self._init_full0)
+        else:
+            def _init():
+                if "mode" in self.epd.init.__code__.co_varnames: self.epd.init(0)
+                else: self.epd.init()
+            self._safe_init_call(_init)
+        self._mode = "full"
+
+    def _init_part(self):
+        if self._mode == "partial":
+            return  # already in partial
+        if self._init_part0:
+            self._safe_init_call(self._init_part0)
+        else:
+            def _init():
+                if "mode" in self.epd.init.__code__.co_varnames: self.epd.init(1)
+            try: self._safe_init_call(_init)
+            except Exception: pass
+        self._mode = "partial"
+
+    def _getbuf(self, img):
+        return self.epd.getbuffer(img)
+
+    def _display_full(self, img):
+        buf = self._getbuf(img)
+        self._init_full()
+        if self._disp: self._disp(buf)
+        elif self._disp_base: self._disp_base(buf)
+        else: self.epd.display(buf)  # fallback
+        self._partial_ready = False  # next partial must re-set base
+
+    def _display_set_base_then_partial(self, img):
+        buf = self._getbuf(img)
+        if self._disp_part and self._disp_base:
+            if not self._partial_ready:
+                self._init_full()
+                self._disp_base(buf)     # set the base once
+                self._init_part()        # switch to partial once
+                self._partial_ready = True
+            else:
+                self._init_part()
+            self._disp_part(buf)         # partial refresh
+        else:
+            self._display_full(img)
 
     def _logical_size(self):
-        # Logical canvas size used for drawing
         if self.orient in ("landscape_right", "landscape_left"):
-            return (self.ph, self.pw)  # swap for landscape
-        return (self.pw, self.ph)     # portrait not used here but supported
+            return (self.ph, self.pw)
+        return (self.pw, self.ph)
 
     def _rotate_for_display(self, img):
-        # Rotate logical canvas to physical portrait buffer size
         if self.orient == "landscape_right":
-            return img.rotate(90, expand=True)   # matches boot script convention
+            return img.rotate(90, expand=True)
         elif self.orient == "landscape_left":
             return img.rotate(270, expand=True)
-        else:
-            return img  # portrait as-is
+        return img
 
     def _text_wh(self, drw, text, font):
         try:
@@ -144,17 +155,14 @@ class Panel:
             drw.text((LW - tw - 4, 2), now_s, font=F_SM, fill=0)
 
             if percent is None:
-                # centered subtitle block under header
                 lines = [p for p in subtitle.split("\n") if p.strip()]
                 sizes = [self._text_wh(drw, ln, F_MD) for ln in lines]
                 total_h = sum(h for _, h in sizes) + 2*(len(lines)-1)
                 top, bottom = 26, LH - 20
                 y = top + max(0, ((bottom - top) - total_h)//2)
                 for ln, (tw2, th2) in zip(lines, sizes):
-                    drw.text(((LW - tw2)//2, y), ln, font=F_MD, fill=0)
-                    y += th2 + 2
+                    drw.text(((LW - tw2)//2, y), ln, font=F_MD, fill=0); y += th2 + 2
             else:
-                # progress bar
                 x, y, w, h = 4, 46, LW - 8, 18
                 drw.rectangle((x, y, x+w, y+h), outline=0, width=2)
                 fill_w = int(max(0, min(100, percent)) * (w - 4) / 100)
@@ -164,17 +172,14 @@ class Panel:
                 ptw, pth = self._text_wh(drw, pct, F_MD)
                 px = x + (w - ptw) // 2
                 py = y + (h - pth) // 2 - 1
-                drw.rectangle((px - 2, py, px + ptw + 2, py + pth + 1), fill=255)
+                drw.rectangle((px - 2, py,   px + ptw + 2, py + pth + 1), fill=255)
                 drw.text((px, py), pct, font=F_MD, fill=0)
 
-                # centered subtitle below bar
                 lines = [p for p in subtitle.split("\n") if p.strip()]
                 y2 = y + h + 6
                 for ln in lines:
                     tw2, th2 = self._text_wh(drw, ln, F_MD)
-                    drw.text(((LW - tw2)//2, y2), ln, font=F_MD, fill=0)
-                    y2 += th2 + 2
-
+                    drw.text(((LW - tw2)//2, y2), ln, font=F_MD, fill=0); y2 += th2 + 2
         else:
             if subtitle:
                 tw, th = self._text_wh(drw, subtitle, F_MD)
@@ -186,8 +191,7 @@ class Panel:
             y_start = (LH - total_h) // 2
             for ln in lines:
                 tw2, th2 = self._text_wh(drw, ln, F_SM)
-                drw.text(((LW - tw2)//2, y_start), ln, font=F_SM, fill=0)
-                y_start += th2 + 4
+                drw.text(((LW - tw2)//2, y_start), ln, font=F_SM, fill=0); y_start += th2 + 4
 
         if show_tail_lines and show_header:
             y0 = 70 if percent is not None else 46
@@ -195,31 +199,28 @@ class Panel:
                 drw.text((4, y0 + i*14), ln[:44], font=F_SM, fill=0)
 
         if animate and not center_block and show_header:
-            base_y = LH - 16
-            base_x = LW - 50
-            sz, gap = 6, 6
+            base_y = LH - 16; base_x = LW - 50; sz, gap = 6, 6
             for i in range(4):
                 x0 = base_x + i*(sz+gap)
-                if self.anim % 4 == i:
-                    drw.rectangle((x0, base_y, x0+sz, base_y+sz), fill=0)
-                else:
-                    drw.rectangle((x0, base_y, x0+sz, base_y+sz), outline=0, width=1)
+                if self.anim % 4 == i: drw.rectangle((x0, base_y, x0+sz, base_y+sz), fill=0)
+                else:                  drw.rectangle((x0, base_y, x0+sz, base_y+sz), outline=0, width=1)
             self.anim = (self.anim + 1) % 4
 
         out = self._rotate_for_display(img)
-        if out.size != (self.pw, self.ph):
+        if out.size != (self.pw, self.ph):  # safety. try to avoid resize churn for partials.
             out = out.resize((self.pw, self.ph))
+
+        # Partial only for progress frames; full for everything else
         if show_header and (percent is not None):
             self._display_set_base_then_partial(out)
         else:
             self._display_full(out)
 
-
     def sleep(self):
         try: self.epd.sleep()
-        except Exception: pass
-        try: epdconfig.module_exit()
-        except Exception: pass
+        finally:
+            try: epdconfig.module_exit()
+            except Exception: pass
 
 def ensure_dir(p): os.makedirs(p, exist_ok=True)
 
@@ -301,10 +302,8 @@ def run_backup(panel, logf):
     def error_and_exit(user_msg, code=None, tail=None):
         panel.draw(f"Error: {user_msg}", percent=pct if pct is not None else 0, animate=False, show_tail_lines=([tail] if tail else None), show_header=True)
         center = "Wrong device password."
-#        panel.draw("", percent=None, animate=False, center_block=center, show_header=False)
         if logf: logf.write(f"[ERROR] {user_msg} code={code} tail='{tail or ''}'\n")
         panel.sleep(); sys.exit(1)
-        error_and_exit(msg, code, ln[-80:])
 
     def feed_parser(tok: str):
         nonlocal cur_line, pct, encrypted, last_ui, last_pct
@@ -356,7 +355,6 @@ def run_backup(panel, logf):
         usage = get_disk_usage_pct(CFG["disk_device"])
         usage_str = f"{usage}%" if usage is not None else "n/a"
         owner = CFG["owner_lines"]
-        # ensure ts_end is defined earlier: ts_end = datetime.now().strftime("%H:%M %d %b %y").lower()
         center = (
             f"Backup completed at {ts_end}.\n"
             f"{usage_str} memory usage.\n \n"
