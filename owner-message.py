@@ -9,7 +9,7 @@ CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/config.yaml")
 def load_config(path):
     with open(path, "r") as f:
         cfg = yaml.safe_load(f) or {}
-    cfg.setdefault("owner_lines", ["Property owner", "contact", "message"])
+    cfg.setdefault("owner_lines", ["Name", "email", "phone", "message"])
     cfg.setdefault("orientation", "landscape_right")
     cfg.setdefault("env", {})
     return cfg
@@ -18,9 +18,11 @@ CFG = load_config(CONFIG_PATH)
 for k, v in CFG.get("env", {}).items():
     os.environ[k] = str(v)
 
+CUSTOM_FONT = CFG.get("font_path")
+
 def font(sz):
     try:
-        return ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", sz)
+        return ImageFont.truetype(CUSTOM_FONT, sz)
     except Exception:
         return ImageFont.load_default()
 

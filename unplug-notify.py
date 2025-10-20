@@ -18,13 +18,15 @@ CFG = load_cfg(CFG_PATH)
 for k,v in CFG.get("env", {}).items():
     os.environ[k] = str(v)
 
+CUSTOM_FONT = CFG.get("font_path")
+
 def font(sz):
     try:
-        return ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", sz)
+        return ImageFont.truetype(CUSTOM_FONT, sz)
     except Exception:
         return ImageFont.load_default()
 
-F_L = font(16)
+F_L = font(14)
 F_S = font(14)
 
 def text_wh(d, t, f):
