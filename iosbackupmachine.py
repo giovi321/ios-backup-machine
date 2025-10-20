@@ -247,7 +247,7 @@ class Panel:
         # choose refresh path
         use_partial = show_header and ((percent is not None) or self._force_partial)
 
-        # optional hygiene: force an occasional full refresh to clear ghosting
+        # force an occasional full refresh to clear ghosting
         if use_partial and self._partial_count >= self._partial_reset_every:
             self._display_full(out)
             # re-enter partial on next frame
