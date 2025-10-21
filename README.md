@@ -48,7 +48,7 @@ All backups stay local on the microSD card and can be restored anytime using too
 **In case you unplug the iPhone** the process stops safely and the screen shows the interruption timestamp.
 
 ### Interactive functions
-- If you push the additional button of the PiSugar UPS, it shows for 10 seconds on the e-ink
+- If you push the additional button of the PiSugar UPS, it shows for 10 seconds on the e-ink the last backup timestamp and available memory. After 10 seconds it goes back to owner information.
 - [ ] More to be implemented
 
 ### UPS integration
