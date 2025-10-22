@@ -88,12 +88,9 @@ All backups stay local on the microSD card and can be restored anytime using too
 
 ```
 /root/
-├── Case ios backup machine_v8.stl   # 3D printable case
-├── 90-iosbackupmachine.rules        # Starts backup on iPhone plug-in
-                                     # and stops it when unplugged
+├── 90-iosbackupmachine.rules        # Starts backup on iPhone plug-in and stops it when unplugged
 ├── armbianEnv.txt                   # Overlays for SPI/I2C
-├── owner-message.py                 # Shows owner info on the e-ink screen
-├── owner-message.service            # Systemd service for above
+├── Case ios backup machine_v8.stl   # 3D printable case
 ├── config.yaml                      # Main configuration
 ├── epdconfig.py                     # Display configuration
 ├── iosbackupmachine_launcher.sh     # Launch script
@@ -101,8 +98,11 @@ All backups stay local on the microSD card and can be restored anytime using too
 ├── iosbackupmachine.service         # Systemd service triggered by udev
 ├── last-backup.py                   # Shows last backup info and memory available
 ├── last-backup.service              # Systemd service for above
+├── owner-message.py                 # Shows owner info on the e-ink screen
+├── owner-message.service            # Systemd service for above
 ├── [pisugar]config.json             # UPS configuration template
 ├── shutdown.sh                      # Shows owner info on screen and turns off device
+├── UbuntuMono-Regular.ttf           # Font for the display, you can choose your own
 ├── unplug-notify.py                 # Handle unplug events
 ├── unplug-notify.service            # Service triggered by unplug rule
 └── unplug-notify.sh                 # Script to call unplug-notify.py
