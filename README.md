@@ -101,6 +101,7 @@ All backups stay local on the microSD card and can be restored anytime using too
 ├── owner-message.py                 # Shows owner info on the e-ink screen
 ├── owner-message.service            # Systemd service for above
 ├── [pisugar]config.json             # UPS configuration template
+├── rtc-sync.service                 # Syncs the Radxa Zero clock to the RTC at boot
 ├── shutdown.sh                      # Shows owner info on screen and turns off device
 ├── UbuntuMono-Regular.ttf           # Font for the display, you can choose your own
 ├── unplug-notify.py                 # Handle unplug events
@@ -211,6 +212,10 @@ Set the time of the RTC based on the current time of the Radxa Zero:
 ```bash
 apt install netcat-traditional
 echo "rtc_pi2rtc" | nc -q 1 127.0.0.1 8423
+```
+Automatically set the time of the Radxa Zero based on the RTC time at every boot
+```bash
+systemctl enable rtc-sync.service
 ```
 ## First run
 The first run must be done using idevicebackup2 "stand alone" because you need to set the backup encryption passphrase.

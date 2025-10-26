@@ -1,0 +1,11 @@
+[Unit]
+Description=Set system clock from PiSugar RTC
+After=pisugar-server.service
+Requires=pisugar-server.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'echo "rtc_rtc2pi" | nc -q 1 127.0.0.1 8423'
+
+[Install]
+WantedBy=multi-user.target
