@@ -116,18 +116,15 @@ Edit `/root/config.yaml`:
 ```yaml
 backup_dir: /media/iosbackup/ # where the backup is saved
 marker_file: .foldermarker    # file that tells the script that the microSD card was mounted correctly. if this file is missing, then the microSD card is not mounted and the backup will not run.
-disk_device: /dev/mmcblk1     # name of the microSD card node. it is needed to measure the space utilization at the end of the backup
-orientation: landscape_right  # you can orient the screen the other way (landscape_left)
-
+disk_device: /dev/mmcblk1     # name of the microSD card node, needed to measure the space utilization at the end of the backup
+orientation: landscape_right  # Choose screen orientation (landscape_left or landscape_right)
+font_path: "/root/UbuntuMono-Regular.ttf" # Choose the font you prefer. Test it first as not all fonts render well on e-ink displays
 owner_lines:                  # You can write whatever you wans as long as it fits in the screen (there are no automatic line breaks)
   - "Property of Titius Caius"
-  - "+33 123 456 7890 - write@titiuscaius.com"
+  - "+33 123 456 7890"
+  - "write@titiuscaius.com"
   - "Reward if found €€€"
-
-error_codes:
-  105: "Insufficient free disk space on backup drive"
-  208: "Wrong iPhone password. Disconnect and reconnect"
-  -4:  "iPhone disconnected during backup"
+error_codes:                  # No need to change anything below this line
 ```
 
 **Notes**
