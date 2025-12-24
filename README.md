@@ -19,6 +19,11 @@ When you plug in your iPhone, the system automatically runs an encrypted `idevic
 
 ![Image2](https://github.com/user-attachments/assets/d473ad1f-d80a-4214-8b85-8363d4b1f9a8)
 
+# NEW! apple-juicer is an iOS backup epxlorer
+If you want to inspect the backups created by this device, use **Apple Juicer**, a browser-based iOS backup explorer. Point it at your backup directory, unlock encrypted backups (password prompt), and browse parsed artifacts such as WhatsApp, Messages, (implementation ongoing: Photos, Notes, Calendar, and Contacts) with search/filter in a web UI.
+
+- Repository: https://github.com/giovi321/apple-juicer
+- Documentation: https://giovi321.github.io/apple-juicer/
 
 ## Objective
 A **self-contained iOS backup appliance** with no reliance on Apple services or computers.  
