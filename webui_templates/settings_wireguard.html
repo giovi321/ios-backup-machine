@@ -64,8 +64,7 @@
 <div class="card">
     <h2>Upload WireGuard Configuration</h2>
     <p style="font-size:13px; color:var(--text-muted); margin-bottom:12px;">
-        Paste your WireGuard client config below. It will be encrypted using the connected iPhone's UUID.<br>
-        <strong>An iPhone must be connected to encrypt the config.</strong>
+        Paste your WireGuard client config below. It will be encrypted using your master password.
     </p>
     <form method="POST">
         <input type="hidden" name="action" value="upload_config">
@@ -81,40 +80,32 @@ PublicKey = ...
 Endpoint = vpn.example.com:51820
 AllowedIPs = 0.0.0.0/0"></textarea>
         </div>
+        <div class="form-group">
+            <label for="master_password_upload">Master Password</label>
+            <input type="password" id="master_password_upload" name="master_password" placeholder="Used to encrypt the config" required>
+            <div class="hint">Choose a strong password. You will need it to start WireGuard.</div>
+        </div>
         <div class="btn-group">
-            <button type="submit" class="btn btn-primary" {% if not udid %}disabled title="Connect iPhone first"{% endif %}>
-                Encrypt & Save
-            </button>
+            <button type="submit" class="btn btn-primary">Encrypt & Save</button>
         </div>
     </form>
 </div>
 
 <div class="card">
     <h2>Control</h2>
-    <div class="btn-group">
-        <form method="POST" style="display:inline;">
-            <input type="hidden" name="action" value="start">
-            <button type="submit" class="btn btn-success btn-sm" {% if not has_enc_file %}disabled{% endif %}>Start WireGuard</button>
-        </form>
-        <form method="POST" style="display:inline;">
-            <input type="hidden" name="action" value="stop">
-            <button type="submit" class="btn btn-danger btn-sm">Stop WireGuard</button>
-        </form>
-    </div>
-</div>
-
-<div class="card">
-    <h2>Encryption Key Backup</h2>
-    <p style="font-size:13px; color:var(--text-muted); margin-bottom:12px;">
-        The WireGuard config is encrypted using a key derived from your iPhone's UUID.
-        Back up this key so you can decrypt the config even without the iPhone.
-        You can also retrieve the key via CLI: <code>python3 wg_crypto.py backup-key</code>
-    </p>
     <form method="POST">
-        <input type="hidden" name="action" value="backup_key">
-        <button type="submit" class="btn btn-secondary btn-sm" {% if not udid %}disabled title="Connect iPhone first"{% endif %}>
-            Backup Encryption Key
-        </button>
+        <input type="hidden" name="action" value="start">
+        <div class="form-group">
+            <label for="master_password_start">Master Password</label>
+            <input type="password" id="master_password_start" name="master_password" placeholder="Required to decrypt config">
+        </div>
+        <div class="btn-group">
+            <button type="submit" class="btn btn-success btn-sm" {% if not has_enc_file %}disabled{% endif %}>Start WireGuard</button>
+        </div>
+    </form>
+    <form method="POST" style="margin-top:8px;">
+        <input type="hidden" name="action" value="stop">
+        <button type="submit" class="btn btn-danger btn-sm">Stop WireGuard</button>
     </form>
 </div>
 {% endblock %}

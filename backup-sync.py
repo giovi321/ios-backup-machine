@@ -23,7 +23,7 @@ CFG = load_config(CONFIG_PATH)
 for k, v in CFG.get("env", {}).items():
     os.environ[k] = str(v)
 
-CUSTOM_FONT = CFG.get("font_path")
+CUSTOM_FONT = CFG.get("font_path") or "/root/iosbackupmachine/UbuntuMono-Regular.ttf"
 ORIENT = str(CFG.get("orientation", "landscape_right")).lower()
 
 def font(sz):

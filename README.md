@@ -1,5 +1,5 @@
 [![License](https://img.shields.io/github/license/giovi321/ios-backup-machine)](LICENSE)
-![Version](https://img.shields.io/badge/version-2.0-brightgreen)
+![Version](https://img.shields.io/badge/version-2.1-brightgreen)
 [![Python 3.13](https://img.shields.io/badge/Python-3.13-blue?logo=python&logoColor=white)](https://www.python.org/downloads/release/python-3130/)
 [![Armbian](https://img.shields.io/badge/OS-Armbian-orange?logo=armbian)](https://www.armbian.com/radxa-zero-3/)
 ![Offline](https://img.shields.io/badge/network-optional-blue.svg)
@@ -12,6 +12,10 @@
 
 
 
+<p align="center">
+  <img src="webui_static/icon.svg" alt="iOS Backup Machine logo" width="120" height="120">
+</p>
+
 # iOS Backup Machine
 **Offline, portable and automatic iPhone backup system** running entirely on a **Radxa Zero 3W** (an upgraded Raspberry Pi Zero W).  
 When you plug in your iPhone, the system automatically runs an encrypted `idevicebackup2` backup to local storage, shows progress and messages on an e-ink display, and logs all activity locally — **no iCloud, no iTunes, you own your data.**
@@ -20,7 +24,7 @@ When you plug in your iPhone, the system automatically runs an encrypted `idevic
 
 ![Image2](https://github.com/user-attachments/assets/d473ad1f-d80a-4214-8b85-8363d4b1f9a8)
 
-# NEW! Check out apple-juicer: an iOS backup explorer
+# Check out apple-juicer: an iOS backup explorer
 <img width="100" height="100" alt="apple-juicer logo" src="https://github.com/user-attachments/assets/e564146f-3fa4-40df-9acc-c3a2de363b29" />
 
 If you want to inspect the backups created by this device, use **Apple Juicer**, a browser-based iOS backup explorer. Point it at your backup directory, unlock encrypted backups (password prompt), and browse parsed artifacts such as WhatsApp, Messages, (implementation ongoing: Photos, Notes, Calendar, and Contacts) with search/filter in a web UI.
@@ -44,7 +48,10 @@ All backups stay local on the microSD card and can be restored anytime using too
 - **Web UI**: configure all settings from a browser.
 - **NTP sync**: auto-syncs clock when internet is available (WiFi or USB iPhone hotspot).
 - **Notifications**: webhook and MQTT alerts for backup events.
-- **WireGuard VPN**: built-in client with iPhone-encrypted config.
+- **Remote sync**: rsync backups to a remote server over SSH (manual or auto after backup).
+- **WireGuard VPN**: built-in client with encrypted config.
+- **Master password encryption**: WireGuard and sync credentials are encrypted with a user-chosen password (AES-256-GCM via PBKDF2).
+- **Network-aware sync**: restrict remote sync to WiFi only, a specific SSID, or iPhone USB tethering.
 - **Power-on indicator**: visible on every e-ink screen.
 
 ## How it works
@@ -64,9 +71,10 @@ All backups stay local on the microSD card and can be restored anytime using too
 **In case you unplug the iPhone** the process stops safely and the screen shows the interruption timestamp.
 
 ### Interactive functions
-- If you push the additional button of the PiSugar UPS, it shows for 10 seconds on the e-ink the last backup timestamp and available memory. After 10 seconds it goes back to owner information.
-- **IP address display**: press the PiSugar button when idle (not during backup) to show the current IP address and connection type (WiFi or USB iPhone hotspot) for 10 seconds.
-- A small **power-on icon** is displayed in the bottom-left corner of every screen.
+- **Single-tap** PiSugar button: shows date, time, IP address, last backup time, disk free %, and SoC temperature for 30 seconds, then returns to boot screen.
+- **Double-tap** PiSugar button: triggers remote sync to configured server (rsync over SSH). Shows sync progress on e-ink display.
+- **Boot screen**: power icon + "iOS Backup Machine" title + owner info.
+- **Power-off screen**: owner info only (persists on e-paper after shutdown).
 
 ### UPS integration
 - **Battery protection**: backup stops cleanly if battery <30%.  
@@ -416,15 +424,25 @@ By default the web UI has no password (or you can set one during the first-start
 Once set, all pages require login. The password is hashed (SHA-256 + salt) and stored in `config.yaml`.  
 You can change or remove the password at any time from the **Password** page.
 
-## WireGuard Encryption
+## Credential Encryption
 
-WireGuard configuration is encrypted using a key derived from the connected iPhone's UUID (UDID).  
-This means the VPN credentials are protected even if the device is lost.
+WireGuard and remote sync credentials are encrypted using a **master password** you choose.
+The password is never stored on disk — it is used to derive an AES-256 key via PBKDF2 (100,000 iterations).
 
-- **Encrypt config**: connect iPhone, then upload WireGuard `.conf` via web UI or CLI
-- **Backup key**: via web UI button or `python3 wg_crypto.py backup-key`
-- **Decrypt via CLI**: `python3 wg_crypto.py decrypt`
-- **Show key**: `python3 wg_crypto.py show-key` (requires iPhone connected)
+- **Encrypt**: enter your master password in the web UI when saving WireGuard or sync credentials
+- **Decrypt**: enter the same master password to start WireGuard, run sync, or test connections
+- **CLI**: `python3 wg_crypto.py decrypt` (prompts for master password)
+
+> **Security note**: the master password is only held in memory during the operation. If the device is lost, the encrypted files (`wireguard.enc`, `sync.enc`) cannot be decrypted without it.
+
+## Remote Sync
+
+Sync backups to a remote server via **rsync over SSH**. Supports SSH key and password authentication.
+
+- **Manual sync**: double-tap the PiSugar button
+- **Auto-sync**: optionally trigger after each successful backup
+- **Network restrictions**: limit sync to WiFi only, a specific SSID, or iPhone USB tethering
+- Configure via web UI under **Remote Sync**
 
 ## Notifications
 

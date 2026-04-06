@@ -12,21 +12,67 @@ import sync_crypto
 CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/iosbackupmachine/config.yaml")
 
 
-def _load_backup_dir():
+def _load_config():
     try:
         with open(CONFIG_PATH, "r") as f:
-            cfg = yaml.safe_load(f) or {}
-        return cfg.get("backup_dir", "/media/iosbackup/")
+            return yaml.safe_load(f) or {}
     except Exception:
-        return "/media/iosbackup/"
+        return {}
 
 
-def run_sync(udid=None, backup_dir=None):
+def _load_backup_dir():
+    return _load_config().get("backup_dir", "/media/iosbackup/")
+
+
+def _check_network_allowed():
+    """Check if sync is allowed on the current network.
+    Returns (allowed: bool, reason: str)."""
+    cfg = _load_config()
+    sync_cfg = cfg.get("sync", {})
+    allowed = sync_cfg.get("allowed_network", "any")
+    if allowed == "any":
+        return True, ""
+    try:
+        import netutil
+        wifi_ip = netutil.get_wifi_ip()
+        usb_ip = netutil.get_usb_iphone_ip()
+    except ImportError:
+        return True, ""  # can't check, allow
+
+    if allowed == "wifi":
+        if wifi_ip:
+            return True, ""
+        return False, "Sync restricted to WiFi only (not connected)."
+    elif allowed == "wifi_ssid":
+        required_ssid = sync_cfg.get("allowed_ssid", "")
+        if not wifi_ip:
+            return False, "Sync restricted to WiFi (not connected)."
+        if required_ssid:
+            try:
+                r = subprocess.run(["iwgetid", "-r"], capture_output=True, text=True, timeout=5)
+                current_ssid = r.stdout.strip()
+                if current_ssid != required_ssid:
+                    return False, f"Sync restricted to SSID '{required_ssid}' (current: '{current_ssid}')."
+            except Exception:
+                pass
+        return True, ""
+    elif allowed == "usb":
+        if usb_ip:
+            return True, ""
+        return False, "Sync restricted to iPhone USB tethering (not connected)."
+    return True, ""
+
+
+def run_sync(passphrase=None, udid=None, backup_dir=None):
     """
     Run rsync to sync backups to remote server.
     Returns dict: {success: bool, message: str, duration: float}
     """
-    cfg = sync_crypto.decrypt_sync_config(udid=udid)
+    net_ok, net_reason = _check_network_allowed()
+    if not net_ok:
+        return {"success": False, "message": net_reason, "duration": 0}
+
+    cfg = sync_crypto.decrypt_sync_config(passphrase=passphrase, udid=udid)
     if not cfg:
         return {"success": False, "message": "Cannot decrypt sync credentials. Is iPhone connected?", "duration": 0}
 
@@ -105,12 +151,12 @@ def run_sync(udid=None, backup_dir=None):
                 pass
 
 
-def test_connection(udid=None):
+def test_connection(passphrase=None, udid=None):
     """
     Test SSH connection to the remote server.
     Returns dict: {success: bool, message: str}
     """
-    cfg = sync_crypto.decrypt_sync_config(udid=udid)
+    cfg = sync_crypto.decrypt_sync_config(passphrase=passphrase, udid=udid)
     if not cfg:
         return {"success": False, "message": "Cannot decrypt sync credentials. Is iPhone connected?"}
 

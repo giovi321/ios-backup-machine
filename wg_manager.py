@@ -21,9 +21,9 @@ def is_interface_up(iface="wg0"):
     except Exception:
         return False
 
-def start_wireguard(iface="wg0", udid=None):
+def start_wireguard(iface="wg0", passphrase=None, udid=None):
     """Decrypt WireGuard config and bring up the interface."""
-    cfg = wg_crypto.decrypt_wg_config(udid=udid)
+    cfg = wg_crypto.decrypt_wg_config(passphrase=passphrase, udid=udid)
     if not cfg:
         print("[WG] Cannot decrypt WireGuard config.", file=sys.stderr)
         return False
