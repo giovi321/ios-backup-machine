@@ -114,6 +114,46 @@ info "Running from: ${REPO_DIR}"
 info "Install target: ${INSTALL_DIR}"
 
 # ---------------------------------------------------------------------------
+# Step 0: Stop all iOS Backup Machine services before updating
+# ---------------------------------------------------------------------------
+step "Stop running services"
+
+ALL_SERVICES=(
+    iosbackupmachine.service
+    webui.service
+    owner-message.service
+    ntp-sync.service
+    rtc-sync.service
+    last-backup.service
+    unplug-notify.service
+    button-info.service
+    backup-sync.service
+)
+
+for svc in "${ALL_SERVICES[@]}"; do
+    if systemctl is-active --quiet "${svc}" 2>/dev/null; then
+        systemctl stop "${svc}" 2>/dev/null || true
+        detail "Stopped ${svc}"
+    fi
+done
+
+# Verify no services are still running
+STILL_RUNNING=""
+for svc in "${ALL_SERVICES[@]}"; do
+    if systemctl is-active --quiet "${svc}" 2>/dev/null; then
+        STILL_RUNNING="${STILL_RUNNING} ${svc}"
+    fi
+done
+
+if [ -n "${STILL_RUNNING}" ]; then
+    error "The following services are still running:${STILL_RUNNING}"
+    error "Cannot proceed with update while services are active."
+    fail "Stop them manually with: systemctl stop <service>, then re-run the installer."
+fi
+
+info "All services stopped"
+
+# ---------------------------------------------------------------------------
 # Step 1: Enable I2C and SPI overlays in /boot/armbianEnv.txt
 # ---------------------------------------------------------------------------
 step "Enable I2C and SPI overlays"
