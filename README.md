@@ -278,7 +278,7 @@ Reboot.
 apt update
 apt install -y python3 python3-venv python3-pil python3-periphery \
   libimobiledevice-1.0-6 libimobiledevice-utils usbmuxd \
-  ntpdate wireguard-tools
+  wireguard-tools
 ```
 
 ### 4. Create Python virtual environment
