@@ -51,7 +51,6 @@ APP_FILES=(
     sync_crypto.py
     sync_manager.py
     epdconfig.py
-    config.yaml
     UbuntuMono-Regular.ttf
     requirements.txt
 )
@@ -250,6 +249,14 @@ for f in "${APP_FILES[@]}"; do
         warn "File not found: ${src}"
     fi
 done
+
+# Copy config.yaml only if it doesn't already exist (preserve user settings on upgrade)
+if [ ! -f "${INSTALL_DIR}/config.yaml" ]; then
+    cp "${REPO_DIR}/config.yaml" "${INSTALL_DIR}/config.yaml"
+    detail "Copied config.yaml (fresh install)"
+else
+    info "config.yaml already exists, preserving user settings"
+fi
 
 # Copy webui directories
 if [ -d "${REPO_DIR}/webui_templates" ]; then
