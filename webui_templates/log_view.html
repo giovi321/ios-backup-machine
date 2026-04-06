@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}{{ filename }} - iOS Backup Machine{% endblock %}
+{% block content %}
+<h1>{{ filename }}</h1>
+<div style="display:flex; align-items:center; gap:16px; margin-bottom:24px;">
+    <a href="{{ url_for('logs') }}" style="color:var(--primary); text-decoration:none; font-size:14px;">← Back to logs</a>
+    <form method="POST" action="{{ url_for('delete_log', filename=filename) }}" onsubmit="return confirm('Delete {{ filename }}?');" style="margin:0;">
+        <button type="submit" class="btn btn-danger btn-sm">Delete this log</button>
+    </form>
+</div>
+
+<div class="card">
+    <pre style="
+        background: #1a1a2e;
+        color: #e0e0e0;
+        padding: 16px;
+        border-radius: 6px;
+        font-size: 12px;
+        font-family: 'Consolas', 'Monaco', monospace;
+        overflow-x: auto;
+        white-space: pre-wrap;
+        word-break: break-all;
+        max-height: 600px;
+        overflow-y: auto;
+    ">{{ content }}</pre>
+</div>
+{% endblock %}

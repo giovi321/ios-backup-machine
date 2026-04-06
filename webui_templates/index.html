@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - iOS Backup Machine{% endblock %}
+{% block content %}
+<h1>Dashboard</h1>
+<p class="subtitle">iOS Backup Machine status overview</p>
+
+<div class="info-grid">
+    <div class="info-item">
+        <div class="label">System Time</div>
+        <div class="value" id="sys-time">{{ cfg.get('_time', '') or '--' }}</div>
+    </div>
+    <div class="info-item">
+        <div class="label">Network</div>
+        <div class="value">
+            {% if ip %}
+                {{ ip }}
+                <span class="badge badge-on"><span class="badge-dot"></span>{{ iface_type }}</span>
+            {% else %}
+                <span class="badge badge-off"><span class="badge-dot"></span>No network</span>
+            {% endif %}
+        </div>
+    </div>
+    <div class="info-item">
+        <div class="label">WiFi</div>
+        <div class="value">
+            {% if cfg.wifi.enabled %}
+                <span class="badge badge-on"><span class="badge-dot"></span>Enabled</span>
+                {% if cfg.wifi.ssid %}<br><small>{{ cfg.wifi.ssid }}</small>{% endif %}
+            {% else %}
+                <span class="badge badge-off"><span class="badge-dot"></span>Disabled</span>
+            {% endif %}
+        </div>
+    </div>
+    <div class="info-item">
+        <div class="label">WireGuard</div>
+        <div class="value">
+            {% if wg_status.up %}
+                <span class="badge badge-on"><span class="badge-dot"></span>Connected</span>
+            {% else %}
+                <span class="badge badge-off"><span class="badge-dot"></span>Disconnected</span>
+            {% endif %}
+        </div>
+    </div>
+    <div class="info-item">
+        <div class="label">Notifications</div>
+        <div class="value">
+            {% if cfg.notifications.webhook.enabled or cfg.notifications.mqtt.enabled %}
+                <span class="badge badge-on"><span class="badge-dot"></span>Active</span>
+            {% else %}
+                <span class="badge badge-off"><span class="badge-dot"></span>Off</span>
+            {% endif %}
+        </div>
+    </div>
+    <div class="info-item">
+        <div class="label">Backup Directory</div>
+        <div class="value" style="font-size:13px;">{{ cfg.backup_dir }}</div>
+    </div>
+</div>
+
+<div class="card" style="margin-top: 24px;">
+    <h2>Quick Actions</h2>
+    <div class="btn-group">
+        <a href="{{ url_for('settings_general') }}" class="btn btn-secondary">General Settings</a>
+        <a href="{{ url_for('settings_datetime') }}" class="btn btn-secondary">Sync Time</a>
+        <a href="{{ url_for('settings_wifi') }}" class="btn btn-secondary">WiFi Config</a>
+        <a href="{{ url_for('settings_wireguard') }}" class="btn btn-secondary">WireGuard</a>
+    </div>
+</div>
+
+<script>
+    // Live clock
+    function updateClock() {
+        const el = document.getElementById('sys-time');
+        if (el) {
+            const now = new Date();
+            el.textContent = now.toLocaleString('en-GB', {
+                year: 'numeric', month: 'short', day: '2-digit',
+                hour: '2-digit', minute: '2-digit', second: '2-digit'
+            });
+        }
+    }
+    updateClock();
+    setInterval(updateClock, 1000);
+</script>
+{% endblock %}

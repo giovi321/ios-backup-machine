@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% block title %}Backups - iOS Backup Machine{% endblock %}
+{% block content %}
+<h1>Backups</h1>
+<p class="subtitle">Device backups stored in {{ backup_dir }}</p>
+
+{% if backups %}
+<div class="card" style="overflow-x:auto;">
+    <h2>{{ backups|length }} backup{{ 's' if backups|length != 1 }} found</h2>
+    <table style="width:100%; border-collapse:collapse; font-size:14px; min-width:600px;">
+        <thead>
+            <tr style="border-bottom:2px solid var(--border); text-align:left;">
+                <th style="padding:10px 6px;">Device</th>
+                <th style="padding:10px 6px;">iOS</th>
+                <th style="padding:10px 6px;">Last Backup</th>
+                <th style="padding:10px 6px;">Size</th>
+                <th style="padding:10px 6px;">Status</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for b in backups %}
+            <tr style="border-bottom:1px solid var(--border);">
+                <td style="padding:10px 6px;">
+                    <div style="font-weight:600;">{{ b.device_name }}</div>
+                    {% if b.product_type %}
+                    <div style="font-size:12px; color:var(--text-muted);">{{ b.product_type }}</div>
+                    {% endif %}
+                    {% if b.serial %}
+                    <div style="font-size:11px; color:var(--text-muted);">S/N: {{ b.serial }}</div>
+                    {% endif %}
+                </td>
+                <td style="padding:10px 6px; color:var(--text-muted);">{{ b.ios_version or '-' }}</td>
+                <td style="padding:10px 6px; white-space:nowrap;">{{ b.last_backup or '-' }}</td>
+                <td style="padding:10px 6px; white-space:nowrap;">{{ b.size }}</td>
+                <td style="padding:10px 6px;">
+                    {% if b.status == 'complete' %}
+                    <span class="badge badge-on"><span class="badge-dot"></span> Complete</span>
+                    {% else %}
+                    <span class="badge" style="background:var(--warning-bg); color:var(--warning);">
+                        <span class="badge-dot" style="background:var(--warning);"></span>
+                        {% if b.snapshot_state %}{{ b.snapshot_state }}{% else %}Incomplete{% endif %}
+                    </span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<div class="card">
+    <h2>Details</h2>
+    {% for b in backups %}
+    <details style="margin-bottom:12px; border:1px solid var(--border); border-radius:var(--radius); padding:12px;">
+        <summary style="cursor:pointer; font-weight:600; font-size:14px;">
+            {{ b.device_name }}
+            <span style="font-weight:400; color:var(--text-muted); font-size:13px;">- {{ b.last_backup }}</span>
+        </summary>
+        <div class="info-grid" style="margin-top:12px;">
+            <div class="info-item">
+                <div class="label">Device Name</div>
+                <div class="value" style="font-size:14px;">{{ b.device_name }}</div>
+            </div>
+            <div class="info-item">
+                <div class="label">Product Type</div>
+                <div class="value" style="font-size:14px;">{{ b.product_type or '-' }}</div>
+            </div>
+            <div class="info-item">
+                <div class="label">iOS Version</div>
+                <div class="value" style="font-size:14px;">{{ b.ios_version or '-' }}</div>
+            </div>
+            <div class="info-item">
+                <div class="label">Serial Number</div>
+                <div class="value" style="font-size:14px;">{{ b.serial or '-' }}</div>
+            </div>
+            <div class="info-item">
+                <div class="label">UDID</div>
+                <div class="value" style="font-size:12px; word-break:break-all;">{{ b.udid }}</div>
+            </div>
+            <div class="info-item">
+                <div class="label">Last Backup</div>
+                <div class="value" style="font-size:14px;">{{ b.last_backup or '-' }}</div>
+            </div>
+            <div class="info-item">
+                <div class="label">Size</div>
+                <div class="value" style="font-size:14px;">{{ b.size }}</div>
+            </div>
+            <div class="info-item">
+                <div class="label">Status</div>
+                <div class="value" style="font-size:14px;">
+                    {% if b.status == 'complete' %}
+                    <span class="badge badge-on"><span class="badge-dot"></span> Complete</span>
+                    {% else %}
+                    <span class="badge" style="background:var(--warning-bg); color:var(--warning);">
+                        <span class="badge-dot" style="background:var(--warning);"></span>
+                        {% if b.snapshot_state %}{{ b.snapshot_state }}{% else %}Incomplete{% endif %}
+                    </span>
+                    {% endif %}
+                </div>
+            </div>
+            <div class="info-item">
+                <div class="label">Folder</div>
+                <div class="value" style="font-size:12px; word-break:break-all;">{{ b.folder }}</div>
+            </div>
+        </div>
+    </details>
+    {% endfor %}
+</div>
+{% else %}
+<div class="card">
+    <p style="color:var(--text-muted);">No backups found in {{ backup_dir }}.</p>
+    <p style="color:var(--text-muted); font-size:13px; margin-top:8px;">
+        Connect an iPhone and run a backup to see it listed here.
+    </p>
+</div>
+{% endif %}
+{% endblock %}

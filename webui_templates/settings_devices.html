@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block title %}Device Filter - iOS Backup Machine{% endblock %}
+{% block content %}
+<h1>Device Filter</h1>
+<p class="subtitle">Control which iPhones are allowed to trigger a backup.</p>
+
+<div class="card">
+    <h2>Filter Settings</h2>
+    <form method="POST">
+        <input type="hidden" name="action" value="save_filter">
+        <div class="form-check">
+            <input type="checkbox" id="filter_enabled" name="filter_enabled" {% if df.get('enabled') %}checked{% endif %}>
+            <label for="filter_enabled">Enable device filter (only listed devices can trigger backup)</label>
+        </div>
+        <div class="btn-group">
+            <button type="submit" class="btn btn-primary">Save</button>
+        </div>
+    </form>
+</div>
+
+<div class="card">
+    <h2>Connected Device</h2>
+    {% if connected_udid %}
+    <div class="info-grid" style="margin-bottom:16px;">
+        <div class="info-item">
+            <div class="label">UDID</div>
+            <div class="value" style="font-size:13px; word-break:break-all;">{{ connected_udid }}</div>
+        </div>
+        <div class="info-item">
+            <div class="label">Name</div>
+            <div class="value">{{ connected_name or 'Unknown' }}</div>
+        </div>
+    </div>
+    <form method="POST">
+        <input type="hidden" name="action" value="add_connected">
+        <button type="submit" class="btn btn-success btn-sm">Add connected device to allowed list</button>
+    </form>
+    {% else %}
+    <p style="color:var(--text-muted); font-size:14px;">No iPhone currently connected.</p>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h2>Allowed Devices</h2>
+    {% set devices = df.get('allowed_devices', []) %}
+    {% if devices %}
+    <table style="width:100%; border-collapse:collapse; font-size:14px; margin-bottom:16px;">
+        <thead>
+            <tr style="border-bottom:2px solid var(--border); text-align:left;">
+                <th style="padding:8px 4px;">Name</th>
+                <th style="padding:8px 4px;">UDID</th>
+                <th style="padding:8px 4px; width:80px;">Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for dev in devices %}
+            <tr style="border-bottom:1px solid var(--border);">
+                <td style="padding:8px 4px;">{{ dev.get('name', 'Unknown') }}</td>
+                <td style="padding:8px 4px; font-family:monospace; font-size:12px; word-break:break-all;">{{ dev.get('udid', '') }}</td>
+                <td style="padding:8px 4px;">
+                    <form method="POST" style="display:inline;">
+                        <input type="hidden" name="action" value="remove_device">
+                        <input type="hidden" name="remove_udid" value="{{ dev.get('udid', '') }}">
+                        <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('Remove this device?')">Remove</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p style="color:var(--text-muted); font-size:14px; margin-bottom:16px;">No devices in the allowed list. All devices can trigger backup when filter is disabled.</p>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h2>Add Device Manually</h2>
+    <form method="POST">
+        <input type="hidden" name="action" value="add_manual">
+        <div class="form-group">
+            <label for="manual_udid">UDID</label>
+            <input type="text" id="manual_udid" name="manual_udid" placeholder="e.g. 00008030-001A34E22168802E" required>
+        </div>
+        <div class="form-group">
+            <label for="manual_name">Friendly Name (optional)</label>
+            <input type="text" id="manual_name" name="manual_name" placeholder="e.g. John's iPhone 15">
+        </div>
+        <div class="btn-group">
+            <button type="submit" class="btn btn-primary btn-sm">Add Device</button>
+        </div>
+    </form>
+</div>
+{% endblock %}

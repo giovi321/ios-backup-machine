@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}Web UI Settings - iOS Backup Machine{% endblock %}
+{% block content %}
+<h1>Web UI Settings</h1>
+<p class="subtitle">Configure which network interfaces the web UI listens on</p>
+
+<div class="card">
+    <h2>Current Network Interfaces</h2>
+    <div style="font-size:13px; margin-bottom:8px; color:var(--text-muted);">Detected interfaces on this device:</div>
+    <table style="width:100%; font-size:13px; border-collapse:collapse;">
+        <thead>
+            <tr style="border-bottom:1px solid var(--border);">
+                <th style="text-align:left; padding:6px 8px;">Interface</th>
+                <th style="text-align:left; padding:6px 8px;">IP Address</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for iface, ips in interfaces.items() %}
+            <tr style="border-bottom:1px solid var(--border);">
+                <td style="padding:6px 8px; font-family:monospace;">{{ iface }}</td>
+                <td style="padding:6px 8px;">{{ ips | join(', ') }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<form method="POST">
+    <div class="card">
+        <h2>Binding</h2>
+        <div class="form-group">
+            <label for="port">Port</label>
+            <input type="number" id="port" name="port" value="{{ cfg.webui.port }}" min="1" max="65535">
+        </div>
+        <div class="form-group">
+            <label>Listen on Interfaces</label>
+            <div class="hint" style="margin-bottom:8px;">Select which interfaces the web UI should be accessible through. Changes require a service restart.</div>
+            <div class="checkbox-group">
+                <label>
+                    <input type="checkbox" name="bind_interfaces" value="all" {% if 'all' in cfg.webui.bind_interfaces %}checked{% endif %}>
+                    All interfaces (0.0.0.0)
+                </label>
+                <label>
+                    <input type="checkbox" name="bind_interfaces" value="wifi" {% if 'wifi' in cfg.webui.bind_interfaces %}checked{% endif %}>
+                    WiFi only
+                </label>
+                <label>
+                    <input type="checkbox" name="bind_interfaces" value="usb_iphone" {% if 'usb_iphone' in cfg.webui.bind_interfaces %}checked{% endif %}>
+                    USB iPhone hotspot
+                </label>
+            </div>
+        </div>
+        <div class="form-group">
+            <label for="secret_key">Session Secret Key</label>
+            <input type="text" id="secret_key" name="secret_key" value="{{ cfg.webui.secret_key }}">
+            <div class="hint">Used for secure session cookies. Change to a random string.</div>
+        </div>
+        <div class="btn-group">
+            <button type="submit" class="btn btn-primary">Save Settings</button>
+        </div>
+    </div>
+</form>
+{% endblock %}
