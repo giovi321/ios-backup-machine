@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Backup Settings - iOS Backup Machine{% endblock %}
+{% block content %}
+<h1>Backup Settings</h1>
+<p class="subtitle">Control backup behavior.</p>
+
+{% set bk = cfg.get('backup', {}) %}
+<div class="card">
+    <h2>Automatic Backup</h2>
+    <form method="POST">
+        <div class="form-check">
+            <input type="checkbox" id="auto_start" name="auto_start" {% if bk.get('auto_start', true) %}checked{% endif %}>
+            <label for="auto_start">Start backup automatically when an iPhone is plugged in</label>
+        </div>
+        <div class="hint" style="margin-bottom:16px; margin-left:24px;">
+            When disabled, the device will still be detected but backup will not start automatically.
+            You can use this to temporarily pause automatic backups.
+        </div>
+        <div class="form-check">
+            <input type="checkbox" id="notify_on_rejected" name="notify_on_rejected" {% if bk.get('notify_on_rejected', true) %}checked{% endif %}>
+            <label for="notify_on_rejected">Send notification when a non-allowed device is rejected</label>
+        </div>
+        <div class="hint" style="margin-bottom:16px; margin-left:24px;">
+            Only applies when the device filter is enabled. Sends a notification if a device not in the allowed list is connected.
+        </div>
+        <div class="btn-group">
+            <button type="submit" class="btn btn-primary">Save</button>
+        </div>
+    </form>
+</div>
+
+<div class="card">
+    <h2>Current Configuration</h2>
+    <div class="info-grid">
+        <div class="info-item">
+            <div class="label">Auto-start backup</div>
+            <div class="value">
+                {% if bk.get('auto_start', true) %}
+                <span class="badge badge-on"><span class="badge-dot"></span> Enabled</span>
+                {% else %}
+                <span class="badge badge-off"><span class="badge-dot"></span> Disabled</span>
+                {% endif %}
+            </div>
+        </div>
+        <div class="info-item">
+            <div class="label">Device filter</div>
+            <div class="value">
+                {% if cfg.get('device_filter', {}).get('enabled') %}
+                <span class="badge badge-on"><span class="badge-dot"></span> Active ({{ cfg.get('device_filter', {}).get('allowed_devices', [])|length }} devices)</span>
+                {% else %}
+                <span class="badge badge-off"><span class="badge-dot"></span> Off (all devices accepted)</span>
+                {% endif %}
+            </div>
+        </div>
+        <div class="info-item">
+            <div class="label">Backup directory</div>
+            <div class="value" style="font-size:13px;">{{ cfg.get('backup_dir', '/media/iosbackup/') }}</div>
+        </div>
+    </div>
+</div>
+{% endblock %}

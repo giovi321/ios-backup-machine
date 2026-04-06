@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}Date & Time - iOS Backup Machine{% endblock %}
+{% block content %}
+<h1>Date & Time</h1>
+<p class="subtitle">Set system clock manually or sync via NTP</p>
+
+<div class="card">
+    <h2>Current Time</h2>
+    <div class="info-item" style="background: var(--bg); display: inline-block;">
+        <div class="label">System Clock</div>
+        <div class="value" id="live-clock">--</div>
+    </div>
+</div>
+
+<div class="card">
+    <h2>Set Date/Time Manually</h2>
+    <form method="POST">
+        <input type="hidden" name="action" value="set_date">
+        <div class="form-group">
+            <label for="datetime">Date & Time</label>
+            <input type="datetime-local" id="datetime" name="datetime" value="{{ current_time }}">
+        </div>
+        <div class="btn-group">
+            <button type="submit" class="btn btn-primary">Set Date/Time</button>
+        </div>
+    </form>
+</div>
+
+<div class="card">
+    <h2>NTP Synchronization</h2>
+    <form method="POST">
+        <input type="hidden" name="action" value="save_ntp">
+        <div class="form-check">
+            <input type="checkbox" id="ntp_enabled" name="ntp_enabled" {% if cfg.ntp.enabled %}checked{% endif %}>
+            <label for="ntp_enabled">Enable NTP auto-sync</label>
+        </div>
+        <div class="form-group">
+            <label for="ntp_servers">NTP Servers (one per line)</label>
+            <textarea id="ntp_servers" name="ntp_servers" rows="3">{% for s in cfg.ntp.servers %}{{ s }}
+{% endfor %}</textarea>
+        </div>
+        <div class="btn-group">
+            <button type="submit" class="btn btn-primary">Save NTP Settings</button>
+        </div>
+    </form>
+    <form method="POST" style="margin-top: 12px;">
+        <input type="hidden" name="action" value="ntp_sync">
+        <button type="submit" class="btn btn-secondary">Sync Now</button>
+    </form>
+</div>
+
+<script>
+    function updateClock() {
+        const el = document.getElementById('live-clock');
+        if (el) {
+            const now = new Date();
+            el.textContent = now.toLocaleString('en-GB', {
+                year: 'numeric', month: 'short', day: '2-digit',
+                hour: '2-digit', minute: '2-digit', second: '2-digit'
+            });
+        }
+    }
+    updateClock();
+    setInterval(updateClock, 1000);
+</script>
+{% endblock %}

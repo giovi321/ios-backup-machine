@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}General Settings - iOS Backup Machine{% endblock %}
+{% block content %}
+<h1>General Settings</h1>
+<p class="subtitle">Configure backup directory, display orientation, and owner information</p>
+
+<form method="POST">
+    <div class="card">
+        <h2>Backup</h2>
+        <div class="form-group">
+            <label for="backup_dir">Backup Directory</label>
+            <input type="text" id="backup_dir" name="backup_dir" value="{{ cfg.backup_dir }}">
+            <div class="hint">Path where iPhone backups are stored</div>
+        </div>
+        <div class="form-group">
+            <label for="marker_file">Marker File</label>
+            <input type="text" id="marker_file" name="marker_file" value="{{ cfg.marker_file }}">
+            <div class="hint">File that confirms the backup drive is mounted</div>
+        </div>
+        <div class="form-group">
+            <label for="disk_device">Disk Device</label>
+            <input type="text" id="disk_device" name="disk_device" value="{{ cfg.disk_device }}">
+            <div class="hint">Block device for disk usage monitoring (e.g. /dev/mmcblk1)</div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>Display</h2>
+        <div class="form-group">
+            <label for="orientation">Screen Orientation</label>
+            <select id="orientation" name="orientation">
+                <option value="landscape_right" {% if cfg.orientation == 'landscape_right' %}selected{% endif %}>Landscape Right</option>
+                <option value="landscape_left" {% if cfg.orientation == 'landscape_left' %}selected{% endif %}>Landscape Left</option>
+                <option value="portrait" {% if cfg.orientation == 'portrait' %}selected{% endif %}>Portrait</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label for="font_path">Font Path</label>
+            <input type="text" id="font_path" name="font_path" value="{{ cfg.font_path }}">
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>Owner Information</h2>
+        <div class="hint" style="margin-bottom: 12px;">Displayed on the e-ink screen when idle</div>
+        {% for i in range(4) %}
+        <div class="form-group">
+            <label for="owner_line_{{ i }}">Line {{ i + 1 }}</label>
+            <input type="text" id="owner_line_{{ i }}" name="owner_line_{{ i }}" value="{{ cfg.owner_lines[i] if i < cfg.owner_lines|length else '' }}">
+        </div>
+        {% endfor %}
+    </div>
+
+    <div class="btn-group">
+        <button type="submit" class="btn btn-primary">Save Settings</button>
+    </div>
+</form>
+{% endblock %}

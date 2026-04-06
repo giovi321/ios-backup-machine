@@ -4,6 +4,11 @@ from datetime import datetime
 from PIL import Image, ImageDraw, ImageFont
 from waveshare_epd import epd2in13_V4, epdconfig
 
+try:
+    from notifications import send_notification
+except ImportError:
+    def send_notification(*a, **kw): pass
+
 CFG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/config.yaml")
 
 def load_cfg(p):
@@ -55,6 +60,14 @@ else:
 img = Image.new("1", (LW, LH), 255)
 drw = ImageDraw.Draw(img)
 
+# Power-on icon (bottom-left)
+def draw_power_icon(d, x, y, size=10):
+    cx, cy = x + size // 2, y + size // 2
+    r = size // 2
+    d.arc((cx - r, cy - r, cx + r, cy + r), start=300, end=240, fill=0, width=1)
+    d.line((cx, cy - r, cx, cy - 1), fill=0, width=1)
+draw_power_icon(drw, 4, LH - 14, size=10)
+
 # Border box
 margin = 0
 for t in range(0,1): # 1 pixel thickness
@@ -91,9 +104,9 @@ if out.size != (PW, PH):
     out = out.resize((PW, PH))
 
 epd.display(epd.getbuffer(out))
+send_notification("device_disconnected", {"timestamp": ts})
 time.sleep(2)
 epd.sleep()
 epdconfig.module_exit()
 sys.exit(0)
-PY
 

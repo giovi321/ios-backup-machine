@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}iOS Backup Machine{% endblock %}</title>
+    <style>
+        :root {
+            --bg: #f5f5f5;
+            --card-bg: #ffffff;
+            --primary: #1a73e8;
+            --primary-hover: #1557b0;
+            --text: #202124;
+            --text-muted: #5f6368;
+            --border: #dadce0;
+            --success: #0d652d;
+            --success-bg: #e6f4ea;
+            --error: #c5221f;
+            --error-bg: #fce8e6;
+            --warning: #e37400;
+            --warning-bg: #fef7e0;
+            --sidebar-bg: #1a1a2e;
+            --sidebar-text: #e0e0e0;
+            --sidebar-hover: #16213e;
+            --sidebar-active: #0f3460;
+            --radius: 8px;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            display: flex;
+            min-height: 100vh;
+        }
+        /* Sidebar */
+        .sidebar {
+            width: 240px;
+            background: var(--sidebar-bg);
+            color: var(--sidebar-text);
+            display: flex;
+            flex-direction: column;
+            flex-shrink: 0;
+            position: fixed;
+            top: 0;
+            left: 0;
+            bottom: 0;
+            z-index: 100;
+        }
+        .sidebar-brand {
+            padding: 20px 16px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+        .sidebar-brand img {
+            width: 32px;
+            height: 32px;
+            border-radius: 6px;
+        }
+        .sidebar-brand span {
+            font-size: 14px;
+            font-weight: 600;
+            color: #fff;
+        }
+        .sidebar nav { flex: 1; padding: 12px 0; overflow-y: auto; }
+        .sidebar nav a {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 20px;
+            color: var(--sidebar-text);
+            text-decoration: none;
+            font-size: 14px;
+            transition: background 0.15s;
+        }
+        .sidebar nav a:hover { background: var(--sidebar-hover); }
+        .sidebar nav a.active { background: var(--sidebar-active); color: #fff; font-weight: 600; }
+        .sidebar nav a svg { width: 18px; height: 18px; flex-shrink: 0; }
+        .sidebar-section {
+            padding: 8px 20px 4px;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: rgba(255,255,255,0.4);
+        }
+        /* Main */
+        .main {
+            flex: 1;
+            margin-left: 240px;
+            padding: 32px;
+            max-width: 900px;
+        }
+        h1 { font-size: 24px; margin-bottom: 8px; }
+        .subtitle { color: var(--text-muted); font-size: 14px; margin-bottom: 24px; }
+        .card {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 24px;
+            margin-bottom: 20px;
+        }
+        .card h2 { font-size: 16px; margin-bottom: 16px; }
+        /* Forms */
+        .form-group { margin-bottom: 16px; }
+        .form-group label {
+            display: block;
+            font-size: 13px;
+            font-weight: 500;
+            margin-bottom: 6px;
+            color: var(--text);
+        }
+        .form-group input[type="text"],
+        .form-group input[type="password"],
+        .form-group input[type="number"],
+        .form-group input[type="datetime-local"],
+        .form-group input[type="url"],
+        .form-group select,
+        .form-group textarea {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            font-size: 14px;
+            color: var(--text);
+            background: #fff;
+            transition: border-color 0.15s;
+        }
+        .form-group input:focus,
+        .form-group select:focus,
+        .form-group textarea:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 2px rgba(26,115,232,0.15);
+        }
+        .form-group textarea { min-height: 100px; resize: vertical; font-family: monospace; }
+        .form-group .hint { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+        .form-check {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+        .form-check input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--primary); }
+        .form-check label { font-size: 14px; margin-bottom: 0; }
+        /* Buttons */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 20px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.15s;
+            text-decoration: none;
+        }
+        .btn-primary { background: var(--primary); color: #fff; }
+        .btn-primary:hover { background: var(--primary-hover); }
+        .btn-secondary { background: #e8eaed; color: var(--text); }
+        .btn-secondary:hover { background: #d2d5d9; }
+        .btn-danger { background: var(--error); color: #fff; }
+        .btn-danger:hover { background: #a1110f; }
+        .btn-success { background: var(--success); color: #fff; }
+        .btn-success:hover { background: #094a1f; }
+        .btn-sm { padding: 6px 14px; font-size: 13px; }
+        .btn-group { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
+        /* Flash messages */
+        .flash {
+            padding: 12px 16px;
+            border-radius: var(--radius);
+            margin-bottom: 16px;
+            font-size: 14px;
+        }
+        .flash-success { background: var(--success-bg); color: var(--success); }
+        .flash-error { background: var(--error-bg); color: var(--error); }
+        .flash-warning { background: var(--warning-bg); color: var(--warning); }
+        /* Status badges */
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+        .badge-on { background: var(--success-bg); color: var(--success); }
+        .badge-off { background: #f1f3f4; color: var(--text-muted); }
+        .badge-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+        }
+        .badge-on .badge-dot { background: var(--success); }
+        .badge-off .badge-dot { background: var(--text-muted); }
+        /* Info grid */
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 16px;
+        }
+        .info-item { padding: 16px; background: var(--bg); border-radius: var(--radius); }
+        .info-item .label { font-size: 12px; color: var(--text-muted); margin-bottom: 4px; }
+        .info-item .value { font-size: 16px; font-weight: 600; }
+        /* Responsive */
+        @media (max-width: 768px) {
+            .sidebar { display: none; }
+            .main { margin-left: 0; padding: 16px; }
+        }
+        /* Checkbox group */
+        .checkbox-group { display: flex; flex-wrap: wrap; gap: 8px; }
+        .checkbox-group label {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 10px;
+            background: var(--bg);
+            border-radius: 6px;
+            font-size: 13px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <aside class="sidebar">
+        <div class="sidebar-brand">
+            <img src="{{ url_for('static', filename='icon.svg') }}" alt="Logo">
+            <span>iOS Backup Machine</span>
+        </div>
+        <nav>
+            <a href="{{ url_for('index') }}" class="{% if request.endpoint == 'index' %}active{% endif %}">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0a1 1 0 01-1-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 01-1 1"/></svg>
+                Dashboard
+            </a>
+            <div class="sidebar-section">Backup</div>
+            <a href="{{ url_for('settings_backup') }}" class="{% if request.endpoint == 'settings_backup' %}active{% endif %}">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11L2 12v6a2 2 0 002 2h16a2 2 0 002-2v-6l-3.45-6.89A2 2 0 0016.76 4H7.24a2 2 0 00-1.79 1.11z"/></svg>
+                Backup Settings
+            </a>
+            <a href="{{ url_for('backups') }}" class="{% if request.endpoint == 'backups' %}active{% endif %}">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                Backup List
+            </a>
+            <a href="{{ url_for('settings_devices') }}" class="{% if request.endpoint == 'settings_devices' %}active{% endif %}">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
+                Device Filter
+            </a>
+            <a href="{{ url_for('settings_encryption') }}" class="{% if request.endpoint == 'settings_encryption' %}active{% endif %}">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+                Encryption
+            </a>
+            <div class="sidebar-section">Settings</div>
+            <a href="{{ url_for('settings_general') }}" class="{% if request.endpoint == 'settings_general' %}active{% endif %}">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+                General
+            </a>
+            <a href="{{ url_for('settings_datetime') }}" class="{% if request.endpoint == 'settings_datetime' %}active{% endif %}">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                Date & Time
+            </a>
+            <a href="{{ url_for('settings_wifi') }}" class="{% if request.endpoint == 'settings_wifi' %}active{% endif %}">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12.55a11 11 0 0114.08 0M1.42 9a16 16 0 0121.16 0M8.53 16.11a6 6 0 016.95 0M12 20h.01"/></svg>
+                WiFi
+            </a>
+            <a href="{{ url_for('settings_notifications') }}" class="{% if request.endpoint == 'settings_notifications' %}active{% endif %}">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0"/></svg>
+                Notifications
+            </a>
+            <a href="{{ url_for('settings_wireguard') }}" class="{% if request.endpoint == 'settings_wireguard' %}active{% endif %}">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+                WireGuard
+            </a>
+            <a href="{{ url_for('settings_webui') }}" class="{% if request.endpoint == 'settings_webui' %}active{% endif %}">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+                Web UI
+            </a>
+            <a href="{{ url_for('settings_password') }}" class="{% if request.endpoint == 'settings_password' %}active{% endif %}">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                Password
+            </a>
+            <div class="sidebar-section">Tools</div>
+            <a href="{{ url_for('logs') }}" class="{% if request.endpoint in ('logs', 'view_log') %}active{% endif %}">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+                Logs
+            </a>
+            <a href="{{ url_for('logout') }}" style="margin-top:auto;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                Logout
+            </a>
+        </nav>
+    </aside>
+    <div class="main">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            {% for category, message in messages %}
+            <div class="flash flash-{{ category }}">{{ message }}</div>
+            {% endfor %}
+        {% endif %}
+        {% endwith %}
+        {% block content %}{% endblock %}
+        <div style="text-align:center; padding:24px 0 12px; font-size:12px; color:#9aa0a6;">
+            iOS Backup Machine v{{ app_version }}<br>
+            <a href="https://github.com/giovi321/ios-backup-machine" target="_blank" style="color:#9aa0a6; text-decoration:none;">GitHub</a>
+            &middot;
+            <a href="https://github.com/giovi321/apple-juicer" target="_blank" style="color:#9aa0a6; text-decoration:none;">Apple Juicer</a>
+        </div>
+    </div>
+</body>
+</html>

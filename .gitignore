@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+*.egg
+dist/
+build/
+*.whl
+
+# Virtual environments
+venv/
+.venv/
+iosbackupmachine/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Secrets and runtime data (NEVER commit these)
+wireguard.enc
+wireguard-key-backup.txt
+
+# Logs
+*.log
+
+# Config with secrets (template is committed, actual device config is not)
+# The config.yaml in the repo is a template; on the device it contains passwords/keys.
+# If you deploy to a device, do NOT push the device copy back to git.

@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Logs - iOS Backup Machine{% endblock %}
+{% block content %}
+<h1>Backup Logs</h1>
+<p class="subtitle">View backup log files stored in /var/log/iosbackupmachine/.</p>
+
+{% if log_files %}
+<div class="card">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+        <h2 style="margin-bottom:0;">{{ log_files|length }} log file{{ 's' if log_files|length != 1 }}</h2>
+        <form method="POST" action="{{ url_for('purge_logs') }}" onsubmit="return confirm('Delete ALL log files?');" style="margin:0;">
+            <button type="submit" class="btn btn-danger btn-sm">Purge All Logs</button>
+        </form>
+    </div>
+    <table style="width:100%; border-collapse:collapse; font-size:14px;">
+        <thead>
+            <tr style="border-bottom:2px solid var(--border); text-align:left;">
+                <th style="padding:8px 4px;">File</th>
+                <th style="padding:8px 4px;">Date</th>
+                <th style="padding:8px 4px;">Size</th>
+                <th style="padding:8px 4px;">Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for lf in log_files %}
+            <tr style="border-bottom:1px solid var(--border);">
+                <td style="padding:8px 4px;">
+                    <a href="{{ url_for('view_log', filename=lf.name) }}" style="color:var(--primary); text-decoration:none;">{{ lf.name }}</a>
+                </td>
+                <td style="padding:8px 4px; color:var(--text-muted);">{{ lf.mtime }}</td>
+                <td style="padding:8px 4px; color:var(--text-muted);">{{ (lf.size / 1024)|round(1) }} KB</td>
+                <td style="padding:8px 4px;">
+                    <form method="POST" action="{{ url_for('delete_log', filename=lf.name) }}" onsubmit="return confirm('Delete {{ lf.name }}?');" style="margin:0;">
+                        <button type="submit" class="btn btn-danger btn-sm" style="padding:4px 10px; font-size:12px;">Delete</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<div class="card">
+    <p style="color:var(--text-muted);">No log files found.</p>
+</div>
+{% endif %}
+{% endblock %}
