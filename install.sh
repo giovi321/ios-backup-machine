@@ -403,15 +403,14 @@ else
     detail "Copied config.yaml (fresh install)"
 fi
 
-# Copy webui directories
-if [ -d "${REPO_DIR}/webui_templates" ]; then
-    cp -r "${REPO_DIR}/webui_templates" "${INSTALL_DIR}/webui_templates"
-    info "Copied webui_templates/"
-fi
-if [ -d "${REPO_DIR}/webui_static" ]; then
-    cp -r "${REPO_DIR}/webui_static" "${INSTALL_DIR}/webui_static"
-    info "Copied webui_static/"
-fi
+# Copy webui directories (remove first to avoid cp -r nesting)
+for d in webui_templates webui_static; do
+    if [ -d "${REPO_DIR}/${d}" ]; then
+        rm -rf "${INSTALL_DIR}/${d}"
+        cp -r "${REPO_DIR}/${d}" "${INSTALL_DIR}/${d}"
+        info "Copied ${d}/"
+    fi
+done
 
 # Make shell scripts executable
 chmod +x "${INSTALL_DIR}/iosbackupmachine_launcher.sh" 2>/dev/null || true
