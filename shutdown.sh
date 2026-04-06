@@ -1,5 +1,13 @@
 #!/bin/bash
-# Launch owner-message.service, then power off the system
+# Display owner info on e-ink, then power off the system
 
-systemctl start owner-message.service
+export EPD_GPIO_CHIP=/dev/gpiochip3
+export EPD_PIN_DC=17
+export EPD_PIN_RST=1
+export EPD_PIN_BUSY=10
+export EPD_SPI_DEV=/dev/spidev3.0
+export EPD_SPI_HZ=2000000
+export IOSBACKUP_CONFIG=/root/config.yaml
+
+/root/iosbackupmachine/bin/python3 /root/owner-message.py
 shutdown -h now

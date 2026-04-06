@@ -1,5 +1,5 @@
 [Unit]
-Description=Show last backup info on e-ink display (on demand)
+Description=Show system info on e-ink display (button press)
 
 [Service]
 Type=oneshot
@@ -10,4 +10,5 @@ Environment="EPD_PIN_RST=1"
 Environment="EPD_PIN_BUSY=10"
 Environment="EPD_SPI_DEV=/dev/spidev3.0"
 Environment="EPD_SPI_HZ=2000000"
-ExecStart=/root/iosbackupmachine/bin/python3 /root/last-backup.py
+Environment="IOSBACKUP_CONFIG=/root/config.yaml"
+ExecStart=/root/iosbackupmachine/bin/python3 /root/button-info.py
