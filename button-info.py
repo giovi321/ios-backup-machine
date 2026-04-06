@@ -124,9 +124,12 @@ def get_last_backup():
 
 # --- Guard: skip if backup is running ---
 def backup_running():
+    """Check if iosbackupmachine.py is running by looking for its process."""
     try:
-        out = subprocess.run(["pgrep", "-f", "iosbackupmachine.py"],
-                             capture_output=True, text=True)
+        # Use pgrep with exact script name match, exclude grep itself
+        out = subprocess.run(
+            ["pgrep", "-f", "python.*iosbackupmachine\\.py"],
+            capture_output=True, text=True)
         return out.returncode == 0
     except Exception:
         return False
