@@ -46,34 +46,64 @@ def have_connectivity(timeout=4):
     return False
 
 def sync_ntp(servers):
-    """Try ntpdate with each server until one succeeds."""
+    """Try multiple NTP sync methods until one succeeds.
+
+    Preference order:
+    1. timedatectl / systemd-timesyncd (modern systemd, no extra packages)
+    2. ntpdate (classic, may not be packaged on newer distros)
+    3. sntp   (sometimes bundled with ntp or chrony)
+    """
+    # --- Method 1: systemd-timesyncd via timedatectl ---
+    try:
+        # Configure NTP servers
+        ntp_line = " ".join(servers)
+        subprocess.run(
+            ["timedatectl", "set-ntp", "true"],
+            capture_output=True, text=True, timeout=5
+        )
+        # Write servers to timesyncd config
+        try:
+            timesyncd_conf = "/etc/systemd/timesyncd.conf.d/iosbackup.conf"
+            os.makedirs(os.path.dirname(timesyncd_conf), exist_ok=True)
+            with open(timesyncd_conf, "w") as f:
+                f.write(f"[Time]\nNTP={ntp_line}\n")
+            subprocess.run(["systemctl", "restart", "systemd-timesyncd"],
+                           capture_output=True, text=True, timeout=10)
+        except Exception:
+            pass
+        # Wait briefly then check if time was synced
+        time.sleep(3)
+        r = subprocess.run(["timedatectl", "show", "--property=NTPSynchronized", "--value"],
+                           capture_output=True, text=True, timeout=5)
+        if r.returncode == 0 and r.stdout.strip() == "yes":
+            log(f"NTP sync OK via systemd-timesyncd (servers: {ntp_line})")
+            return True
+        # Even if not yet marked synced, timesyncd will keep trying in background
+        log("systemd-timesyncd enabled but not yet synchronized; trying other methods...")
+    except FileNotFoundError:
+        log("timedatectl not found, trying fallback methods...")
+    except Exception as e:
+        log(f"timedatectl error: {e}")
+
+    # --- Method 2 & 3: ntpdate / sntp per-server ---
     for srv in servers:
         log(f"Trying NTP server: {srv}")
-        try:
-            r = subprocess.run(
-                ["ntpdate", "-u", srv],
-                capture_output=True, text=True, timeout=15
-            )
-            if r.returncode == 0:
-                log(f"NTP sync OK via {srv}: {r.stdout.strip()}")
-                return True
-            else:
-                log(f"ntpdate failed for {srv}: {r.stderr.strip()}")
-        except FileNotFoundError:
-            # ntpdate not installed, try ntpd -gq or date -s with sntp
+        for cmd, args in [("ntpdate", ["-u", srv]), ("sntp", ["-sS", srv])]:
             try:
                 r = subprocess.run(
-                    ["sntp", "-sS", srv],
+                    [cmd] + args,
                     capture_output=True, text=True, timeout=15
                 )
                 if r.returncode == 0:
-                    log(f"sntp sync OK via {srv}: {r.stdout.strip()}")
+                    log(f"NTP sync OK via {cmd} {srv}: {r.stdout.strip()}")
                     return True
+                else:
+                    log(f"{cmd} failed for {srv}: {r.stderr.strip()}")
             except FileNotFoundError:
-                log("Neither ntpdate nor sntp found. Install ntpdate.")
-                return False
-        except subprocess.TimeoutExpired:
-            log(f"Timeout syncing with {srv}")
+                continue
+            except subprocess.TimeoutExpired:
+                log(f"Timeout syncing with {srv} via {cmd}")
+    log("All NTP sync methods failed.")
     return False
 
 def update_rtc():

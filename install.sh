@@ -169,7 +169,6 @@ PACKAGES=(
     libimobiledevice-1.0-6
     libimobiledevice-utils
     usbmuxd
-    ntpdate
     wireguard-tools
     netcat-traditional
     git
