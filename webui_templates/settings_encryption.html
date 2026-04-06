@@ -8,34 +8,24 @@
     <h2>Encryption Status</h2>
     <div class="info-grid">
         <div class="info-item">
-            <div class="label">iPhone connected</div>
+            <div class="label">iPhone</div>
             <div class="value">
                 {% if connected_udid %}
-                <span class="badge badge-on"><span class="badge-dot"></span> {{ connected_udid[:20] }}...</span>
+                <span class="badge badge-on"><span class="badge-dot"></span> Connected</span>
                 {% else %}
                 <span class="badge badge-off"><span class="badge-dot"></span> Not connected</span>
                 {% endif %}
             </div>
         </div>
         <div class="info-item">
-            <div class="label">Device encryption</div>
+            <div class="label">Backup encryption</div>
             <div class="value">
                 {% if enc_status == 'enabled' %}
                 <span class="badge badge-on"><span class="badge-dot"></span> Enabled</span>
                 {% elif enc_status == 'disabled' %}
                 <span class="badge badge-off"><span class="badge-dot"></span> Disabled</span>
                 {% else %}
-                <span class="badge badge-off"><span class="badge-dot"></span> Unknown (connect iPhone to check)</span>
-                {% endif %}
-            </div>
-        </div>
-        <div class="info-item">
-            <div class="label">Ever confirmed</div>
-            <div class="value">
-                {% if enc.get('encryption_confirmed') %}
-                <span class="badge badge-on"><span class="badge-dot"></span> Yes</span>
-                {% else %}
-                <span class="badge badge-off"><span class="badge-dot"></span> Not yet</span>
+                <span class="badge badge-off"><span class="badge-dot"></span> Connect iPhone to check</span>
                 {% endif %}
             </div>
         </div>

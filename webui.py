@@ -816,18 +816,33 @@ def settings_encryption():
     # Check current encryption status on device
     enc_status = None
     if connected_udid:
+        # Try ideviceinfo first (most reliable)
         try:
             r = subprocess.run(
-                ["idevicebackup2", "-i", "encryption", cfg.get("backup_dir", "/media/iosbackup/")],
+                ["ideviceinfo", "-k", "WillEncrypt"],
                 capture_output=True, text=True, timeout=10
             )
-            out = r.stdout + r.stderr
-            if "Backup encryption is currently enabled" in out or "will be encrypted" in out.lower():
+            val = r.stdout.strip().lower()
+            if val == "true" or val == "1":
                 enc_status = "enabled"
-            elif "Backup encryption is currently disabled" in out or "not encrypted" in out.lower():
+            elif val == "false" or val == "0":
                 enc_status = "disabled"
         except Exception:
             pass
+        # Fallback to idevicebackup2 if ideviceinfo didn't work
+        if enc_status is None:
+            try:
+                r = subprocess.run(
+                    ["idevicebackup2", "encryption", "status", cfg.get("backup_dir", "/media/iosbackup/")],
+                    capture_output=True, text=True, timeout=10
+                )
+                out = (r.stdout + r.stderr).lower()
+                if "enabled" in out or "will be encrypted" in out:
+                    enc_status = "enabled"
+                elif "disabled" in out or "not encrypted" in out:
+                    enc_status = "disabled"
+            except Exception:
+                pass
 
     if request.method == "POST":
         action = request.form.get("action", "")
