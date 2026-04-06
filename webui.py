@@ -22,6 +22,8 @@ from flask import (
 import netutil
 import wg_crypto
 import wg_manager
+import sync_crypto
+import sync_manager
 
 VERSION = "2.0"
 
@@ -73,6 +75,7 @@ def _apply_defaults(cfg):
         "mqtt": {"enabled": False, "broker": "", "port": 1883, "username": "", "password": "", "topic_prefix": "iosbackupmachine", "events": ["backup_complete", "backup_error"]},
     })
     cfg.setdefault("wireguard", {"enabled": False, "interface_name": "wg0"})
+    cfg.setdefault("sync", {"enabled": False, "auto_sync": False})
     cfg.setdefault("setup_completed", False)
 
 # ---------------------------------------------------------------------------
@@ -546,6 +549,80 @@ def settings_wireguard():
         return redirect(url_for("settings_wireguard"))
     return render_template("settings_wireguard.html",
                            cfg=cfg, wg_status=wg_status, udid=udid, has_enc_file=has_enc_file)
+
+# --- Remote Sync ---
+@app.route("/settings/sync", methods=["GET", "POST"])
+@login_required
+def settings_sync():
+    cfg = load_config()
+    sync = cfg.get("sync", {})
+    udid = wg_crypto.get_iphone_udid()
+    has_enc_file = os.path.exists(sync_crypto.ENC_FILE)
+
+    if request.method == "POST":
+        action = request.form.get("action", "")
+        if action == "save_settings":
+            sync["enabled"] = request.form.get("sync_enabled") == "on"
+            sync["auto_sync"] = request.form.get("auto_sync") == "on"
+            cfg["sync"] = sync
+            save_config(cfg)
+            flash("Sync settings saved.", "success")
+        elif action == "upload_credentials":
+            if not udid:
+                flash("No iPhone connected. Connect iPhone to encrypt credentials.", "error")
+            else:
+                host = request.form.get("host", "").strip()
+                port = request.form.get("port", "22").strip()
+                username = request.form.get("username", "").strip()
+                auth_method = request.form.get("auth_method", "key")
+                ssh_key = request.form.get("ssh_key", "")
+                password = request.form.get("password", "")
+                remote_path = request.form.get("remote_path", "").strip()
+                if not host or not username or not remote_path:
+                    flash("Host, username, and remote path are required.", "error")
+                elif auth_method == "key" and not ssh_key.strip():
+                    flash("SSH private key is required for key authentication.", "error")
+                elif auth_method == "password" and not password:
+                    flash("Password is required for password authentication.", "error")
+                else:
+                    try:
+                        port_int = int(port)
+                    except ValueError:
+                        port_int = 22
+                    cred = {
+                        "host": host,
+                        "port": port_int,
+                        "username": username,
+                        "auth_method": auth_method,
+                        "ssh_key": ssh_key if auth_method == "key" else "",
+                        "password": password if auth_method == "password" else "",
+                        "remote_path": remote_path,
+                    }
+                    if sync_crypto.encrypt_sync_config(cred, udid=udid):
+                        flash("Sync credentials encrypted and saved.", "success")
+                    else:
+                        flash("Failed to encrypt sync credentials.", "error")
+        elif action == "test_connection":
+            result = sync_manager.test_connection(udid=udid)
+            if result["success"]:
+                flash(result["message"], "success")
+            else:
+                flash(result["message"], "error")
+        elif action == "run_sync":
+            result = sync_manager.run_sync(udid=udid)
+            if result["success"]:
+                flash(result["message"], "success")
+            else:
+                flash(result["message"], "error")
+        elif action == "backup_key":
+            key = sync_crypto.backup_encryption_key(udid=udid)
+            if key:
+                flash(f"Key backed up. Key: {key}", "success")
+            else:
+                flash("No iPhone connected. Cannot backup key.", "error")
+        return redirect(url_for("settings_sync"))
+    return render_template("settings_sync.html",
+                           cfg=cfg, udid=udid, has_enc_file=has_enc_file)
 
 # --- Web UI Interface Binding ---
 @app.route("/settings/webui", methods=["GET", "POST"])

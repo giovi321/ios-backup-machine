@@ -1,0 +1,166 @@
+{% extends "base.html" %}
+{% block title %}Remote Sync - iOS Backup Machine{% endblock %}
+{% block content %}
+<h1>Remote Sync</h1>
+<p class="subtitle">Sync backups to a remote server via rsync over SSH. Credentials are encrypted using your iPhone's UUID.</p>
+
+<div class="card">
+    <h2>Status</h2>
+    <div class="info-grid">
+        <div class="info-item">
+            <div class="label">Sync</div>
+            <div class="value">
+                {% if cfg.sync.enabled %}
+                    <span class="badge badge-on"><span class="badge-dot"></span>Enabled</span>
+                {% else %}
+                    <span class="badge badge-off"><span class="badge-dot"></span>Disabled</span>
+                {% endif %}
+            </div>
+        </div>
+        <div class="info-item">
+            <div class="label">Auto-sync after backup</div>
+            <div class="value">
+                {% if cfg.sync.auto_sync %}
+                    <span class="badge badge-on"><span class="badge-dot"></span>On</span>
+                {% else %}
+                    <span class="badge badge-off"><span class="badge-dot"></span>Off</span>
+                {% endif %}
+            </div>
+        </div>
+        <div class="info-item">
+            <div class="label">iPhone Connected</div>
+            <div class="value">
+                {% if udid %}
+                    <span class="badge badge-on"><span class="badge-dot"></span>{{ udid[:12] }}...</span>
+                {% else %}
+                    <span class="badge badge-off"><span class="badge-dot"></span>Not connected</span>
+                {% endif %}
+            </div>
+        </div>
+        <div class="info-item">
+            <div class="label">Encrypted Config</div>
+            <div class="value">
+                {% if has_enc_file %}
+                    <span class="badge badge-on"><span class="badge-dot"></span>Present</span>
+                {% else %}
+                    <span class="badge badge-off"><span class="badge-dot"></span>Not found</span>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<form method="POST">
+    <div class="card">
+        <h2>Settings</h2>
+        <input type="hidden" name="action" value="save_settings">
+        <div class="form-check">
+            <input type="checkbox" id="sync_enabled" name="sync_enabled" {% if cfg.sync.enabled %}checked{% endif %}>
+            <label for="sync_enabled">Enable Remote Sync</label>
+        </div>
+        <div class="form-check">
+            <input type="checkbox" id="auto_sync" name="auto_sync" {% if cfg.sync.auto_sync %}checked{% endif %}>
+            <label for="auto_sync">Auto-sync after successful backup</label>
+        </div>
+        <p class="hint" style="margin-bottom:12px;">
+            Manual sync is always available via double-tap on the PiSugar button.
+        </p>
+        <div class="btn-group">
+            <button type="submit" class="btn btn-primary">Save Settings</button>
+        </div>
+    </div>
+</form>
+
+<div class="card">
+    <h2>SSH Credentials</h2>
+    <p style="font-size:13px; color:var(--text-muted); margin-bottom:12px;">
+        Enter your remote server SSH credentials below. They will be encrypted using the connected iPhone's UUID.<br>
+        <strong>An iPhone must be connected to encrypt credentials.</strong>
+    </p>
+    <form method="POST">
+        <input type="hidden" name="action" value="upload_credentials">
+        <div class="form-group">
+            <label for="sync_host">Host</label>
+            <input type="text" id="sync_host" name="host" placeholder="server.example.com">
+        </div>
+        <div class="form-group">
+            <label for="sync_port">Port</label>
+            <input type="number" id="sync_port" name="port" value="22" min="1" max="65535">
+        </div>
+        <div class="form-group">
+            <label for="sync_username">Username</label>
+            <input type="text" id="sync_username" name="username" placeholder="backup">
+        </div>
+        <div class="form-group">
+            <label for="auth_method">Authentication Method</label>
+            <select id="auth_method" name="auth_method" onchange="toggleAuthFields()">
+                <option value="key">SSH Private Key</option>
+                <option value="password">Password</option>
+            </select>
+        </div>
+        <div class="form-group" id="key_field">
+            <label for="sync_ssh_key">SSH Private Key</label>
+            <textarea id="sync_ssh_key" name="ssh_key" rows="8" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----
+...
+-----END OPENSSH PRIVATE KEY-----"></textarea>
+            <div class="hint">Paste your SSH private key content. It will be encrypted before storage.</div>
+        </div>
+        <div class="form-group" id="password_field" style="display:none;">
+            <label for="sync_password">Password</label>
+            <input type="password" id="sync_password" name="password" placeholder="SSH password">
+            <div class="hint">Requires <code>sshpass</code> installed on the device.</div>
+        </div>
+        <div class="form-group">
+            <label for="sync_remote_path">Remote Path</label>
+            <input type="text" id="sync_remote_path" name="remote_path" placeholder="/backups/ios">
+            <div class="hint">The directory on the remote server where backups will be synced.</div>
+        </div>
+        <div class="btn-group">
+            <button type="submit" class="btn btn-primary" {% if not udid %}disabled title="Connect iPhone first"{% endif %}>
+                Encrypt & Save
+            </button>
+        </div>
+    </form>
+</div>
+
+<div class="card">
+    <h2>Test & Control</h2>
+    <div class="btn-group">
+        <form method="POST" style="display:inline;">
+            <input type="hidden" name="action" value="test_connection">
+            <button type="submit" class="btn btn-secondary btn-sm" {% if not has_enc_file %}disabled{% endif %}>
+                Test Connection
+            </button>
+        </form>
+        <form method="POST" style="display:inline;">
+            <input type="hidden" name="action" value="run_sync">
+            <button type="submit" class="btn btn-success btn-sm" {% if not has_enc_file or not cfg.sync.enabled %}disabled{% endif %}>
+                Sync Now
+            </button>
+        </form>
+    </div>
+</div>
+
+<div class="card">
+    <h2>Encryption Key Backup</h2>
+    <p style="font-size:13px; color:var(--text-muted); margin-bottom:12px;">
+        The sync credentials are encrypted using a key derived from your iPhone's UUID.
+        Back up this key so you can decrypt the config even without the iPhone.
+        This is the same key used for WireGuard encryption.
+    </p>
+    <form method="POST">
+        <input type="hidden" name="action" value="backup_key">
+        <button type="submit" class="btn btn-secondary btn-sm" {% if not udid %}disabled title="Connect iPhone first"{% endif %}>
+            Backup Encryption Key
+        </button>
+    </form>
+</div>
+
+<script>
+function toggleAuthFields() {
+    var method = document.getElementById('auth_method').value;
+    document.getElementById('key_field').style.display = method === 'key' ? '' : 'none';
+    document.getElementById('password_field').style.display = method === 'password' ? '' : 'none';
+}
+</script>
+{% endblock %}
