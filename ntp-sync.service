@@ -6,8 +6,8 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 User=root
-Environment=IOSBACKUP_CONFIG=/root/config.yaml
-ExecStart=/root/iosbackupmachine/bin/python3 /root/ntp-sync.py
+Environment=IOSBACKUP_CONFIG=/root/iosbackupmachine/config.yaml
+ExecStart=/root/iosbackupmachine/bin/python3 /root/iosbackupmachine/ntp-sync.py
 StandardOutput=append:/var/log/iosbackupmachine/ntp-sync.log
 StandardError=append:/var/log/iosbackupmachine/ntp-sync.log
 

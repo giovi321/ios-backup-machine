@@ -18,7 +18,7 @@
   "full_charge_duration": null,
   "auto_power_on": null,
   "soft_poweroff": true,
-  "soft_poweroff_shell": "/root/shutdown.sh",
+  "soft_poweroff_shell": "/root/iosbackupmachine/shutdown.sh",
   "auto_rtc_sync": null,
   "adj_comm": null,
   "adj_diff": null,

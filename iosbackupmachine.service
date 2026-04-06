@@ -6,9 +6,9 @@ Wants=usbmuxd.service
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/root
+WorkingDirectory=/root/iosbackupmachine
 # venv python + your main script
-ExecStart=/root/iosbackupmachine/bin/python3 /root/iosbackupmachine.py
+ExecStart=/root/iosbackupmachine/bin/python3 /root/iosbackupmachine/iosbackupmachine.py
 # env for display and config
 Environment=EPD_GPIO_CHIP=/dev/gpiochip3
 Environment=EPD_PIN_DC=17
@@ -16,7 +16,7 @@ Environment=EPD_PIN_RST=1
 Environment=EPD_PIN_BUSY=10
 Environment=EPD_SPI_DEV=/dev/spidev3.0
 Environment=EPD_SPI_HZ=2000000
-Environment=IOSBACKUP_CONFIG=/root/config.yaml
+Environment=IOSBACKUP_CONFIG=/root/iosbackupmachine/config.yaml
 # logs
 ExecStartPre=/bin/mkdir -p /var/log/iosbackupmachine
 StandardOutput=append:/var/log/iosbackupmachine/autostart.log

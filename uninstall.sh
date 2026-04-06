@@ -14,7 +14,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # Configuration (must match install.sh)
 # ---------------------------------------------------------------------------
-INSTALL_DIR="/root"
+INSTALL_DIR="/root/iosbackupmachine"
 VENV_DIR="/root/iosbackupmachine"
 BACKUP_DIR="/media/iosbackup"
 EPAPER_DIR="/root/e-Paper"
@@ -25,6 +25,9 @@ APP_FILES=(
     iosbackupmachine_launcher.sh
     last-backup.py
     owner-message.py
+    boot-message.py
+    button-info.py
+    backup-sync.py
     unplug-notify.py
     unplug-notify.sh
     shutdown.sh
@@ -34,10 +37,16 @@ APP_FILES=(
     notifications.py
     wg_crypto.py
     wg_manager.py
+    sync_crypto.py
+    sync_manager.py
     epdconfig.py
     config.yaml
     UbuntuMono-Regular.ttf
     requirements.txt
+    wireguard.enc
+    wireguard-key-backup.txt
+    sync.enc
+    sync-key-backup.txt
 )
 
 APP_DIRS=(
@@ -53,6 +62,8 @@ SERVICES=(
     rtc-sync.service
     last-backup.service
     unplug-notify.service
+    button-info.service
+    backup-sync.service
 )
 
 UDEV_RULES=(
@@ -138,11 +149,12 @@ udevadm trigger 2>/dev/null || true
 info "Udev rules removed"
 
 # ---------------------------------------------------------------------------
-# Step 3: Remove application files
+# Step 3: Remove application files and install directory
 # ---------------------------------------------------------------------------
 echo ""
 echo -e "${BLUE}  [3/5] Removing application files...${NC}"
 
+# Remove individual files (handles case where INSTALL_DIR == VENV_DIR)
 for f in "${APP_FILES[@]}"; do
     target="${INSTALL_DIR}/${f}"
     if [ -f "${target}" ]; then
@@ -156,6 +168,32 @@ for d in "${APP_DIRS[@]}"; do
     if [ -d "${target}" ]; then
         rm -rf "${target}"
         detail "Removed ${target}/"
+    fi
+done
+
+# Also clean up any files from old /root install location
+OLD_FILES=(
+    /root/iosbackupmachine.py /root/iosbackupmachine_launcher.sh
+    /root/last-backup.py /root/owner-message.py /root/boot-message.py
+    /root/button-info.py /root/backup-sync.py /root/unplug-notify.py
+    /root/unplug-notify.sh /root/shutdown.sh /root/ntp-sync.py
+    /root/webui.py /root/netutil.py /root/notifications.py
+    /root/wg_crypto.py /root/wg_manager.py /root/sync_crypto.py
+    /root/sync_manager.py /root/epdconfig.py /root/UbuntuMono-Regular.ttf
+    /root/requirements.txt /root/config.yaml
+    /root/wireguard.enc /root/wireguard-key-backup.txt
+    /root/sync.enc /root/sync-key-backup.txt
+)
+for f in "${OLD_FILES[@]}"; do
+    if [ -f "$f" ]; then
+        rm -f "$f"
+        detail "Removed old-location file: $f"
+    fi
+done
+for d in /root/webui_templates /root/webui_static; do
+    if [ -d "$d" ]; then
+        rm -rf "$d"
+        detail "Removed old-location dir: $d/"
     fi
 done
 
@@ -212,12 +250,6 @@ if [ -d "${BACKUP_DIR}" ]; then
     else
         warn "Backup directory kept: ${BACKUP_DIR}"
     fi
-fi
-
-# Remove WireGuard encrypted config if present
-if [ -f "/root/wireguard.enc" ]; then
-    rm -f "/root/wireguard.enc"
-    detail "Removed /root/wireguard.enc"
 fi
 
 # ---------------------------------------------------------------------------

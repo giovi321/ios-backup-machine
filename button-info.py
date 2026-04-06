@@ -6,7 +6,7 @@ from datetime import datetime
 from PIL import Image, ImageDraw, ImageFont
 from waveshare_epd import epd2in13_V4, epdconfig
 
-CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/config.yaml")
+CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/iosbackupmachine/config.yaml")
 
 def load_config(path):
     try:

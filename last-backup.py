@@ -3,7 +3,7 @@ import os, sys, time, yaml, subprocess
 from PIL import Image, ImageDraw, ImageFont
 from waveshare_epd import epd2in13_V4, epdconfig
 
-CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/config.yaml")
+CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/iosbackupmachine/config.yaml")
 NEXT_SCRIPT = os.getenv("NEXT_SCRIPT", "owner-message.py")
 
 def load_config(path):

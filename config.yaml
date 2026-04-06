@@ -1,10 +1,10 @@
-# /root/config.yaml
+# /root/iosbackupmachine/config.yaml
 setup_completed: false
 backup_dir: /media/iosbackup/
 marker_file: .foldermarker
 disk_device: /dev/mmcblk1
 orientation: landscape_right
-font_path: "/root/UbuntuMono-Regular.ttf"
+font_path: "/root/iosbackupmachine/UbuntuMono-Regular.ttf"
 owner_lines:
   - "Property of Titius Caius"
   - "+33 123 456 7890"
@@ -89,5 +89,5 @@ notifications:
 wireguard:
   enabled: false
   interface_name: "wg0"
-  # WireGuard config is stored encrypted in /root/wireguard.enc
+  # WireGuard config is stored encrypted in /root/iosbackupmachine/wireguard.enc
   # The encryption key is derived from the connected iPhone's UUID

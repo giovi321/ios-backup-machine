@@ -5,9 +5,9 @@ After=network.target
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/root
-Environment=IOSBACKUP_CONFIG=/root/config.yaml
-ExecStart=/root/iosbackupmachine/bin/python3 /root/webui.py
+WorkingDirectory=/root/iosbackupmachine
+Environment=IOSBACKUP_CONFIG=/root/iosbackupmachine/config.yaml
+ExecStart=/root/iosbackupmachine/bin/python3 /root/iosbackupmachine/webui.py
 StandardOutput=append:/var/log/iosbackupmachine/webui.log
 StandardError=append:/var/log/iosbackupmachine/webui.log
 Restart=on-failure

@@ -4,8 +4,8 @@ Description=Show unplug notice and stop backup
 [Service]
 Type=oneshot
 User=root
-WorkingDirectory=/root
-ExecStart=/root/unplug-notify.sh
+WorkingDirectory=/root/iosbackupmachine
+ExecStart=/root/iosbackupmachine/unplug-notify.sh
 StandardOutput=append:/var/log/iosbackupmachine/autostart.log
 StandardError=append:/var/log/iosbackupmachine/autostart.log
 Environment=EPD_GPIO_CHIP=/dev/gpiochip3
@@ -14,4 +14,4 @@ Environment=EPD_PIN_RST=1
 Environment=EPD_PIN_BUSY=10
 Environment=EPD_SPI_DEV=/dev/spidev3.0
 Environment=EPD_SPI_HZ=2000000
-Environment=IOSBACKUP_CONFIG=/root/config.yaml
+Environment=IOSBACKUP_CONFIG=/root/iosbackupmachine/config.yaml

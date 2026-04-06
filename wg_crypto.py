@@ -9,8 +9,8 @@ The encryption key can be backed up via the web UI or CLI.
 """
 import os, sys, json, hashlib, base64, subprocess
 
-ENC_FILE = os.getenv("WG_ENC_FILE", "/root/wireguard.enc")
-KEY_BACKUP_FILE = os.getenv("WG_KEY_BACKUP", "/root/wireguard-key-backup.txt")
+ENC_FILE = os.getenv("WG_ENC_FILE", "/root/iosbackupmachine/wireguard.enc")
+KEY_BACKUP_FILE = os.getenv("WG_KEY_BACKUP", "/root/iosbackupmachine/wireguard-key-backup.txt")
 SALT = b"iosbackupmachine-wireguard-salt-v1"
 
 def get_iphone_udid():

@@ -27,7 +27,7 @@ import sync_manager
 
 VERSION = "2.0"
 
-CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/config.yaml")
+CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/iosbackupmachine/config.yaml")
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webui_static")
 TEMPLATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webui_templates")
 
@@ -59,7 +59,7 @@ def _apply_defaults(cfg):
     cfg.setdefault("marker_file", ".foldermarker")
     cfg.setdefault("disk_device", "/dev/mmcblk1")
     cfg.setdefault("orientation", "landscape_right")
-    cfg.setdefault("font_path", "/root/UbuntuMono-Regular.ttf")
+    cfg.setdefault("font_path", "/root/iosbackupmachine/UbuntuMono-Regular.ttf")
     cfg.setdefault("owner_lines", ["Name", "telephone", "email", "message"])
     cfg.setdefault("error_codes", {})
     cfg.setdefault("env", {})
