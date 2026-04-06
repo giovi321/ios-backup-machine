@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}{{ filename }} — iOS Backup Machine{% endblock %}
+{% block content %}
+<h1>{{ filename }}</h1>
+<p class="subtitle">
+    <a href="{{ url_for('logs') }}" style="color:var(--primary); text-decoration:none;">← Back to logs</a>
+</p>
+
+<div class="card">
+    <pre style="
+        background: #1a1a2e;
+        color: #e0e0e0;
+        padding: 16px;
+        border-radius: 6px;
+        font-size: 12px;
+        font-family: 'Consolas', 'Monaco', monospace;
+        overflow-x: auto;
+        white-space: pre-wrap;
+        word-break: break-all;
+        max-height: 600px;
+        overflow-y: auto;
+    ">{{ content }}</pre>
+</div>
+{% endblock %}

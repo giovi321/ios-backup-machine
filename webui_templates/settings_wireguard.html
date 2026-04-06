@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block title %}WireGuard — iOS Backup Machine{% endblock %}
+{% block content %}
+<h1>WireGuard VPN</h1>
+<p class="subtitle">Configure WireGuard client. Config is encrypted using your iPhone's UUID.</p>
+
+<div class="card">
+    <h2>Status</h2>
+    <div class="info-grid">
+        <div class="info-item">
+            <div class="label">Interface</div>
+            <div class="value">
+                {% if wg_status.up %}
+                    <span class="badge badge-on"><span class="badge-dot"></span>Up</span>
+                {% else %}
+                    <span class="badge badge-off"><span class="badge-dot"></span>Down</span>
+                {% endif %}
+            </div>
+        </div>
+        <div class="info-item">
+            <div class="label">iPhone Connected</div>
+            <div class="value">
+                {% if udid %}
+                    <span class="badge badge-on"><span class="badge-dot"></span>{{ udid[:12] }}...</span>
+                {% else %}
+                    <span class="badge badge-off"><span class="badge-dot"></span>Not connected</span>
+                {% endif %}
+            </div>
+        </div>
+        <div class="info-item">
+            <div class="label">Encrypted Config</div>
+            <div class="value">
+                {% if has_enc_file %}
+                    <span class="badge badge-on"><span class="badge-dot"></span>Present</span>
+                {% else %}
+                    <span class="badge badge-off"><span class="badge-dot"></span>Not found</span>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    {% if wg_status.up and wg_status.details %}
+    <pre style="margin-top:12px; padding:12px; background:var(--bg); border-radius:6px; font-size:12px; overflow-x:auto;">{{ wg_status.details }}</pre>
+    {% endif %}
+</div>
+
+<form method="POST">
+    <div class="card">
+        <h2>Settings</h2>
+        <input type="hidden" name="action" value="save_settings">
+        <div class="form-check">
+            <input type="checkbox" id="wg_enabled" name="wg_enabled" {% if cfg.wireguard.enabled %}checked{% endif %}>
+            <label for="wg_enabled">Enable WireGuard</label>
+        </div>
+        <div class="form-group">
+            <label for="interface_name">Interface Name</label>
+            <input type="text" id="interface_name" name="interface_name" value="{{ cfg.wireguard.interface_name }}">
+        </div>
+        <div class="btn-group">
+            <button type="submit" class="btn btn-primary">Save Settings</button>
+        </div>
+    </div>
+</form>
+
+<div class="card">
+    <h2>Upload WireGuard Configuration</h2>
+    <p style="font-size:13px; color:var(--text-muted); margin-bottom:12px;">
+        Paste your WireGuard client config below. It will be encrypted using the connected iPhone's UUID.<br>
+        <strong>An iPhone must be connected to encrypt the config.</strong>
+    </p>
+    <form method="POST">
+        <input type="hidden" name="action" value="upload_config">
+        <div class="form-group">
+            <label for="wg_config">WireGuard Config (.conf content)</label>
+            <textarea id="wg_config" name="wg_config" rows="10" placeholder="[Interface]
+PrivateKey = ...
+Address = 10.0.0.2/32
+DNS = 1.1.1.1
+
+[Peer]
+PublicKey = ...
+Endpoint = vpn.example.com:51820
+AllowedIPs = 0.0.0.0/0"></textarea>
+        </div>
+        <div class="btn-group">
+            <button type="submit" class="btn btn-primary" {% if not udid %}disabled title="Connect iPhone first"{% endif %}>
+                Encrypt & Save
+            </button>
+        </div>
+    </form>
+</div>
+
+<div class="card">
+    <h2>Control</h2>
+    <div class="btn-group">
+        <form method="POST" style="display:inline;">
+            <input type="hidden" name="action" value="start">
+            <button type="submit" class="btn btn-success btn-sm" {% if not has_enc_file %}disabled{% endif %}>Start WireGuard</button>
+        </form>
+        <form method="POST" style="display:inline;">
+            <input type="hidden" name="action" value="stop">
+            <button type="submit" class="btn btn-danger btn-sm">Stop WireGuard</button>
+        </form>
+    </div>
+</div>
+
+<div class="card">
+    <h2>Encryption Key Backup</h2>
+    <p style="font-size:13px; color:var(--text-muted); margin-bottom:12px;">
+        The WireGuard config is encrypted using a key derived from your iPhone's UUID.
+        Back up this key so you can decrypt the config even without the iPhone.
+        You can also retrieve the key via CLI: <code>python3 wg_crypto.py backup-key</code>
+    </p>
+    <form method="POST">
+        <input type="hidden" name="action" value="backup_key">
+        <button type="submit" class="btn btn-secondary btn-sm" {% if not udid %}disabled title="Connect iPhone first"{% endif %}>
+            Backup Encryption Key
+        </button>
+    </form>
+</div>
+{% endblock %}

@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Setup — iOS Backup Machine</title>
+    <style>
+        :root {
+            --bg: #f5f5f5;
+            --card-bg: #ffffff;
+            --primary: #1a73e8;
+            --primary-hover: #1557b0;
+            --text: #202124;
+            --text-muted: #5f6368;
+            --border: #dadce0;
+            --error: #c5221f;
+            --error-bg: #fce8e6;
+            --success: #0d652d;
+            --success-bg: #e6f4ea;
+            --radius: 8px;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            display: flex;
+            justify-content: center;
+            padding: 40px 16px;
+            min-height: 100vh;
+        }
+        .setup-container {
+            width: 100%;
+            max-width: 560px;
+        }
+        .setup-header {
+            text-align: center;
+            margin-bottom: 32px;
+        }
+        .setup-header img { width: 56px; height: 56px; margin-bottom: 12px; }
+        .setup-header h1 { font-size: 24px; margin-bottom: 4px; }
+        .setup-header p { color: var(--text-muted); font-size: 14px; }
+        .card {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 24px;
+            margin-bottom: 20px;
+        }
+        .card h2 { font-size: 16px; margin-bottom: 4px; }
+        .card .card-desc { font-size: 13px; color: var(--text-muted); margin-bottom: 16px; }
+        .form-group { margin-bottom: 16px; }
+        .form-group label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; }
+        .form-group input, .form-group select {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            font-size: 14px;
+            color: var(--text);
+            background: #fff;
+        }
+        .form-group input:focus, .form-group select:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 2px rgba(26,115,232,0.15);
+        }
+        .form-group .hint { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+            padding: 12px 20px;
+            border: none;
+            border-radius: 6px;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            background: var(--primary);
+            color: #fff;
+            transition: background 0.15s;
+        }
+        .btn:hover { background: var(--primary-hover); }
+        .flash {
+            padding: 10px 14px;
+            border-radius: var(--radius);
+            margin-bottom: 16px;
+            font-size: 14px;
+        }
+        .flash-error { background: var(--error-bg); color: var(--error); }
+        .flash-success { background: var(--success-bg); color: var(--success); }
+        .step-number {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            background: var(--primary);
+            color: #fff;
+            font-size: 12px;
+            font-weight: 600;
+            margin-right: 8px;
+            flex-shrink: 0;
+        }
+        .card h2 { display: flex; align-items: center; }
+    </style>
+</head>
+<body>
+    <div class="setup-container">
+        <div class="setup-header">
+            <img src="{{ url_for('static', filename='icon.svg') }}" alt="Logo">
+            <h1>Welcome to iOS Backup Machine</h1>
+            <p>Let's set up your device. This will only take a moment.</p>
+        </div>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            {% for category, message in messages %}
+            <div class="flash flash-{{ category }}">{{ message }}</div>
+            {% endfor %}
+        {% endif %}
+        {% endwith %}
+
+        <form method="POST">
+            <div class="card">
+                <h2><span class="step-number">1</span> Owner Information</h2>
+                <p class="card-desc">This is displayed on the e-ink screen when idle. Use it to show contact info in case the device is lost.</p>
+                <div class="form-group">
+                    <label for="owner_line_0">Line 1 (e.g. your name)</label>
+                    <input type="text" id="owner_line_0" name="owner_line_0" value="{{ cfg.get('owner_lines', [''])[0] if cfg.get('owner_lines', [''])[0] not in ['Name'] else '' }}" placeholder="Property of John Doe">
+                </div>
+                <div class="form-group">
+                    <label for="owner_line_1">Line 2 (e.g. phone number)</label>
+                    <input type="text" id="owner_line_1" name="owner_line_1" value="{{ cfg.get('owner_lines', ['',''])[1] if cfg.get('owner_lines', ['',''])[1] not in ['telephone'] else '' }}" placeholder="+1 234 567 8900">
+                </div>
+                <div class="form-group">
+                    <label for="owner_line_2">Line 3 (e.g. email)</label>
+                    <input type="text" id="owner_line_2" name="owner_line_2" value="{{ cfg.get('owner_lines', ['','',''])[2] if cfg.get('owner_lines', ['','',''])[2] not in ['email'] else '' }}" placeholder="john@example.com">
+                </div>
+                <div class="form-group">
+                    <label for="owner_line_3">Line 4 (e.g. reward message)</label>
+                    <input type="text" id="owner_line_3" name="owner_line_3" value="{{ cfg.get('owner_lines', ['','','',''])[3] if cfg.get('owner_lines', ['','','',''])[3] not in ['message'] else '' }}" placeholder="Reward if found!">
+                </div>
+            </div>
+
+            <div class="card">
+                <h2><span class="step-number">2</span> Backup Storage</h2>
+                <p class="card-desc">Where should iPhone backups be saved?</p>
+                <div class="form-group">
+                    <label for="backup_dir">Backup directory</label>
+                    <input type="text" id="backup_dir" name="backup_dir" value="{{ cfg.get('backup_dir', '/media/iosbackup/') }}">
+                    <div class="hint">Default: /media/iosbackup/ — make sure the microSD card is mounted here.</div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2><span class="step-number">3</span> Backup Encryption</h2>
+                <p class="card-desc">
+                    iOS backups should be encrypted to protect your data. Choose a password that will be set <strong>directly on your iPhone</strong>.
+                    <strong>This password is NEVER stored on this device</strong> — write it down and keep it safe. You will need it to restore backups.
+                </p>
+                <div class="form-group">
+                    <label for="encryption_password">Encryption password</label>
+                    <input type="password" id="encryption_password" name="encryption_password" placeholder="Choose a strong password">
+                    <div class="hint">
+                        If your iPhone is connected right now, encryption will be enabled immediately and the password discarded.
+                        If no iPhone is connected, you can skip this and enable encryption later from the Encryption settings page.
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2><span class="step-number">4</span> Display</h2>
+                <p class="card-desc">How is the e-ink display oriented on your device?</p>
+                <div class="form-group">
+                    <label for="orientation">Screen orientation</label>
+                    <select id="orientation" name="orientation">
+                        <option value="landscape_right" {% if cfg.get('orientation') == 'landscape_right' %}selected{% endif %}>Landscape Right (default)</option>
+                        <option value="landscape_left" {% if cfg.get('orientation') == 'landscape_left' %}selected{% endif %}>Landscape Left</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2><span class="step-number">5</span> Web UI Password <span style="font-size:12px; font-weight:400; color:var(--text-muted); margin-left:8px;">(optional)</span></h2>
+                <p class="card-desc">Protect this settings interface with a password. You can skip this and set it later.</p>
+                <div class="form-group">
+                    <label for="password">Password</label>
+                    <input type="password" id="password" name="password" minlength="4" placeholder="Leave empty to skip">
+                </div>
+                <div class="form-group">
+                    <label for="confirm_password">Confirm password</label>
+                    <input type="password" id="confirm_password" name="confirm_password" placeholder="Leave empty to skip">
+                </div>
+            </div>
+
+            <button type="submit" class="btn">Complete Setup</button>
+        </form>
+    </div>
+</body>
+</html>

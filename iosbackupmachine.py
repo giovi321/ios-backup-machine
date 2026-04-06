@@ -1,11 +1,21 @@
 #!/usr/bin/env python3
-import os, re, sys, time, subprocess, threading
+import os, re, sys, time, subprocess, threading, socket
 from datetime import datetime
 from periphery.gpio import GPIOError
 
 import yaml
 from PIL import Image, ImageDraw, ImageFont
 from waveshare_epd import epd2in13_V4, epdconfig
+
+try:
+    from notifications import send_notification
+except ImportError:
+    def send_notification(*a, **kw): pass
+
+try:
+    import netutil
+except ImportError:
+    netutil = None
 
 CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/config.yaml")
 LOG_DIR = "/var/log/iosbackupmachine"
@@ -166,10 +176,20 @@ class Panel:
     def _now_str(self):
         return datetime.now().strftime("%H:%M / %d %b %Y").lower()
 
+    def _draw_power_icon(self, drw, x, y, size=10):
+        """Draw a small power-on icon (circle with line) at (x, y)."""
+        cx, cy = x + size // 2, y + size // 2
+        r = size // 2
+        drw.arc((cx - r, cy - r, cx + r, cy + r), start=300, end=240, fill=0, width=1)
+        drw.line((cx, cy - r, cx, cy - 1), fill=0, width=1)
+
     def draw(self, subtitle, percent=None, animate=True, center_block=None, show_tail_lines=None, show_header=True):
         LW, LH = self._logical_size()
         img = Image.new('1', (LW, LH), 255)
         drw = ImageDraw.Draw(img)
+
+        # Power-on icon on every screen (bottom-left)
+        self._draw_power_icon(drw, 4, LH - 14, size=10)
 
         if show_header:
             drw.text((4, 2), TITLE, font=F_LG, fill=0)
@@ -308,12 +328,52 @@ class Animator:
 
 def ensure_dir(p): os.makedirs(p, exist_ok=True)
 
-def device_present():
+def get_connected_udids():
+    """Return list of currently connected iPhone UDIDs."""
     try:
         out = subprocess.run(["idevice_id", "-l"], capture_output=True, text=True).stdout.strip()
-        return bool(out)
+        if out:
+            return [u.strip() for u in out.splitlines() if u.strip()]
     except FileNotFoundError:
-        return False
+        pass
+    return []
+
+def device_present():
+    return bool(get_connected_udids())
+
+def device_allowed():
+    """
+    Check whether a connected device is allowed to trigger backup.
+    Returns (allowed: bool, udid: str or None, reason: str).
+    """
+    udids = get_connected_udids()
+    if not udids:
+        return False, None, "no_device"
+
+    # Re-read config each time so web UI changes take effect immediately
+    try:
+        with open(CONFIG_PATH, "r") as f:
+            live_cfg = yaml.safe_load(f) or {}
+    except Exception:
+        live_cfg = {}
+
+    # Check auto_start
+    bk = live_cfg.get("backup", {})
+    if not bk.get("auto_start", True):
+        return False, udids[0], "auto_start_disabled"
+
+    # Check device filter
+    df = live_cfg.get("device_filter", {})
+    if df.get("enabled", False):
+        allowed_udids = [d.get("udid", "") for d in df.get("allowed_devices", [])]
+        for u in udids:
+            if u in allowed_udids:
+                return True, u, "allowed"
+        # No connected device is in the allowed list
+        return False, udids[0], "device_rejected"
+
+    # Filter disabled — all devices allowed
+    return True, udids[0], "allowed"
 
 def extract_error_code(text: str):
     for pat in [r"Error\s*Code[: ]+(\d+)", r"ErrorCode[: ]+(\d+)", r"MBErrorDomain/(\d+)", r"\(Error\s*Code\s*(\d+)\)", r"mobilebackup2\s*\(\s*(-?\d+)\s*\)"]:
@@ -369,8 +429,46 @@ def get_disk_usage_pct(device_path: str):
         print(f"[WARN] df failed for {device_path}: {e}")
     return None
 
+def _check_encryption(logf, ui):
+    """Check if backup encryption is enabled on the connected device.
+    Warns on the e-ink if not, but proceeds anyway (unencrypted backup > no backup).
+    Updates encryption_confirmed in config when first confirmed enabled.
+    """
+    backup_dir = CFG.get("backup_dir", "/media/iosbackup/")
+    try:
+        r = subprocess.run(
+            ["idevicebackup2", "-i", "encryption", backup_dir],
+            capture_output=True, text=True, timeout=10
+        )
+        out = (r.stdout + r.stderr).lower()
+        if "enabled" in out:
+            if logf: logf.write("[ENC] Encryption is enabled on device.\n")
+            # Persist the confirmed flag if not already set
+            try:
+                with open(CONFIG_PATH, "r") as f:
+                    live = yaml.safe_load(f) or {}
+                enc = live.get("backup_encryption", {})
+                if not enc.get("encryption_confirmed", False):
+                    enc["encryption_confirmed"] = True
+                    live["backup_encryption"] = enc
+                    with open(CONFIG_PATH, "w") as f:
+                        yaml.dump(live, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+            except Exception:
+                pass
+            return True
+        else:
+            if logf: logf.write("[ENC] WARNING: Encryption is NOT enabled. Backup will be unencrypted.\n")
+            ui.set(subtitle="Warning: encryption OFF.\nEnable via web UI.\nProceeding unencrypted...",
+                   percent=None, animate=False, show_header=True)
+            time.sleep(4)
+            return False
+    except Exception as e:
+        if logf: logf.write(f"[ENC] Could not check encryption status: {e}\n")
+        return None  # unknown
+
 def run_backup(panel, logf, ui):
     check_backup_mount(panel, logf)
+    _check_encryption(logf, ui)
     cmd = ["idevicebackup2", "backup", CFG["backup_dir"]]
     print(f"[CMD] {' '.join(cmd)}", flush=True)
     if logf: logf.write(f"[CMD] {' '.join(cmd)}\n")
@@ -424,6 +522,7 @@ def run_backup(panel, logf, ui):
             if re.search(r"\berror\b", ln, re.I):
                 code = extract_error_code(ln)
                 msg = resolve_error_message(code) if code is not None else "Unknown error. Check logs."
+                send_notification("backup_error", {"error": msg, "code": code})
                 error_and_exit(msg, code, ln[-80:])
             return
         else:
@@ -436,6 +535,7 @@ def run_backup(panel, logf, ui):
                     ui.set(subtitle=subtitle, percent=pct, animate=True, show_header=True)
                 last_ui = time.time()
 
+    send_notification("backup_start")
     tee_and_parse(proc, logf, feed_parser)
     proc.wait(); rc = proc.returncode
     ts_end = datetime.now().strftime("%H:%M / %d %b %Y")
@@ -452,33 +552,127 @@ def run_backup(panel, logf, ui):
         ui.stop()
         panel.draw("", percent=None, animate=False, center_block=center, show_header=False)
         if logf: logf.write(f"[OK] completed at {ts_end} usage={usage_str}\n")
+        send_notification("backup_complete", {"usage": usage_str, "timestamp": ts_end})
         time.sleep(2)
         return 0
     else:
+        send_notification("backup_error", {"error": "Unknown error, rc!=0"})
         error_and_exit("Unknown error.\nCheck logs.", None, "rc!=0")
 
+# ---------------------------------------------------------------------------
+# PiSugar button listener (IP display on press, only when idle)
+# ---------------------------------------------------------------------------
+_backup_running = False
+
+def _get_ip_info():
+    """Return a short string with IP and interface type."""
+    if netutil:
+        ip, itype = netutil.get_active_ip()
+        if ip:
+            return f"IP: {ip} ({itype})"
+    # Fallback: try to get any IP
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 53))
+        ip = s.getsockname()[0]
+        s.close()
+        return f"IP: {ip}"
+    except Exception:
+        return "No network"
+
+def _pisugar_button_listener(panel, ui):
+    """Listen for PiSugar button press via TCP and show IP when idle."""
+    while True:
+        try:
+            s = socket.create_connection(("127.0.0.1", 8423), timeout=5)
+            s.sendall(b"get button_press single\n")
+            time.sleep(0.3)
+            resp = s.recv(256).decode(errors="replace").strip()
+            s.close()
+            if "single" in resp.lower() and "true" in resp.lower():
+                if not _backup_running:
+                    ip_info = _get_ip_info()
+                    ui.set(subtitle=ip_info, percent=None, animate=False, show_header=True)
+                    time.sleep(10)
+                    ui.set(subtitle="Waiting for iPhone...", percent=None, animate=True, show_header=True)
+        except Exception:
+            pass
+        time.sleep(1)
+
+# ---------------------------------------------------------------------------
+# NTP sync attempt at startup
+# ---------------------------------------------------------------------------
+def _try_ntp_sync():
+    """Attempt NTP sync if configured and internet is available."""
+    try:
+        ntp_cfg = CFG.get("ntp", {})
+        if not ntp_cfg.get("enabled", True):
+            return
+        script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ntp-sync.py")
+        if os.path.exists(script):
+            subprocess.Popen(
+                [sys.executable, script],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                env={**os.environ, "IOSBACKUP_CONFIG": CONFIG_PATH}
+            )
+    except Exception:
+        pass
+
 def main():
+    global _backup_running
     logf, logpath = log_open()
     print(f"[LOG] writing to {logpath}")
     if logf: logf.write(f"[LOG] writing to {logpath}\n")
+
+    # Try NTP sync in background
+    _try_ntp_sync()
+
     p = Panel()
     p.prepare_partial()  # enable partial for text screens
 
     ui = Animator(p)
     ui.start()
+
+    # Start PiSugar button listener for IP display
+    btn_thread = threading.Thread(target=_pisugar_button_listener, args=(p, ui), daemon=True)
+    btn_thread.start()
+
+    _last_reject_udid = None
     try:
         ui.set(subtitle="Waiting for iPhone...", percent=None, animate=True, show_header=True)
         while True:
-            if device_present():
+            allowed, udid, reason = device_allowed()
+            if allowed:
+                _backup_running = True
+                send_notification("device_connected", {"udid": udid})
                 ui.set(subtitle="Device detected. Preparing...", percent=None, animate=True, show_header=True)
                 try: subprocess.run(["idevicepair", "validate"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 except Exception: pass
                 run_backup(p, logf, ui); break
+            elif reason == "device_rejected" and udid and udid != _last_reject_udid:
+                _last_reject_udid = udid
+                ui.set(subtitle=f"Device not allowed:\n{udid[:20]}...", percent=None, animate=False, show_header=True)
+                if logf: logf.write(f"[REJECT] Device {udid} not in allowed list\n")
+                # Re-read config for notify_on_rejected
+                try:
+                    with open(CONFIG_PATH, "r") as _f:
+                        _lcfg = yaml.safe_load(_f) or {}
+                except Exception:
+                    _lcfg = {}
+                if _lcfg.get("backup", {}).get("notify_on_rejected", True):
+                    send_notification("device_rejected", {"udid": udid})
+            elif reason == "auto_start_disabled" and udid:
+                if not hasattr(main, '_auto_notified'):
+                    main._auto_notified = True
+                    ui.set(subtitle="Auto-backup disabled.\nUse web UI to start.", percent=None, animate=False, show_header=True)
             else:
+                _last_reject_udid = None
                 time.sleep(0.3)
+            time.sleep(0.3)
     except KeyboardInterrupt:
         if logf: logf.write("[INTERRUPT]\n")
     finally:
+        _backup_running = False
         try: ui.stop()
         except Exception: pass
         try: p.sleep()

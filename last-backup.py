@@ -126,6 +126,14 @@ LW, LH = (PH, PW) if ORIENT in ("landscape_right","landscape_left") else (PW, PH
 img = Image.new("1", (LW, LH), 255)
 drw = ImageDraw.Draw(img)
 
+# Power-on icon (bottom-left)
+def draw_power_icon(d, x, y, size=10):
+    cx, cy = x + size // 2, y + size // 2
+    r = size // 2
+    d.arc((cx - r, cy - r, cx + r, cy + r), start=300, end=240, fill=0, width=1)
+    d.line((cx, cy - r, cx, cy - 1), fill=0, width=1)
+draw_power_icon(drw, 4, LH - 14, size=10)
+
 # Data
 ts = latest_dir_mtime(BACKUP_DIR) if BACKUP_DIR and os.path.isdir(BACKUP_DIR) else None
 last_backup = time.strftime("%H:%M / %d %b %Y", time.localtime(ts)) if ts else "No backups found"

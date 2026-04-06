@@ -58,6 +58,14 @@ else:
 img = Image.new("1", (LW, LH), 255)
 drw = ImageDraw.Draw(img)
 
+# Power-on icon (bottom-left)
+def draw_power_icon(d, x, y, size=10):
+    cx, cy = x + size // 2, y + size // 2
+    r = size // 2
+    d.arc((cx - r, cy - r, cx + r, cy + r), start=300, end=240, fill=0, width=1)
+    d.line((cx, cy - r, cx, cy - 1), fill=0, width=1)
+draw_power_icon(drw, 4, LH - 14, size=10)
+
 # Border box near full screen
 margin = 0
 for t in range(0, 1):  # 1-pixel thick
