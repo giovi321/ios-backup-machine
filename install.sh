@@ -36,6 +36,9 @@ APP_FILES=(
     iosbackupmachine_launcher.sh
     last-backup.py
     owner-message.py
+    boot-message.py
+    button-info.py
+    backup-sync.py
     unplug-notify.py
     unplug-notify.sh
     shutdown.sh
@@ -45,6 +48,8 @@ APP_FILES=(
     notifications.py
     wg_crypto.py
     wg_manager.py
+    sync_crypto.py
+    sync_manager.py
     epdconfig.py
     config.yaml
     UbuntuMono-Regular.ttf
