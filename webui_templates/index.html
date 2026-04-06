@@ -4,6 +4,63 @@
 <h1>Dashboard</h1>
 <p class="subtitle">iOS Backup Machine status overview</p>
 
+<div class="card" style="margin-bottom:20px;">
+    <h2>Backup Status</h2>
+    <div class="info-grid">
+        <div class="info-item">
+            <div class="label">State</div>
+            <div class="value" id="backup-state">
+                {% if backup_status %}
+                    {% if backup_status.state == 'backing_up' %}
+                        <span class="badge badge-on"><span class="badge-dot"></span>Backing up{{ ' (%s%%)' % backup_status.percent if backup_status.percent is not none else '' }}</span>
+                    {% elif backup_status.state == 'complete' %}
+                        <span class="badge badge-on"><span class="badge-dot"></span>Complete</span>
+                    {% elif backup_status.state == 'waiting' %}
+                        <span class="badge badge-off"><span class="badge-dot"></span>Waiting for iPhone</span>
+                    {% elif backup_status.state == 'connected' %}
+                        <span class="badge badge-on"><span class="badge-dot"></span>Device connected</span>
+                    {% elif backup_status.state == 'error' %}
+                        <span class="badge" style="background:var(--error-bg);color:var(--error);"><span class="badge-dot" style="background:var(--error);"></span>Error</span>
+                    {% else %}
+                        <span class="badge badge-off"><span class="badge-dot"></span>{{ backup_status.state }}</span>
+                    {% endif %}
+                {% else %}
+                    <span class="badge badge-off"><span class="badge-dot"></span>Idle</span>
+                {% endif %}
+            </div>
+        </div>
+        {% if backup_status and backup_status.state == 'backing_up' and backup_status.percent is not none %}
+        <div class="info-item">
+            <div class="label">Progress</div>
+            <div class="value">
+                <div style="background:#e8eaed;border-radius:4px;height:12px;width:100%;margin-top:4px;">
+                    <div style="background:var(--primary);border-radius:4px;height:12px;width:{{ backup_status.percent }}%;transition:width 0.5s;"></div>
+                </div>
+                <small style="color:var(--text-muted);">{{ backup_status.percent }}%{% if backup_status.encrypted %} (encrypted){% endif %}</small>
+            </div>
+        </div>
+        {% endif %}
+        {% if backup_status and backup_status.state == 'complete' and backup_status.completed_at %}
+        <div class="info-item">
+            <div class="label">Last Backup</div>
+            <div class="value" style="font-size:14px;">{{ backup_status.completed_at }}</div>
+        </div>
+        {% endif %}
+        {% if backup_status and backup_status.state == 'complete' and backup_status.usage %}
+        <div class="info-item">
+            <div class="label">Disk Usage</div>
+            <div class="value">{{ backup_status.usage }}</div>
+        </div>
+        {% endif %}
+        {% if backup_status and backup_status.state == 'error' and backup_status.message %}
+        <div class="info-item">
+            <div class="label">Error</div>
+            <div class="value" style="font-size:13px;color:var(--error);">{{ backup_status.message }}</div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
 <div class="info-grid">
     <div class="info-item">
         <div class="label">System Time</div>
@@ -68,11 +125,10 @@
 </div>
 
 <script>
-    // Live clock
     function updateClock() {
-        const el = document.getElementById('sys-time');
+        var el = document.getElementById('sys-time');
         if (el) {
-            const now = new Date();
+            var now = new Date();
             el.textContent = now.toLocaleString('en-GB', {
                 year: 'numeric', month: 'short', day: '2-digit',
                 hour: '2-digit', minute: '2-digit', second: '2-digit'
@@ -81,5 +137,28 @@
     }
     updateClock();
     setInterval(updateClock, 1000);
+
+    // Auto-refresh backup status every 5 seconds
+    setInterval(function() {
+        fetch('{{ url_for("api_backup_status") }}')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                var el = document.getElementById('backup-state');
+                if (!el || !data) return;
+                if (data.state === 'backing_up') {
+                    var pct = data.percent !== null && data.percent !== undefined ? ' (' + data.percent + '%)' : '';
+                    el.innerHTML = '<span class="badge badge-on"><span class="badge-dot"></span>Backing up' + pct + '</span>';
+                } else if (data.state === 'complete') {
+                    el.innerHTML = '<span class="badge badge-on"><span class="badge-dot"></span>Complete</span>';
+                } else if (data.state === 'error') {
+                    el.innerHTML = '<span class="badge" style="background:var(--error-bg);color:var(--error);"><span class="badge-dot" style="background:var(--error);"></span>Error</span>';
+                } else if (data.state === 'waiting') {
+                    el.innerHTML = '<span class="badge badge-off"><span class="badge-dot"></span>Waiting for iPhone</span>';
+                } else if (data.state === 'connected') {
+                    el.innerHTML = '<span class="badge badge-on"><span class="badge-dot"></span>Device connected</span>';
+                }
+            })
+            .catch(function() {});
+    }, 5000);
 </script>
 {% endblock %}

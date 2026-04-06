@@ -189,6 +189,25 @@
         {% endwith %}
 
         <form method="POST">
+            <!-- Step 0: Connect iPhone -->
+            <div class="card">
+                <h2><span class="step-number">!</span> Connect your iPhone</h2>
+                <p class="card-desc">
+                    Plug your iPhone into this device via USB <strong>before completing setup</strong>.
+                    When prompted on your iPhone, tap <strong>"Trust"</strong> to allow backups.
+                    The first backup will start automatically after setup completes.
+                </p>
+                {% if connected_udid %}
+                <div class="device-info">
+                    iPhone connected: {{ connected_name or connected_udid }}
+                </div>
+                {% else %}
+                <div class="device-info-none">
+                    No iPhone detected. Plug it in now and tap "Trust" on the iPhone screen, then refresh this page.
+                </div>
+                {% endif %}
+            </div>
+
             <!-- Step 1: Owner Information -->
             <div class="card">
                 <h2><span class="step-number">1</span> Owner Information</h2>

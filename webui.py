@@ -167,6 +167,14 @@ def setup():
     current_time = time.strftime("%Y-%m-%dT%H:%M")
 
     if request.method == "POST":
+        # --- Step 0: Pair iPhone if connected ---
+        if connected_udid:
+            try:
+                subprocess.run(["idevicepair", "pair"], capture_output=True, text=True, timeout=15)
+                subprocess.run(["idevicepair", "validate"], capture_output=True, text=True, timeout=10)
+            except Exception:
+                pass
+
         # --- Step 1: Owner info ---
         owner = []
         for i in range(4):
@@ -339,13 +347,26 @@ def logout():
     flash("Logged out.", "success")
     return redirect(url_for("login"))
 
+def _read_backup_status():
+    """Read backup status from the status file written by iosbackupmachine.py."""
+    status_file = os.path.join(LOG_DIR, "backup_status.json")
+    try:
+        if os.path.exists(status_file):
+            with open(status_file, "r") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return None
+
 @app.route("/")
 @login_required
 def index():
     cfg = load_config()
     ip, iface_type = netutil.get_active_ip()
     wg_status = wg_manager.get_wireguard_status(cfg.get("wireguard", {}).get("interface_name", "wg0"))
-    return render_template("index.html", cfg=cfg, ip=ip, iface_type=iface_type, wg_status=wg_status)
+    backup_status = _read_backup_status()
+    return render_template("index.html", cfg=cfg, ip=ip, iface_type=iface_type,
+                           wg_status=wg_status, backup_status=backup_status)
 
 @app.route("/favicon.ico")
 def favicon():
@@ -1023,6 +1044,13 @@ def api_status():
         "wireguard": wg_manager.get_wireguard_status(wg.get("interface_name", "wg0")),
         "time": time.strftime("%Y-%m-%d %H:%M:%S"),
     })
+
+@app.route("/api/backup-status")
+@login_required
+def api_backup_status():
+    """API endpoint for live backup status polling."""
+    status = _read_backup_status()
+    return jsonify(status or {"state": "idle"})
 
 @app.route("/api/encryption-key")
 @login_required
