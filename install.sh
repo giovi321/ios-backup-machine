@@ -1,5 +1,5 @@
 #!/bin/bash
-# install.sh — Automated installer for iOS Backup Machine
+# install.sh - Automated installer for iOS Backup Machine
 #
 # Run on a fresh Armbian system (Radxa Zero 3W) after flashing.
 # Must be run as root.
@@ -92,9 +92,10 @@ fail() {
 # Pre-flight checks
 # ---------------------------------------------------------------------------
 echo ""
-echo -e "${BLUE}╔══════════════════════════════════════════════════════════╗${NC}"
-echo -e "${BLUE}║        iOS Backup Machine — Automated Installer        ║${NC}"
-echo -e "${BLUE}╚══════════════════════════════════════════════════════════╝${NC}"
+echo -e "${BLUE}╔══════════════════════════════════════════════════════════════╗${NC}"
+echo -e "${BLUE}║        iOS Backup Machine - Automated Installer v2.0           ║${NC}"
+echo -e "${BLUE}║        https://github.com/giovi321/ios-backup-machine        ║${NC}"
+echo -e "${BLUE}╚══════════════════════════════════════════════════════════════╝${NC}"
 echo ""
 
 if [ "$(id -u)" -ne 0 ]; then
@@ -149,7 +150,7 @@ if [ -f "${ARMBIAN_ENV}" ]; then
         NEED_REBOOT=true
     fi
 else
-    warn "${ARMBIAN_ENV} not found — skipping overlay configuration"
+    warn "${ARMBIAN_ENV} not found - skipping overlay configuration"
     warn "You may need to configure SPI/I2C overlays manually"
 fi
 
@@ -298,6 +299,17 @@ udevadm control --reload-rules
 udevadm trigger
 info "Reloaded udev rules"
 
+# Ensure usbmuxd is running so iPhone detection works immediately
+systemctl start usbmuxd.service 2>/dev/null || true
+info "Ensured usbmuxd is running"
+
+# Start the web UI service immediately so it is available before reboot
+if [ -f /etc/systemd/system/webui.service ]; then
+    systemctl start webui.service 2>/dev/null && \
+        info "Started webui.service" || \
+        warn "Could not start webui.service (will start on next boot)"
+fi
+
 # ---------------------------------------------------------------------------
 # Step 7: Prepare backup storage
 # ---------------------------------------------------------------------------
@@ -345,7 +357,7 @@ if [ -f "${PISUGAR_CONFIG}" ] && [ -d /etc/pisugar-server ]; then
     info "Installed PiSugar configuration"
 else
     if [ ! -d /etc/pisugar-server ]; then
-        warn "/etc/pisugar-server not found — PiSugar config not copied"
+        warn "/etc/pisugar-server not found - PiSugar config not copied"
     fi
 fi
 
@@ -367,9 +379,9 @@ fi
 # Done
 # ---------------------------------------------------------------------------
 echo ""
-echo -e "${GREEN}╔══════════════════════════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║           Installation complete!                        ║${NC}"
-echo -e "${GREEN}╚══════════════════════════════════════════════════════════╝${NC}"
+echo -e "${GREEN}╔══════════════════════════════════════════════════════════════╗${NC}"
+echo -e "${GREEN}║                    Installation complete!                    ║${NC}"
+echo -e "${GREEN}╚══════════════════════════════════════════════════════════════╝${NC}"
 echo ""
 echo -e "  ${GREEN}✓${NC} Application installed to ${INSTALL_DIR}"
 echo -e "  ${GREEN}✓${NC} Virtual environment at ${VENV_DIR}"

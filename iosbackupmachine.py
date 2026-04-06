@@ -372,7 +372,7 @@ def device_allowed():
         # No connected device is in the allowed list
         return False, udids[0], "device_rejected"
 
-    # Filter disabled — all devices allowed
+    # Filter disabled - all devices allowed
     return True, udids[0], "allowed"
 
 def extract_error_code(text: str):

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-wg_crypto.py — Encrypt/decrypt WireGuard settings using iPhone UUID as key.
+wg_crypto.py - Encrypt/decrypt WireGuard settings using iPhone UUID as key.
 
 The iPhone's UDID (unique device identifier) is used to derive an AES-256 key
 via PBKDF2. The encrypted WireGuard config is stored in /root/wireguard.enc.
@@ -140,7 +140,7 @@ def backup_encryption_key(udid=None):
     key_hex = key.hex()
 
     with open(KEY_BACKUP_FILE, "w") as f:
-        f.write(f"# iOS Backup Machine — WireGuard encryption key backup\n")
+        f.write(f"# iOS Backup Machine - WireGuard encryption key backup\n")
         f.write(f"# iPhone UDID: {udid}\n")
         f.write(f"# Keep this file safe!\n")
         f.write(f"key: {key_hex}\n")

@@ -302,7 +302,12 @@
         {% endif %}
         {% endwith %}
         {% block content %}{% endblock %}
-        <div style="text-align:center; padding:24px 0 12px; font-size:12px; color:#9aa0a6;">iOS Backup Machine v{{ app_version }}</div>
+        <div style="text-align:center; padding:24px 0 12px; font-size:12px; color:#9aa0a6;">
+            iOS Backup Machine v{{ app_version }}<br>
+            <a href="https://github.com/giovi321/ios-backup-machine" target="_blank" style="color:#9aa0a6; text-decoration:none;">GitHub</a>
+            &middot;
+            <a href="https://github.com/giovi321/apple-juicer" target="_blank" style="color:#9aa0a6; text-decoration:none;">Apple Juicer</a>
+        </div>
     </div>
 </body>
 </html>

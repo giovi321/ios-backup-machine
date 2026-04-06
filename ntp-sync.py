@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ntp-sync.py — Sync system clock from NTP when internet is available,
+ntp-sync.py - Sync system clock from NTP when internet is available,
 then update the PiSugar RTC.
 
 Checks connectivity via WiFi or USB iPhone hotspot.
