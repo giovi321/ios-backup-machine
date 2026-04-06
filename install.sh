@@ -175,6 +175,8 @@ PACKAGES=(
     libimobiledevice-utils
     usbmuxd
     wireguard-tools
+    sshpass
+    rsync
     netcat-traditional
     git
 )
@@ -315,10 +317,10 @@ info "Reloaded udev rules"
 systemctl start usbmuxd.service 2>/dev/null || true
 info "Ensured usbmuxd is running"
 
-# Start the web UI service immediately so it is available before reboot
+# (Re)start the web UI service so new routes are available immediately
 if [ -f /etc/systemd/system/webui.service ]; then
-    systemctl start webui.service 2>/dev/null && \
-        info "Started webui.service" || \
+    systemctl restart webui.service 2>/dev/null && \
+        info "Restarted webui.service" || \
         warn "Could not start webui.service (will start on next boot)"
 fi
 
@@ -367,6 +369,10 @@ PISUGAR_CONFIG="${REPO_DIR}/[pisugar]config.json"
 if [ -f "${PISUGAR_CONFIG}" ] && [ -d /etc/pisugar-server ]; then
     cp "${PISUGAR_CONFIG}" /etc/pisugar-server/config.json
     info "Installed PiSugar configuration"
+    # Restart PiSugar server to pick up new button config
+    systemctl restart pisugar-server 2>/dev/null && \
+        info "Restarted pisugar-server" || \
+        warn "Could not restart pisugar-server (may not be running yet)"
 else
     if [ ! -d /etc/pisugar-server ]; then
         warn "/etc/pisugar-server not found - PiSugar config not copied"
