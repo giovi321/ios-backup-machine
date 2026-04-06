@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-notifications.py — Send notifications via webhook and/or MQTT.
+notifications.py - Send notifications via webhook and/or MQTT.
 
 Reads notification config from the main config.yaml.
 """

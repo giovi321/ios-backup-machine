@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-wg_manager.py — WireGuard client management for iOS Backup Machine.
+wg_manager.py - WireGuard client management for iOS Backup Machine.
 
 Handles starting/stopping the WireGuard interface using wg-quick,
 and generating/applying configs from the encrypted store.

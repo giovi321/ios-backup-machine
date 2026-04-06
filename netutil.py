@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-netutil.py — Shared network utilities for iOS Backup Machine.
+netutil.py - Shared network utilities for iOS Backup Machine.
 
 Provides IP detection for WiFi and USB iPhone hotspot interfaces.
 """

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Backups — iOS Backup Machine{% endblock %}
+{% block title %}Backups - iOS Backup Machine{% endblock %}
 {% block content %}
 <h1>Backups</h1>
 <p class="subtitle">Device backups stored in {{ backup_dir }}</p>
@@ -29,8 +29,8 @@
                     <div style="font-size:11px; color:var(--text-muted);">S/N: {{ b.serial }}</div>
                     {% endif %}
                 </td>
-                <td style="padding:10px 6px; color:var(--text-muted);">{{ b.ios_version or '—' }}</td>
-                <td style="padding:10px 6px; white-space:nowrap;">{{ b.last_backup or '—' }}</td>
+                <td style="padding:10px 6px; color:var(--text-muted);">{{ b.ios_version or '-' }}</td>
+                <td style="padding:10px 6px; white-space:nowrap;">{{ b.last_backup or '-' }}</td>
                 <td style="padding:10px 6px; white-space:nowrap;">{{ b.size }}</td>
                 <td style="padding:10px 6px;">
                     {% if b.status == 'complete' %}
@@ -54,7 +54,7 @@
     <details style="margin-bottom:12px; border:1px solid var(--border); border-radius:var(--radius); padding:12px;">
         <summary style="cursor:pointer; font-weight:600; font-size:14px;">
             {{ b.device_name }}
-            <span style="font-weight:400; color:var(--text-muted); font-size:13px;">— {{ b.last_backup }}</span>
+            <span style="font-weight:400; color:var(--text-muted); font-size:13px;">- {{ b.last_backup }}</span>
         </summary>
         <div class="info-grid" style="margin-top:12px;">
             <div class="info-item">
@@ -63,15 +63,15 @@
             </div>
             <div class="info-item">
                 <div class="label">Product Type</div>
-                <div class="value" style="font-size:14px;">{{ b.product_type or '—' }}</div>
+                <div class="value" style="font-size:14px;">{{ b.product_type or '-' }}</div>
             </div>
             <div class="info-item">
                 <div class="label">iOS Version</div>
-                <div class="value" style="font-size:14px;">{{ b.ios_version or '—' }}</div>
+                <div class="value" style="font-size:14px;">{{ b.ios_version or '-' }}</div>
             </div>
             <div class="info-item">
                 <div class="label">Serial Number</div>
-                <div class="value" style="font-size:14px;">{{ b.serial or '—' }}</div>
+                <div class="value" style="font-size:14px;">{{ b.serial or '-' }}</div>
             </div>
             <div class="info-item">
                 <div class="label">UDID</div>
@@ -79,7 +79,7 @@
             </div>
             <div class="info-item">
                 <div class="label">Last Backup</div>
-                <div class="value" style="font-size:14px;">{{ b.last_backup or '—' }}</div>
+                <div class="value" style="font-size:14px;">{{ b.last_backup or '-' }}</div>
             </div>
             <div class="info-item">
                 <div class="label">Size</div>

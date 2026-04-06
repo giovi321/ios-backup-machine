@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Backup Encryption — iOS Backup Machine{% endblock %}
+{% block title %}Backup Encryption - iOS Backup Machine{% endblock %}
 {% block content %}
 <h1>Backup Encryption</h1>
 <p class="subtitle">Manage iOS backup encryption. The password is sent directly to the iPhone and is <strong>never stored</strong> on this device.</p>
@@ -57,7 +57,7 @@
         <div class="form-group">
             <label for="enable_password">Encryption password</label>
             <input type="password" id="enable_password" name="enable_password" required placeholder="Choose a strong password">
-            <div class="hint">This password is sent directly to the iPhone and immediately discarded. It is <strong>never saved</strong> on this device. Write it down — you need it to restore backups.</div>
+            <div class="hint">This password is sent directly to the iPhone and immediately discarded. It is <strong>never saved</strong> on this device. Write it down - you need it to restore backups.</div>
         </div>
         <div class="btn-group">
             <button type="submit" class="btn btn-success">Enable Encryption</button>
@@ -85,7 +85,7 @@
         <div class="form-group">
             <label for="new_password">New password</label>
             <input type="password" id="new_password" name="new_password" required>
-            <div class="hint">Write down the new password — it will not be stored anywhere on this device.</div>
+            <div class="hint">Write down the new password - it will not be stored anywhere on this device.</div>
         </div>
         <div class="btn-group">
             <button type="submit" class="btn btn-primary">Change Password</button>
@@ -99,11 +99,11 @@
     <h2 style="color: var(--warning);">How backup encryption works</h2>
     <ul style="font-size:13px; color:var(--text-muted); margin-left:18px; line-height:1.8;">
         <li>Encryption is set <strong>on the iPhone</strong>, not on this device.</li>
-        <li>Once enabled, the iPhone remembers the setting — all future backups are encrypted automatically.</li>
+        <li>Once enabled, the iPhone remembers the setting: all future backups are encrypted automatically.</li>
         <li>The password is only needed to <strong>restore</strong> a backup, not to create one.</li>
-        <li>The password is <strong>never stored</strong> on the iOS Backup Machine — it is sent to the iPhone and immediately discarded.</li>
+        <li>The password is <strong>never stored</strong> on the iOS Backup Machine - it is sent to the iPhone and immediately discarded.</li>
         <li>If you forget the password, you <strong>cannot</strong> restore encrypted backups.</li>
-        <li>If the first backup is interrupted after encryption is enabled, the encryption remains active — the next backup will proceed normally.</li>
+        <li>If the first backup is interrupted after encryption is enabled, the encryption remains active - the next backup will proceed normally.</li>
     </ul>
 </div>
 {% endblock %}

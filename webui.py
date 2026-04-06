@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-webui.py — Web UI for iOS Backup Machine settings.
+webui.py - Web UI for iOS Backup Machine settings.
 
 Provides a web interface to configure:
 - General settings (date, backup dir, owner info)
@@ -234,7 +234,7 @@ def setup():
                 except Exception as e:
                     flash(f"Encryption error: {e}. You can retry from the Encryption page.", "warning")
             else:
-                flash("No iPhone connected — encryption password was NOT stored. "
+                flash("No iPhone connected - encryption password was NOT stored. "
                       "Connect your iPhone and visit the Encryption page to enable it.", "warning")
 
         # --- Step 6: Device filter ---
@@ -738,7 +738,7 @@ def settings_encryption():
                         enc["encryption_confirmed"] = True
                         cfg["backup_encryption"] = enc
                         save_config(cfg)
-                        flash("Backup encryption enabled on device. The password was NOT stored — remember it for restores.", "success")
+                        flash("Backup encryption enabled on device. The password was NOT stored - remember it for restores.", "success")
                     else:
                         flash(f"Failed to enable encryption: {out[:200]}", "error")
                 except subprocess.TimeoutExpired:
@@ -760,7 +760,7 @@ def settings_encryption():
                     )
                     out = r.stdout + r.stderr
                     if r.returncode == 0:
-                        flash("Encryption password changed on device. The new password was NOT stored — remember it for restores.", "success")
+                        flash("Encryption password changed on device. The new password was NOT stored - remember it for restores.", "success")
                     else:
                         flash(f"Failed to change password: {out[:200]}", "error")
                 except Exception as e:
@@ -901,6 +901,35 @@ def view_log(filename):
     else:
         content = "Log file not found."
     return render_template("log_view.html", filename=safe, content=content)
+
+@app.route("/logs/<filename>/delete", methods=["POST"])
+@login_required
+def delete_log(filename):
+    safe = os.path.basename(filename)
+    path = os.path.join(LOG_DIR, safe)
+    if os.path.isfile(path):
+        try:
+            os.remove(path)
+            flash(f"Deleted {safe}.", "success")
+        except Exception as e:
+            flash(f"Failed to delete {safe}: {e}", "error")
+    else:
+        flash(f"Log file not found: {safe}", "error")
+    return redirect(url_for("logs"))
+
+@app.route("/logs/purge", methods=["POST"])
+@login_required
+def purge_logs():
+    count = 0
+    if os.path.isdir(LOG_DIR):
+        for f in glob.glob(os.path.join(LOG_DIR, "*.log")):
+            try:
+                os.remove(f)
+                count += 1
+            except Exception:
+                pass
+    flash(f"Purged {count} log file(s).", "success")
+    return redirect(url_for("logs"))
 
 # --- API endpoints ---
 @app.route("/api/status")
