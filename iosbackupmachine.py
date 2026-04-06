@@ -505,15 +505,38 @@ def run_backup(panel, logf, ui):
         percent=None, animate=True, show_header=True
     )
 
-    def error_and_exit(user_msg, code=None, tail=None):
+    def error_and_wait(user_msg, code=None, tail=None):
+        """Show error on display and wait for iPhone to be unplugged.
+        Does NOT exit — lets the unplug handler show its screen."""
+        # Enhance disk space errors with more context
+        if code in (105, 106):
+            user_msg = "Not enough disk space.\nCheck root filesystem (df -h)."
+        # Truncate long messages for the small display
+        lines = user_msg.split("\n")
+        truncated = []
+        for ln in lines:
+            if len(ln) > 30:
+                truncated.append(ln[:27] + "...")
+            else:
+                truncated.append(ln)
+        display_msg = "Error:\n" + "\n".join(truncated)
+
         write_status("error", message=user_msg, code=code)
-        ui.set(subtitle=f"Error: {user_msg}", percent=pct if pct is not None else 0,
-               show_tail_lines=([tail] if tail else None), animate=True, show_header=True)
+        ui.set(subtitle=display_msg, percent=pct if pct is not None else 0,
+               animate=False, show_header=True)
         if logf: logf.write(f"[ERROR] {user_msg} code={code} tail='{tail or ''}'\n")
-        time.sleep(2)
-        ui.stop()
-        panel.sleep()
-        sys.exit(1)
+        send_notification("backup_error", {"error": user_msg, "code": code})
+
+        # Wait for iPhone to be unplugged (so unplug-notify can show its screen)
+        print("[ERROR] Waiting for iPhone to be unplugged...", flush=True)
+        while True:
+            try:
+                out = subprocess.run(["idevice_id", "-l"], capture_output=True, text=True, timeout=5).stdout.strip()
+                if not out:
+                    break
+            except Exception:
+                break
+            time.sleep(1)
 
     def feed_parser(tok: str):
         nonlocal cur_line, pct, encrypted, last_ui, last_pct
@@ -547,8 +570,7 @@ def run_backup(panel, logf, ui):
             if re.search(r"\berror\b", ln, re.I):
                 code = extract_error_code(ln)
                 msg = resolve_error_message(code) if code is not None else "Unknown error. Check logs."
-                send_notification("backup_error", {"error": msg, "code": code})
-                error_and_exit(msg, code, ln[-80:])
+                error_and_wait(msg, code, ln[-80:])
             return
         else:
             cur_line += tok
@@ -600,7 +622,7 @@ def run_backup(panel, logf, ui):
         return 0
     else:
         send_notification("backup_error", {"error": "Unknown error, rc!=0"})
-        error_and_exit("Unknown error.\nCheck logs.", None, "rc!=0")
+        error_and_wait("Unknown error.\nCheck logs.", None, "rc!=0")
 
 # ---------------------------------------------------------------------------
 # PiSugar button listener (IP display on press, only when idle)
