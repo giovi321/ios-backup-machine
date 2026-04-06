@@ -159,7 +159,7 @@ info "Running from: ${REPO_DIR}"
 info "Install target: ${INSTALL_DIR}"
 info "Repo version: ${REPO_VERSION} | Installed: ${INSTALLED_VERSION}"
 
-if [ "${INSTALLED_VERSION}" = "${REPO_VERSION}" ]; then
+if [ "${INSTALLED_VERSION}" = "${REPO_VERSION}" ] && [ "${IOSBACKUP_SKIP_VERSION_CHECK:-}" != "1" ]; then
     warn "Version ${REPO_VERSION} is already installed."
     read -rp "  Re-install anyway? [y/N] " answer
     if [[ ! "${answer}" =~ ^[Yy]$ ]]; then
@@ -403,6 +403,28 @@ else
     detail "Copied config.yaml (fresh install)"
 fi
 
+# Clean stale .py files from install dir that are no longer in APP_FILES
+if [ "${IS_UPGRADE}" = true ]; then
+    for f in "${INSTALL_DIR}"/*.py; do
+        [ -f "$f" ] || continue
+        base=$(basename "$f")
+        found=false
+        for af in "${APP_FILES[@]}"; do
+            if [ "$af" = "$base" ]; then
+                found=true
+                break
+            fi
+        done
+        if [ "$found" = false ]; then
+            rm -f "$f"
+            detail "Removed stale file: $base"
+        fi
+    done
+fi
+
+# Clean Python bytecode cache
+find "${INSTALL_DIR}" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+
 # Copy webui directories (remove first to avoid cp -r nesting)
 for d in webui_templates webui_static; do
     if [ -d "${REPO_DIR}/${d}" ]; then
@@ -430,11 +452,32 @@ for f in "${REPO_DIR}"/*.rules; do
     detail "Installed $(basename "$f")"
 done
 
+# Build list of service files from repo
+REPO_SERVICES=()
 for f in "${REPO_DIR}"/*.service; do
     [ -f "$f" ] || continue
     cp "$f" /etc/systemd/system/
+    REPO_SERVICES+=("$(basename "$f")")
     detail "Installed $(basename "$f")"
 done
+
+# Remove stale service files from previous installs
+if [ "${IS_UPGRADE}" = true ]; then
+    for svc in "${ALL_SERVICES[@]}"; do
+        found=false
+        for rs in "${REPO_SERVICES[@]}"; do
+            if [ "$svc" = "$rs" ]; then
+                found=true
+                break
+            fi
+        done
+        if [ "$found" = false ] && [ -f "/etc/systemd/system/${svc}" ]; then
+            systemctl disable "${svc}" 2>/dev/null || true
+            rm -f "/etc/systemd/system/${svc}"
+            detail "Removed stale service: ${svc}"
+        fi
+    done
+fi
 
 systemctl daemon-reload
 info "Reloaded systemd daemon"
