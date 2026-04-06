@@ -11,7 +11,7 @@ Provides a web interface to configure:
 - Web UI interface binding
 All configuration is saved directly to config.yaml.
 """
-import os, sys, time, subprocess, json, secrets, yaml, copy, hashlib, glob
+import os, sys, time, subprocess, json, secrets, yaml, copy, hashlib, glob, plistlib
 from functools import wraps
 
 from flask import (
@@ -655,6 +655,107 @@ def settings_encryption():
         return redirect(url_for("settings_encryption"))
     return render_template("settings_encryption.html",
                            cfg=cfg, enc=enc, connected_udid=connected_udid, enc_status=enc_status)
+
+# --- Backup List ---
+
+def _dir_size(path):
+    """Return total size in bytes of all files under *path*."""
+    total = 0
+    try:
+        for dirpath, _dirnames, filenames in os.walk(path):
+            for f in filenames:
+                fp = os.path.join(dirpath, f)
+                try:
+                    total += os.path.getsize(fp)
+                except OSError:
+                    pass
+    except OSError:
+        pass
+    return total
+
+def _human_size(nbytes):
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if abs(nbytes) < 1024:
+            return f"{nbytes:.1f} {unit}"
+        nbytes /= 1024
+    return f"{nbytes:.1f} PB"
+
+def _parse_info_plist(plist_path):
+    """Parse an iOS backup Info.plist and return a dict of useful fields."""
+    info = {}
+    try:
+        with open(plist_path, "rb") as fp:
+            pl = plistlib.load(fp)
+        info["device_name"] = pl.get("Device Name", "")
+        info["display_name"] = pl.get("Display Name", "")
+        info["product_type"] = pl.get("Product Type", "")
+        info["product_version"] = pl.get("Product Version", "")
+        info["serial_number"] = pl.get("Serial Number", "")
+        info["udid"] = pl.get("Target Identifier", "") or pl.get("Unique Identifier", "")
+        last_backup = pl.get("Last Backup Date")
+        if last_backup:
+            info["last_backup"] = last_backup.strftime("%Y-%m-%d %H:%M:%S")
+            info["last_backup_ts"] = last_backup.timestamp()
+        else:
+            info["last_backup"] = ""
+            info["last_backup_ts"] = 0
+    except Exception:
+        pass
+    return info
+
+@app.route("/backups")
+@login_required
+def backups():
+    cfg = load_config()
+    backup_dir = cfg.get("backup_dir", "/media/iosbackup/")
+    backup_list = []
+    if os.path.isdir(backup_dir):
+        for entry in os.listdir(backup_dir):
+            entry_path = os.path.join(backup_dir, entry)
+            if not os.path.isdir(entry_path):
+                continue
+            info_plist = os.path.join(entry_path, "Info.plist")
+            if not os.path.exists(info_plist):
+                continue
+            info = _parse_info_plist(info_plist)
+            # Folder modification time as fallback date
+            try:
+                stat = os.stat(entry_path)
+                folder_mtime = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(stat.st_mtime))
+                folder_mtime_ts = stat.st_mtime
+            except OSError:
+                folder_mtime = ""
+                folder_mtime_ts = 0
+            size_bytes = _dir_size(entry_path)
+            # Check for Manifest.plist (indicates a completed backup)
+            has_manifest = os.path.exists(os.path.join(entry_path, "Manifest.plist"))
+            # Check for Status.plist snapshot state
+            status_plist = os.path.join(entry_path, "Status.plist")
+            snapshot_state = ""
+            if os.path.exists(status_plist):
+                try:
+                    with open(status_plist, "rb") as fp:
+                        st = plistlib.load(fp)
+                    snapshot_state = st.get("SnapshotState", "")
+                except Exception:
+                    pass
+            backup_list.append({
+                "folder": entry,
+                "device_name": info.get("display_name") or info.get("device_name") or entry,
+                "product_type": info.get("product_type", ""),
+                "ios_version": info.get("product_version", ""),
+                "serial": info.get("serial_number", ""),
+                "udid": info.get("udid", entry),
+                "last_backup": info.get("last_backup") or folder_mtime,
+                "sort_ts": info.get("last_backup_ts") or folder_mtime_ts,
+                "size": _human_size(size_bytes),
+                "size_bytes": size_bytes,
+                "status": "complete" if (has_manifest and snapshot_state != "uploading") else "incomplete",
+                "snapshot_state": snapshot_state,
+            })
+    # Sort newest first
+    backup_list.sort(key=lambda b: b["sort_ts"], reverse=True)
+    return render_template("backups.html", cfg=cfg, backups=backup_list, backup_dir=backup_dir)
 
 # --- Log Viewer ---
 @app.route("/logs")
