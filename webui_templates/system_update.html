@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}Update - iOS Backup Machine{% endblock %}
+{% block content %}
+<h1>System Update</h1>
+<p class="subtitle">Check for updates and upgrade iOS Backup Machine.</p>
+
+<div class="card">
+    <h2>Version Info</h2>
+    <div class="info-grid">
+        <div class="info-item">
+            <div class="label">Installed</div>
+            <div class="value">v{{ installed_version }}</div>
+        </div>
+        <div class="info-item">
+            <div class="label">Latest available</div>
+            <div class="value" id="remote-version">
+                {% if remote_version %}
+                    {% if remote_version != installed_version %}
+                    <span style="color:var(--success);">v{{ remote_version }}</span>
+                    {% else %}
+                    v{{ remote_version }}
+                    {% endif %}
+                {% else %}
+                    <span style="color:var(--text-muted);">Click "Check for Updates"</span>
+                {% endif %}
+            </div>
+        </div>
+        <div class="info-item">
+            <div class="label">Status</div>
+            <div class="value" id="update-status">
+                {% if remote_version and remote_version != installed_version %}
+                    <span class="badge badge-on"><span class="badge-dot"></span>Update available</span>
+                {% elif remote_version %}
+                    <span class="badge badge-off"><span class="badge-dot"></span>Up to date</span>
+                {% else %}
+                    <span class="badge badge-off"><span class="badge-dot"></span>Unknown</span>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if recent_commits %}
+<div class="card">
+    <h2>Recent Changes</h2>
+    <div style="font-size:13px; font-family:monospace; line-height:1.8; color:var(--text-muted);">
+        {% for commit in recent_commits %}
+        <div>{{ commit }}</div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<div class="card">
+    <h2>Actions</h2>
+    <div class="btn-group">
+        <form method="POST" style="display:inline;">
+            <input type="hidden" name="action" value="check">
+            <button type="submit" class="btn btn-secondary">Check for Updates</button>
+        </form>
+        <form method="POST" style="display:inline;" onsubmit="return confirm('This will stop all services, update the software, and restart. The web UI will be briefly unavailable. Continue?');">
+            <input type="hidden" name="action" value="update">
+            <button type="submit" class="btn btn-primary" id="update-btn"
+                {% if not remote_version or remote_version == installed_version %}disabled{% endif %}>
+                Install Update
+            </button>
+        </form>
+    </div>
+    <p class="hint" style="margin-top:12px;">
+        You can also update via SSH: <code>bash /root/ios-backup-machine/update.sh</code>
+    </p>
+</div>
+
+{% if update_log %}
+<div class="card">
+    <h2>Update Log</h2>
+    <pre style="
+        background: #1a1a1a;
+        color: #d0d0d0;
+        padding: 16px;
+        border-radius: 6px;
+        font-size: 12px;
+        font-family: 'Consolas', 'Monaco', monospace;
+        overflow-x: auto;
+        white-space: pre-wrap;
+        word-break: break-all;
+        max-height: 400px;
+        overflow-y: auto;
+    ">{{ update_log }}</pre>
+</div>
+{% endif %}
+{% endblock %}

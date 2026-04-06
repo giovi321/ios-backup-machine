@@ -2,14 +2,15 @@
 # install.sh - Automated installer for iOS Backup Machine
 #
 # Run on a fresh Armbian system (Radxa Zero 3W) after flashing.
+# Also handles upgrades: stops services, backs up files, migrates config.
 # Must be run as root.
 #
 # Usage:
 #   git clone https://github.com/giovi321/ios-backup-machine.git /root/ios-backup-machine
 #   bash /root/ios-backup-machine/install.sh
 #
-# Or if already cloned:
-#   bash install.sh
+# Or for updates:
+#   bash /root/ios-backup-machine/update.sh
 
 set -euo pipefail
 
@@ -26,11 +27,17 @@ EPAPER_DIR="/root/e-Paper"
 PISUGAR_SCRIPT_URL="https://cdn.pisugar.com/release/pisugar-power-manager.sh"
 ARMBIAN_ENV="/boot/armbianEnv.txt"
 LOG_DIR="/var/log/iosbackupmachine"
+LOCK_FILE="/tmp/iosbackupmachine-install.lock"
+VERSION_FILE="${INSTALL_DIR}/.installed_version"
+BACKUP_ARCHIVE_DIR="/root/iosbackupmachine-backups"
 
 # Required overlays for SPI and I2C
 REQUIRED_OVERLAYS="rk3568-spi3-m1-cs0-spidev rk3568-i2c3-m0"
 
-# Files to copy to /root
+# Get version from repo
+REPO_VERSION=$(grep -oP 'VERSION\s*=\s*"\K[^"]+' "${REPO_DIR}/webui.py" 2>/dev/null || echo "unknown")
+
+# Files to copy
 APP_FILES=(
     iosbackupmachine.py
     iosbackupmachine_launcher.sh
@@ -55,68 +62,13 @@ APP_FILES=(
     requirements.txt
 )
 
-# Services to install (all .service files)
-# Services that should be enabled at boot
+# Services
 ENABLE_SERVICES=(
     owner-message.service
     webui.service
     ntp-sync.service
     rtc-sync.service
 )
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
-
-step=0
-step() {
-    step=$((step + 1))
-    echo ""
-    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "${BLUE}  Step ${step}: $1${NC}"
-    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-}
-
-info()    { echo -e "${GREEN}  ✓ $1${NC}"; }
-warn()    { echo -e "${YELLOW}  ⚠ $1${NC}"; }
-error()   { echo -e "${RED}  ✗ $1${NC}"; }
-detail()  { echo -e "    $1"; }
-
-fail() {
-    error "$1"
-    exit 1
-}
-
-# ---------------------------------------------------------------------------
-# Pre-flight checks
-# ---------------------------------------------------------------------------
-echo ""
-echo -e "${BLUE}╔══════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${BLUE}║        iOS Backup Machine - Automated Installer v2.1           ║${NC}"
-echo -e "${BLUE}║        https://github.com/giovi321/ios-backup-machine        ║${NC}"
-echo -e "${BLUE}╚══════════════════════════════════════════════════════════════╝${NC}"
-echo ""
-
-if [ "$(id -u)" -ne 0 ]; then
-    fail "This script must be run as root. Try: sudo bash $0"
-fi
-
-if [ ! -f "${REPO_DIR}/iosbackupmachine.py" ]; then
-    fail "Cannot find iosbackupmachine.py in ${REPO_DIR}. Run this script from the cloned repo directory."
-fi
-
-info "Running from: ${REPO_DIR}"
-info "Install target: ${INSTALL_DIR}"
-
-# ---------------------------------------------------------------------------
-# Step 0: Stop all iOS Backup Machine services before updating
-# ---------------------------------------------------------------------------
-step "Stop running services"
 
 ALL_SERVICES=(
     iosbackupmachine.service
@@ -130,6 +82,97 @@ ALL_SERVICES=(
     backup-sync.service
 )
 
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+step_n=0
+step() {
+    step_n=$((step_n + 1))
+    echo ""
+    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${BLUE}  Step ${step_n}: $1${NC}"
+    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+}
+
+info()    { echo -e "${GREEN}  ✓ $1${NC}"; }
+warn()    { echo -e "${YELLOW}  ⚠ $1${NC}"; }
+error()   { echo -e "${RED}  ✗ $1${NC}"; }
+detail()  { echo -e "    $1"; }
+
+fail() {
+    error "$1"
+    # Remove lock on failure
+    rm -f "${LOCK_FILE}"
+    exit 1
+}
+
+cleanup() {
+    rm -f "${LOCK_FILE}"
+}
+trap cleanup EXIT
+
+# ---------------------------------------------------------------------------
+# Pre-flight checks
+# ---------------------------------------------------------------------------
+echo ""
+echo -e "${BLUE}╔══════════════════════════════════════════════════════════════╗${NC}"
+echo -e "${BLUE}║      iOS Backup Machine - Installer v${REPO_VERSION}                    ║${NC}"
+echo -e "${BLUE}║      https://github.com/giovi321/ios-backup-machine        ║${NC}"
+echo -e "${BLUE}╚══════════════════════════════════════════════════════════════╝${NC}"
+echo ""
+
+if [ "$(id -u)" -ne 0 ]; then
+    fail "This script must be run as root. Try: sudo bash $0"
+fi
+
+if [ ! -f "${REPO_DIR}/iosbackupmachine.py" ]; then
+    fail "Cannot find iosbackupmachine.py in ${REPO_DIR}. Run this script from the cloned repo directory."
+fi
+
+# --- Lock file: prevent concurrent installs ---
+if [ -f "${LOCK_FILE}" ]; then
+    LOCK_PID=$(cat "${LOCK_FILE}" 2>/dev/null || echo "")
+    if [ -n "${LOCK_PID}" ] && kill -0 "${LOCK_PID}" 2>/dev/null; then
+        fail "Another install is running (PID ${LOCK_PID}). Remove ${LOCK_FILE} if this is stale."
+    else
+        warn "Stale lock file found, removing."
+        rm -f "${LOCK_FILE}"
+    fi
+fi
+echo $$ > "${LOCK_FILE}"
+
+# --- Version check ---
+IS_UPGRADE=false
+INSTALLED_VERSION="none"
+if [ -f "${VERSION_FILE}" ]; then
+    INSTALLED_VERSION=$(cat "${VERSION_FILE}" 2>/dev/null || echo "unknown")
+    IS_UPGRADE=true
+fi
+
+info "Running from: ${REPO_DIR}"
+info "Install target: ${INSTALL_DIR}"
+info "Repo version: ${REPO_VERSION} | Installed: ${INSTALLED_VERSION}"
+
+if [ "${INSTALLED_VERSION}" = "${REPO_VERSION}" ]; then
+    warn "Version ${REPO_VERSION} is already installed."
+    read -rp "  Re-install anyway? [y/N] " answer
+    if [[ ! "${answer}" =~ ^[Yy]$ ]]; then
+        echo "  Aborted."
+        exit 0
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# Step: Stop all services before updating
+# ---------------------------------------------------------------------------
+step "Stop running services"
+
 for svc in "${ALL_SERVICES[@]}"; do
     if systemctl is-active --quiet "${svc}" 2>/dev/null; then
         systemctl stop "${svc}" 2>/dev/null || true
@@ -137,7 +180,7 @@ for svc in "${ALL_SERVICES[@]}"; do
     fi
 done
 
-# Verify no services are still running
+# Verify none are still running
 STILL_RUNNING=""
 for svc in "${ALL_SERVICES[@]}"; do
     if systemctl is-active --quiet "${svc}" 2>/dev/null; then
@@ -146,22 +189,57 @@ for svc in "${ALL_SERVICES[@]}"; do
 done
 
 if [ -n "${STILL_RUNNING}" ]; then
-    error "The following services are still running:${STILL_RUNNING}"
-    error "Cannot proceed with update while services are active."
-    fail "Stop them manually with: systemctl stop <service>, then re-run the installer."
+    fail "Services still running:${STILL_RUNNING}. Stop them manually, then re-run."
 fi
 
 info "All services stopped"
 
 # ---------------------------------------------------------------------------
-# Step 1: Enable I2C and SPI overlays in /boot/armbianEnv.txt
+# Step: Backup current installation (upgrades only)
+# ---------------------------------------------------------------------------
+if [ "${IS_UPGRADE}" = true ]; then
+    step "Backup current installation"
+
+    BACKUP_TS=$(date '+%Y%m%d-%H%M%S')
+    BACKUP_PATH="${BACKUP_ARCHIVE_DIR}/${BACKUP_TS}"
+    mkdir -p "${BACKUP_PATH}"
+
+    # Backup app files
+    for f in "${APP_FILES[@]}"; do
+        src="${INSTALL_DIR}/${f}"
+        if [ -f "${src}" ]; then
+            cp "${src}" "${BACKUP_PATH}/" 2>/dev/null || true
+        fi
+    done
+
+    # Backup config
+    if [ -f "${INSTALL_DIR}/config.yaml" ]; then
+        cp "${INSTALL_DIR}/config.yaml" "${BACKUP_PATH}/config.yaml"
+    fi
+
+    # Backup webui dirs
+    for d in webui_templates webui_static; do
+        if [ -d "${INSTALL_DIR}/${d}" ]; then
+            cp -r "${INSTALL_DIR}/${d}" "${BACKUP_PATH}/${d}" 2>/dev/null || true
+        fi
+    done
+
+    info "Backed up to ${BACKUP_PATH}"
+
+    # Keep only the 5 most recent backups
+    if [ -d "${BACKUP_ARCHIVE_DIR}" ]; then
+        ls -1dt "${BACKUP_ARCHIVE_DIR}"/*/ 2>/dev/null | tail -n +6 | xargs rm -rf 2>/dev/null || true
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# Step: Enable I2C and SPI overlays
 # ---------------------------------------------------------------------------
 step "Enable I2C and SPI overlays"
 
 NEED_REBOOT=false
 
 if [ -f "${ARMBIAN_ENV}" ]; then
-    # Check if overlay_prefix exists
     if grep -q "^overlay_prefix=" "${ARMBIAN_ENV}"; then
         info "overlay_prefix already set"
     else
@@ -170,7 +248,6 @@ if [ -f "${ARMBIAN_ENV}" ]; then
         NEED_REBOOT=true
     fi
 
-    # Check if overlays line exists and contains required overlays
     if grep -q "^overlays=" "${ARMBIAN_ENV}"; then
         CURRENT_OVERLAYS=$(grep "^overlays=" "${ARMBIAN_ENV}" | cut -d= -f2-)
         MISSING=""
@@ -180,7 +257,6 @@ if [ -f "${ARMBIAN_ENV}" ]; then
             fi
         done
         if [ -n "${MISSING}" ]; then
-            # Append missing overlays
             NEW_OVERLAYS="${CURRENT_OVERLAYS}${MISSING}"
             sed -i "s|^overlays=.*|overlays=${NEW_OVERLAYS}|" "${ARMBIAN_ENV}"
             info "Added missing overlays:${MISSING}"
@@ -195,11 +271,10 @@ if [ -f "${ARMBIAN_ENV}" ]; then
     fi
 else
     warn "${ARMBIAN_ENV} not found - skipping overlay configuration"
-    warn "You may need to configure SPI/I2C overlays manually"
 fi
 
 # ---------------------------------------------------------------------------
-# Step 2: Install system dependencies
+# Step: Install system dependencies
 # ---------------------------------------------------------------------------
 step "Install system dependencies"
 
@@ -226,7 +301,7 @@ apt-get install -y -qq "${PACKAGES[@]}"
 info "System dependencies installed"
 
 # ---------------------------------------------------------------------------
-# Step 3: Create Python virtual environment
+# Step: Create Python virtual environment
 # ---------------------------------------------------------------------------
 step "Create Python virtual environment"
 
@@ -243,7 +318,7 @@ info "Installing Python packages..."
 info "Python packages installed"
 
 # ---------------------------------------------------------------------------
-# Step 4: Clone e-Paper driver and install
+# Step: Install Waveshare e-Paper driver
 # ---------------------------------------------------------------------------
 step "Install Waveshare e-Paper driver"
 
@@ -254,7 +329,6 @@ else
     info "Cloned e-Paper repository"
 fi
 
-# Copy custom epdconfig.py
 WAVESHARE_LIB="${EPAPER_DIR}/RaspberryPi_JetsonNano/python/lib/waveshare_epd"
 if [ -d "${WAVESHARE_LIB}" ]; then
     cp "${REPO_DIR}/epdconfig.py" "${WAVESHARE_LIB}/epdconfig.py"
@@ -263,7 +337,6 @@ else
     warn "Waveshare driver lib not found at expected path"
 fi
 
-# Symlink waveshare_epd into venv site-packages
 PYTHON_VERSION=$("${VENV_DIR}/bin/python3" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
 SITE_PACKAGES="${VENV_DIR}/lib/python${PYTHON_VERSION}/site-packages"
 
@@ -277,7 +350,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Step 5: Copy application files to /root
+# Step: Install application files
 # ---------------------------------------------------------------------------
 step "Install application files"
 
@@ -292,12 +365,42 @@ for f in "${APP_FILES[@]}"; do
     fi
 done
 
-# Copy config.yaml only if it doesn't already exist (preserve user settings on upgrade)
-if [ ! -f "${INSTALL_DIR}/config.yaml" ]; then
+# --- Config migration ---
+if [ -f "${INSTALL_DIR}/config.yaml" ]; then
+    info "Migrating config: merging new defaults into existing config.yaml"
+    # Use Python to merge new defaults without overwriting existing values
+    "${VENV_DIR}/bin/python3" - "${REPO_DIR}/config.yaml.example" "${INSTALL_DIR}/config.yaml" <<'PYEOF'
+import sys, yaml
+
+example_path, config_path = sys.argv[1], sys.argv[2]
+
+with open(example_path, "r") as f:
+    defaults = yaml.safe_load(f) or {}
+with open(config_path, "r") as f:
+    current = yaml.safe_load(f) or {}
+
+def merge(base, override):
+    """Recursively merge base into override (override wins)."""
+    result = dict(base)
+    for k, v in override.items():
+        if k in result and isinstance(result[k], dict) and isinstance(v, dict):
+            result[k] = merge(result[k], v)
+        else:
+            result[k] = v
+    return result
+
+merged = merge(defaults, current)
+
+with open(config_path, "w") as f:
+    yaml.dump(merged, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+
+added = [k for k in defaults if k not in current]
+if added:
+    print(f"    Added new config keys: {', '.join(added)}")
+PYEOF
+else
     cp "${REPO_DIR}/config.yaml.example" "${INSTALL_DIR}/config.yaml"
     detail "Copied config.yaml (fresh install)"
-else
-    info "config.yaml already exists, preserving user settings"
 fi
 
 # Copy webui directories
@@ -318,18 +421,16 @@ chmod +x "${INSTALL_DIR}/shutdown.sh" 2>/dev/null || true
 info "Application files installed to ${INSTALL_DIR}"
 
 # ---------------------------------------------------------------------------
-# Step 6: Install systemd services and udev rules
+# Step: Install systemd services and udev rules
 # ---------------------------------------------------------------------------
 step "Install systemd services and udev rules"
 
-# Copy udev rules
 for f in "${REPO_DIR}"/*.rules; do
     [ -f "$f" ] || continue
     cp "$f" /etc/udev/rules.d/
     detail "Installed $(basename "$f")"
 done
 
-# Copy systemd service files
 for f in "${REPO_DIR}"/*.service; do
     [ -f "$f" ] || continue
     cp "$f" /etc/systemd/system/
@@ -339,7 +440,6 @@ done
 systemctl daemon-reload
 info "Reloaded systemd daemon"
 
-# Enable services
 for svc in "${ENABLE_SERVICES[@]}"; do
     if [ -f "/etc/systemd/system/${svc}" ]; then
         systemctl enable "${svc}" 2>/dev/null
@@ -353,11 +453,9 @@ udevadm control --reload-rules
 udevadm trigger
 info "Reloaded udev rules"
 
-# Ensure usbmuxd is running so iPhone detection works immediately
 systemctl start usbmuxd.service 2>/dev/null || true
 info "Ensured usbmuxd is running"
 
-# (Re)start the web UI service so new routes are available immediately
 if [ -f /etc/systemd/system/webui.service ]; then
     systemctl restart webui.service 2>/dev/null && \
         info "Restarted webui.service" || \
@@ -365,7 +463,7 @@ if [ -f /etc/systemd/system/webui.service ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Step 7: Prepare backup storage
+# Step: Prepare backup storage
 # ---------------------------------------------------------------------------
 step "Prepare backup storage"
 
@@ -381,7 +479,7 @@ mkdir -p "${LOG_DIR}"
 info "Backup directory ready: ${BACKUP_DIR}"
 
 # ---------------------------------------------------------------------------
-# Step 8: Install and configure PiSugar UPS
+# Step: Install and configure PiSugar UPS
 # ---------------------------------------------------------------------------
 step "Install and configure PiSugar UPS"
 
@@ -398,18 +496,15 @@ else
         rm -f "${PISUGAR_TMP}"
         info "PiSugar installer finished"
     else
-        warn "Failed to download PiSugar installer. You can install it manually later."
-        warn "URL: ${PISUGAR_SCRIPT_URL}"
+        warn "Failed to download PiSugar installer."
         rm -f "${PISUGAR_TMP}"
     fi
 fi
 
-# Copy PiSugar config
 PISUGAR_CONFIG="${REPO_DIR}/[pisugar]config.json"
 if [ -f "${PISUGAR_CONFIG}" ] && [ -d /etc/pisugar-server ]; then
     cp "${PISUGAR_CONFIG}" /etc/pisugar-server/config.json
     info "Installed PiSugar configuration"
-    # Restart PiSugar server to pick up new button config
     systemctl restart pisugar-server 2>/dev/null && \
         info "Restarted pisugar-server" || \
         warn "Could not restart pisugar-server (may not be running yet)"
@@ -419,7 +514,6 @@ else
     fi
 fi
 
-# Sync RTC
 if command -v nc &>/dev/null; then
     info "Syncing system clock to RTC..."
     echo "rtc_pi2rtc" | nc -q 1 127.0.0.1 8423 2>/dev/null || {
@@ -427,10 +521,55 @@ if command -v nc &>/dev/null; then
     }
 fi
 
-# Enable rtc-sync service
 if [ -f /etc/systemd/system/rtc-sync.service ]; then
     systemctl enable rtc-sync.service 2>/dev/null
     info "Enabled rtc-sync.service"
+fi
+
+# ---------------------------------------------------------------------------
+# Step: Write version file
+# ---------------------------------------------------------------------------
+echo "${REPO_VERSION}" > "${VERSION_FILE}"
+
+# ---------------------------------------------------------------------------
+# Post-install health check
+# ---------------------------------------------------------------------------
+step "Post-install health check"
+
+HEALTH_OK=true
+
+# Check critical files exist
+for f in iosbackupmachine.py webui.py config.yaml UbuntuMono-Regular.ttf; do
+    if [ ! -f "${INSTALL_DIR}/${f}" ]; then
+        error "Missing: ${INSTALL_DIR}/${f}"
+        HEALTH_OK=false
+    fi
+done
+
+# Check venv python works
+if ! "${VENV_DIR}/bin/python3" -c "import yaml, flask, PIL" 2>/dev/null; then
+    error "Python dependencies not importable"
+    HEALTH_OK=false
+fi
+
+# Check key services are enabled
+for svc in "${ENABLE_SERVICES[@]}"; do
+    if ! systemctl is-enabled --quiet "${svc}" 2>/dev/null; then
+        warn "Service not enabled: ${svc}"
+    fi
+done
+
+# Check webui is running
+if systemctl is-active --quiet webui.service 2>/dev/null; then
+    info "webui.service is running"
+else
+    warn "webui.service is not running"
+fi
+
+if [ "${HEALTH_OK}" = true ]; then
+    info "All health checks passed"
+else
+    warn "Some health checks failed - review the output above"
 fi
 
 # ---------------------------------------------------------------------------
@@ -438,13 +577,21 @@ fi
 # ---------------------------------------------------------------------------
 echo ""
 echo -e "${GREEN}╔══════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║                    Installation complete!                    ║${NC}"
+if [ "${IS_UPGRADE}" = true ]; then
+echo -e "${GREEN}║           Update to v${REPO_VERSION} complete!                          ║${NC}"
+else
+echo -e "${GREEN}║                Installation complete!                        ║${NC}"
+fi
 echo -e "${GREEN}╚══════════════════════════════════════════════════════════════╝${NC}"
 echo ""
+echo -e "  ${GREEN}✓${NC} Version: ${REPO_VERSION}"
 echo -e "  ${GREEN}✓${NC} Application installed to ${INSTALL_DIR}"
 echo -e "  ${GREEN}✓${NC} Virtual environment at ${VENV_DIR}"
 echo -e "  ${GREEN}✓${NC} Backup directory at ${BACKUP_DIR}"
 echo -e "  ${GREEN}✓${NC} Services installed and enabled"
+if [ "${IS_UPGRADE}" = true ]; then
+echo -e "  ${GREEN}✓${NC} Previous version backed up to ${BACKUP_PATH}"
+fi
 echo ""
 
 if [ "${NEED_REBOOT}" = true ]; then
@@ -463,9 +610,11 @@ else
 fi
 
 echo ""
+if [ "${IS_UPGRADE}" != true ]; then
 echo -e "  ${BLUE}Next steps:${NC}"
 echo -e "    1. Open the web UI at http://<device-ip>:8080"
 echo -e "    2. Complete the first-start setup wizard"
 echo -e "    3. Plug in your iPhone and tap Trust"
 echo -e "    4. The first backup will start automatically"
+fi
 echo ""
