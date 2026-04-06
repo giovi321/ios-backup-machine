@@ -113,44 +113,42 @@ All backups stay local on the microSD card and can be restored anytime using too
 
 ## Directory layout
 
+**Repository** (cloned to `/root/ios-backup-machine/`):
 ```
-/root/
-├── 90-iosbackupmachine.rules        # Starts backup on iPhone plug-in and stops it when unplugged
-├── armbianEnv.txt                   # Overlays for SPI/I2C
-├── Case ios backup machine_v8.stl   # 3D printable case
-├── config.yaml                      # Main configuration (YAML, all settings)
-├── epdconfig.py                     # Display configuration
-├── iosbackupmachine_launcher.sh     # Launch script
-├── iosbackupmachine.py              # Main program
-├── iosbackupmachine.service         # Systemd service triggered by udev
-├── last-backup.py                   # Shows last backup info and memory available
-├── last-backup.service              # Systemd service for above
-├── netutil.py                       # Network utilities (IP detection)
-├── notifications.py                 # Webhook and MQTT notification module
-├── ntp-sync.py                      # NTP time sync script
-├── ntp-sync.service                 # Systemd service for NTP sync
-├── owner-message.py                 # Shows owner info on the e-ink screen
-├── owner-message.service            # Systemd service for above
-├── [pisugar]config.json             # UPS configuration template
-├── requirements.txt                 # Python dependencies
-├── rtc-sync.service                 # Syncs the Radxa Zero clock to the RTC at boot
-├── shutdown.sh                      # Shows owner info on screen and turns off device
-├── UbuntuMono-Regular.ttf           # Font for the display, you can choose your own
-├── unplug-notify.py                 # Handle unplug events
-├── unplug-notify.service            # Service triggered by unplug rule
-├── unplug-notify.sh                 # Script to call unplug-notify.py
-├── webui.py                         # Flask web UI application
-├── webui.service                    # Systemd service for web UI
-├── webui_static/                    # Static assets for web UI
-│   └── icon.svg                     # Project icon
+├── install.sh / update.sh / uninstall.sh   # Install, update, uninstall scripts
+├── Case/                                    # 3D printable case (.stl)
+├── config.yaml.example                      # Config template (copied on fresh install)
+├── *.service                                # Systemd service files
+├── 90-iosbackupmachine.rules                # Udev rules for iPhone detection
+├── [pisugar]config.json                     # PiSugar UPS configuration
+└── *.py / *.sh / *.ttf                      # Application source files
+```
+
+**Installed** (to `/root/iosbackupmachine/`):
+```
+├── iosbackupmachine.py              # Main backup program
+├── webui.py                         # Flask web UI
+├── config.yaml                      # User configuration (never overwritten on update)
+├── boot-message.py                  # Boot screen (power icon + title + owner info)
+├── owner-message.py                 # Power-off screen (owner info only)
+├── button-info.py                   # Single-tap: system info display (30s)
+├── backup-sync.py                   # Double-tap: remote sync via rsync
+├── unplug-notify.py                 # Unplug interruption screen
+├── last-backup.py                   # Last backup info display
+├── wg_crypto.py                     # Credential encryption (AES-256-GCM)
+├── sync_crypto.py / sync_manager.py # Remote sync encryption and execution
+├── wg_manager.py                    # WireGuard interface management
+├── netutil.py / notifications.py    # Network utilities, webhook/MQTT
+├── ntp-sync.py / epdconfig.py       # NTP sync, e-paper hardware config
+├── UbuntuMono-Regular.ttf           # Display font
 ├── webui_templates/                 # HTML templates for web UI
-├── wg_crypto.py                     # WireGuard config encryption (iPhone UUID)
-└── wg_manager.py                    # WireGuard interface management
+├── webui_static/                    # Static assets (icon, favicon)
+└── .installed_version               # Version tracking for updates
 ```
 
 ## Configuration
 
-Edit `/root/config.yaml` directly or use the **Web UI** at `http://<device-ip>:8080`.
+Edit `/root/iosbackupmachine/config.yaml` directly or use the **Web UI** at `http://<device-ip>:8080`.
 
 All settings are stored in a single YAML file. The web UI reads and writes to this file directly.
 
@@ -268,13 +266,32 @@ The install script automatically performs all remaining setup steps:
 - Installs system packages (`libimobiledevice`, `python3`, `wireguard-tools`, etc.)
 - Creates a Python virtual environment and installs dependencies
 - Clones and links the Waveshare e-Paper driver
-- Copies application files to `/root`
+- Copies application files to `/root/iosbackupmachine/`
+- Migrates config (merges new defaults without overwriting existing settings)
 - Installs systemd services and udev rules
 - Prepares the backup storage directory
 - Downloads and configures PiSugar UPS
+- Runs a post-install health check
 - Prompts to reboot if overlay changes were made
 
 After the script finishes, open the web UI at `http://<device-ip>:8080` to complete the first-start wizard.
+
+### 3. Updating
+
+**From the web UI**: go to **Tools > Update**, click "Check for Updates", then "Install Update".
+
+**From SSH**:
+```bash
+bash /root/ios-backup-machine/update.sh
+```
+
+The update process:
+- Stops all services before touching files
+- Backs up current installation (keeps last 5 backups in `/root/iosbackupmachine-backups/`)
+- Pulls latest code from GitHub
+- Migrates config (adds new settings without overwriting your values)
+- Runs the installer with a post-install health check
+- Restarts services
 
 ---
 
