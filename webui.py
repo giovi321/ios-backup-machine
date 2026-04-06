@@ -167,13 +167,9 @@ def setup():
     current_time = time.strftime("%Y-%m-%dT%H:%M")
 
     if request.method == "POST":
-        # --- Step 0: Pair iPhone if connected ---
-        if connected_udid:
-            try:
-                subprocess.run(["idevicepair", "pair"], capture_output=True, text=True, timeout=15)
-                subprocess.run(["idevicepair", "validate"], capture_output=True, text=True, timeout=10)
-            except Exception:
-                pass
+        # Pairing is handled via /api/pair AJAX call before form submit.
+        # Re-detect iPhone in case it was paired during this session.
+        connected_udid = wg_crypto.get_iphone_udid()
 
         # --- Step 1: Owner info ---
         owner = []
@@ -1044,6 +1040,41 @@ def api_status():
         "wireguard": wg_manager.get_wireguard_status(wg.get("interface_name", "wg0")),
         "time": time.strftime("%Y-%m-%d %H:%M:%S"),
     })
+
+@app.route("/api/pair", methods=["POST"])
+def api_pair():
+    """Trigger iPhone pairing (shows 'Trust this computer?' on iPhone).
+    Accessible without login so the setup wizard can use it."""
+    try:
+        # Run idevicepair pair — this triggers the Trust prompt on the iPhone
+        r = subprocess.run(["idevicepair", "pair"],
+                           capture_output=True, text=True, timeout=30)
+        out = (r.stdout + r.stderr).strip()
+
+        # Check if pairing succeeded or if user needs to tap Trust
+        if r.returncode == 0 and "SUCCESS" in out.upper():
+            # Pairing done, get UDID
+            udid = wg_crypto.get_iphone_udid()
+            name = ""
+            if udid:
+                try:
+                    nr = subprocess.run(["ideviceinfo", "-k", "DeviceName"],
+                                        capture_output=True, text=True, timeout=5)
+                    name = nr.stdout.strip() if nr.returncode == 0 else ""
+                except Exception:
+                    pass
+            return jsonify({"status": "paired", "udid": udid or "", "name": name})
+        elif "user denied" in out.lower() or "USER_DENIED_PAIRING" in out:
+            return jsonify({"status": "denied", "message": "User denied pairing on iPhone."})
+        else:
+            # Pairing request sent — user needs to tap Trust on iPhone
+            return jsonify({"status": "waiting", "message": "Tap 'Trust' on your iPhone, then click 'Check Connection' again."})
+    except subprocess.TimeoutExpired:
+        return jsonify({"status": "timeout", "message": "Pairing timed out. Make sure iPhone is unlocked."})
+    except FileNotFoundError:
+        return jsonify({"status": "error", "message": "idevicepair not found. Is libimobiledevice installed?"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)})
 
 @app.route("/api/backup-status")
 @login_required

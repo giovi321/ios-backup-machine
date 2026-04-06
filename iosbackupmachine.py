@@ -656,6 +656,17 @@ def _try_ntp_sync():
 
 def main():
     global _backup_running
+
+    # Do not start backup if first-time setup hasn't been completed
+    try:
+        with open(CONFIG_PATH, "r") as _f:
+            _cfg_check = yaml.safe_load(_f) or {}
+        if not _cfg_check.get("setup_completed", False):
+            print("[SKIP] Setup not completed yet. Exiting.", flush=True)
+            sys.exit(0)
+    except Exception:
+        pass
+
     logf, logpath = log_open()
     print(f"[LOG] writing to {logpath}")
     if logf: logf.write(f"[LOG] writing to {logpath}\n")

@@ -189,24 +189,75 @@
         {% endwith %}
 
         <form method="POST">
-            <!-- Step 0: Connect iPhone -->
+            <!-- Step 0: Connect & Pair iPhone -->
             <div class="card">
                 <h2><span class="step-number">!</span> Connect your iPhone</h2>
                 <p class="card-desc">
-                    Plug your iPhone into this device via USB <strong>before completing setup</strong>.
-                    When prompted on your iPhone, tap <strong>"Trust"</strong> to allow backups.
-                    The first backup will start automatically after setup completes.
+                    Plug your iPhone into this device via USB <strong>before completing setup</strong>.<br>
+                    After plugging in, click <strong>"Pair Device"</strong> below, then tap <strong>"Trust"</strong> on your iPhone when prompted.
                 </p>
-                {% if connected_udid %}
-                <div class="device-info">
-                    iPhone connected: {{ connected_name or connected_udid }}
+                <div id="pair-status">
+                    {% if connected_udid %}
+                    <div class="device-info">
+                        iPhone paired: {{ connected_name or connected_udid }}
+                    </div>
+                    {% else %}
+                    <div class="device-info-none">
+                        No iPhone detected yet. Plug it in, then click "Pair Device".
+                    </div>
+                    {% endif %}
                 </div>
-                {% else %}
-                <div class="device-info-none">
-                    No iPhone detected. Plug it in now and tap "Trust" on the iPhone screen, then refresh this page.
+                <div style="margin-top:12px;">
+                    <button type="button" id="pair-btn" onclick="pairDevice()" style="
+                        display:inline-flex;align-items:center;gap:6px;padding:8px 20px;
+                        border:none;border-radius:6px;font-size:14px;font-weight:500;
+                        cursor:pointer;background:var(--primary);color:#fff;">
+                        Pair Device
+                    </button>
+                    <span id="pair-spinner" style="display:none;margin-left:8px;color:var(--text-muted);font-size:13px;">
+                        Waiting for iPhone...
+                    </span>
                 </div>
-                {% endif %}
             </div>
+            <script>
+            function pairDevice() {
+                var btn = document.getElementById('pair-btn');
+                var spinner = document.getElementById('pair-spinner');
+                var status = document.getElementById('pair-status');
+                btn.disabled = true;
+                spinner.style.display = 'inline';
+                spinner.textContent = 'Sending pair request... Tap "Trust" on your iPhone.';
+
+                fetch('{{ url_for("api_pair") }}', {method: 'POST'})
+                    .then(function(r) { return r.json(); })
+                    .then(function(data) {
+                        if (data.status === 'paired') {
+                            var name = data.name || data.udid || 'iPhone';
+                            status.innerHTML = '<div class="device-info">iPhone paired: ' + name + '</div>';
+                            spinner.style.display = 'none';
+                            btn.textContent = 'Paired';
+                            btn.style.background = 'var(--success)';
+                        } else if (data.status === 'waiting') {
+                            status.innerHTML = '<div class="device-info-none" style="background:var(--warning-bg);color:var(--warning);">' + data.message + '</div>';
+                            spinner.textContent = 'Tap Trust on iPhone, then click Pair Device again.';
+                            btn.disabled = false;
+                        } else if (data.status === 'denied') {
+                            status.innerHTML = '<div class="device-info-none" style="background:var(--error-bg);color:var(--error);">' + data.message + '</div>';
+                            spinner.style.display = 'none';
+                            btn.disabled = false;
+                        } else {
+                            status.innerHTML = '<div class="device-info-none">' + (data.message || 'Unknown error') + '</div>';
+                            spinner.style.display = 'none';
+                            btn.disabled = false;
+                        }
+                    })
+                    .catch(function(e) {
+                        status.innerHTML = '<div class="device-info-none">Request failed. Is the device connected?</div>';
+                        spinner.style.display = 'none';
+                        btn.disabled = false;
+                    });
+            }
+            </script>
 
             <!-- Step 1: Owner Information -->
             <div class="card">
