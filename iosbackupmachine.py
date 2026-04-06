@@ -49,7 +49,7 @@ CFG = load_config(CONFIG_PATH)
 for k, v in CFG.get("env", {}).items():
     os.environ[k] = str(v)
 
-CUSTOM_FONT = CFG.get("font_path")
+CUSTOM_FONT = CFG.get("font_path") or "/root/iosbackupmachine/UbuntuMono-Regular.ttf"
 
 def font(sz):
     try:
@@ -447,40 +447,47 @@ def get_disk_usage_pct(device_path: str):
 
 def _check_encryption(logf, ui):
     """Check if backup encryption is enabled on the connected device.
-    Warns on the e-ink if not, but proceeds anyway (unencrypted backup > no backup).
-    Updates encryption_confirmed in config when first confirmed enabled.
+    Retries once to avoid false negatives from timing issues.
+    Warns on the e-ink only if confirmed disabled, but proceeds anyway.
     """
     backup_dir = CFG.get("backup_dir", "/media/iosbackup/")
-    try:
-        r = subprocess.run(
-            ["idevicebackup2", "-i", "encryption", backup_dir],
-            capture_output=True, text=True, timeout=10
-        )
-        out = (r.stdout + r.stderr).lower()
-        if "enabled" in out:
-            if logf: logf.write("[ENC] Encryption is enabled on device.\n")
-            # Persist the confirmed flag if not already set
-            try:
-                with open(CONFIG_PATH, "r") as f:
-                    live = yaml.safe_load(f) or {}
-                enc = live.get("backup_encryption", {})
-                if not enc.get("encryption_confirmed", False):
-                    enc["encryption_confirmed"] = True
-                    live["backup_encryption"] = enc
-                    with open(CONFIG_PATH, "w") as f:
-                        yaml.dump(live, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
-            except Exception:
-                pass
-            return True
-        else:
-            if logf: logf.write("[ENC] WARNING: Encryption is NOT enabled. Backup will be unencrypted.\n")
-            ui.set(subtitle="Warning: encryption OFF.\nEnable via web UI.\nProceeding unencrypted...",
-                   percent=None, animate=False, show_header=True)
-            time.sleep(4)
-            return False
-    except Exception as e:
-        if logf: logf.write(f"[ENC] Could not check encryption status: {e}\n")
-        return None  # unknown
+    for attempt in range(2):
+        try:
+            r = subprocess.run(
+                ["idevicebackup2", "-i", "encryption", backup_dir],
+                capture_output=True, text=True, timeout=10
+            )
+            out = (r.stdout + r.stderr).lower()
+            if "enabled" in out:
+                if logf: logf.write("[ENC] Encryption is enabled on device.\n")
+                try:
+                    with open(CONFIG_PATH, "r") as f:
+                        live = yaml.safe_load(f) or {}
+                    enc = live.get("backup_encryption", {})
+                    if not enc.get("encryption_confirmed", False):
+                        enc["encryption_confirmed"] = True
+                        live["backup_encryption"] = enc
+                        with open(CONFIG_PATH, "w") as f:
+                            yaml.dump(live, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+                except Exception:
+                    pass
+                return True
+            elif "disabled" in out or "not encrypted" in out:
+                if attempt == 0:
+                    time.sleep(2)
+                    continue  # retry once
+                if logf: logf.write("[ENC] WARNING: Encryption is NOT enabled. Backup will be unencrypted.\n")
+                ui.set(subtitle="Warning: encryption OFF.\nEnable via web UI.\nProceeding unencrypted...",
+                       percent=None, animate=False, show_header=True)
+                time.sleep(4)
+                return False
+            else:
+                # Ambiguous output — don't warn, just proceed
+                if logf: logf.write(f"[ENC] Could not determine encryption status, proceeding.\n")
+                return None
+        except Exception as e:
+            if logf: logf.write(f"[ENC] Could not check encryption status: {e}\n")
+            return None
 
 def run_backup(panel, logf, ui):
     check_backup_mount(panel, logf)

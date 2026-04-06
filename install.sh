@@ -97,7 +97,7 @@ fail() {
 # ---------------------------------------------------------------------------
 echo ""
 echo -e "${BLUE}╔══════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${BLUE}║        iOS Backup Machine - Automated Installer v2.0           ║${NC}"
+echo -e "${BLUE}║        iOS Backup Machine - Automated Installer v2.1           ║${NC}"
 echo -e "${BLUE}║        https://github.com/giovi321/ios-backup-machine        ║${NC}"
 echo -e "${BLUE}╚══════════════════════════════════════════════════════════════╝${NC}"
 echo ""

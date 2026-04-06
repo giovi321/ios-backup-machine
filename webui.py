@@ -25,7 +25,7 @@ import wg_manager
 import sync_crypto
 import sync_manager
 
-VERSION = "2.0"
+VERSION = "2.1"
 
 CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/iosbackupmachine/config.yaml")
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webui_static")
@@ -75,7 +75,7 @@ def _apply_defaults(cfg):
         "mqtt": {"enabled": False, "broker": "", "port": 1883, "username": "", "password": "", "topic_prefix": "iosbackupmachine", "events": ["backup_complete", "backup_error"]},
     })
     cfg.setdefault("wireguard", {"enabled": False, "interface_name": "wg0"})
-    cfg.setdefault("sync", {"enabled": False, "auto_sync": False})
+    cfg.setdefault("sync", {"enabled": False, "auto_sync": False, "allowed_network": "any"})
     cfg.setdefault("setup_completed", False)
 
 # ---------------------------------------------------------------------------
@@ -218,7 +218,14 @@ def setup():
 
         # --- Step 5: Backup encryption ---
         enc_pw = request.form.get("encryption_password", "").strip()
+        enc_pw_confirm = request.form.get("encryption_password_confirm", "").strip()
         if enc_pw:
+            if enc_pw != enc_pw_confirm:
+                flash("Encryption passwords do not match.", "error")
+                return render_template("setup.html", cfg=cfg,
+                                       connected_udid=connected_udid,
+                                       connected_name=connected_name,
+                                       current_time=current_time)
             if connected_udid:
                 try:
                     r = subprocess.run(
@@ -312,6 +319,16 @@ def setup():
 
         cfg["setup_completed"] = True
         save_config(cfg)
+
+        # If iPhone is connected, restart the backup service so it picks up
+        # the newly-completed setup without requiring a re-plug.
+        if connected_udid:
+            try:
+                subprocess.run(["systemctl", "restart", "iosbackupmachine.service"],
+                               capture_output=True, timeout=5)
+            except Exception:
+                pass
+
         flash("Setup complete! Your iOS Backup Machine is ready.", "success")
         return redirect(url_for("index"))
 
@@ -537,32 +554,27 @@ def settings_wireguard():
             flash("WireGuard settings saved.", "success")
         elif action == "upload_config":
             wg_conf = request.form.get("wg_config", "")
-            if wg_conf.strip():
-                if not udid:
-                    flash("No iPhone connected. Connect iPhone to encrypt config.", "error")
-                else:
-                    if wg_crypto.encrypt_wg_config({"wg_conf": wg_conf}, udid=udid):
-                        flash("WireGuard config encrypted and saved.", "success")
-                    else:
-                        flash("Failed to encrypt WireGuard config.", "error")
-            else:
+            master_pw = request.form.get("master_password", "").strip()
+            if not wg_conf.strip():
                 flash("Empty WireGuard config.", "error")
+            elif not master_pw:
+                flash("Master password is required to encrypt credentials.", "error")
+            else:
+                if wg_crypto.encrypt_wg_config({"wg_conf": wg_conf}, passphrase=master_pw):
+                    flash("WireGuard config encrypted and saved.", "success")
+                else:
+                    flash("Failed to encrypt WireGuard config.", "error")
         elif action == "start":
-            if wg_manager.start_wireguard(iface, udid=udid):
+            master_pw = request.form.get("master_password", "").strip()
+            if wg_manager.start_wireguard(iface, passphrase=master_pw):
                 flash(f"WireGuard interface {iface} started.", "success")
             else:
-                flash("Failed to start WireGuard.", "error")
+                flash("Failed to start WireGuard. Check master password.", "error")
         elif action == "stop":
             if wg_manager.stop_wireguard(iface):
                 flash(f"WireGuard interface {iface} stopped.", "success")
             else:
                 flash("Failed to stop WireGuard.", "error")
-        elif action == "backup_key":
-            key = wg_crypto.backup_encryption_key(udid=udid)
-            if key:
-                flash(f"Key backed up. Key: {key}", "success")
-            else:
-                flash("No iPhone connected. Cannot backup key.", "error")
         return redirect(url_for("settings_wireguard"))
     return render_template("settings_wireguard.html",
                            cfg=cfg, wg_status=wg_status, udid=udid, has_enc_file=has_enc_file)
@@ -581,62 +593,66 @@ def settings_sync():
         if action == "save_settings":
             sync["enabled"] = request.form.get("sync_enabled") == "on"
             sync["auto_sync"] = request.form.get("auto_sync") == "on"
+            sync["allowed_network"] = request.form.get("allowed_network", "any")
+            sync["allowed_ssid"] = request.form.get("allowed_ssid", "").strip()
             cfg["sync"] = sync
             save_config(cfg)
             flash("Sync settings saved.", "success")
         elif action == "upload_credentials":
-            if not udid:
-                flash("No iPhone connected. Connect iPhone to encrypt credentials.", "error")
+            master_pw = request.form.get("master_password", "").strip()
+            host = request.form.get("host", "").strip()
+            port = request.form.get("port", "22").strip()
+            username = request.form.get("username", "").strip()
+            auth_method = request.form.get("auth_method", "key")
+            ssh_key = request.form.get("ssh_key", "")
+            password = request.form.get("password", "")
+            remote_path = request.form.get("remote_path", "").strip()
+            if not master_pw:
+                flash("Master password is required to encrypt credentials.", "error")
+            elif not host or not username or not remote_path:
+                flash("Host, username, and remote path are required.", "error")
+            elif auth_method == "key" and not ssh_key.strip():
+                flash("SSH private key is required for key authentication.", "error")
+            elif auth_method == "password" and not password:
+                flash("Password is required for password authentication.", "error")
             else:
-                host = request.form.get("host", "").strip()
-                port = request.form.get("port", "22").strip()
-                username = request.form.get("username", "").strip()
-                auth_method = request.form.get("auth_method", "key")
-                ssh_key = request.form.get("ssh_key", "")
-                password = request.form.get("password", "")
-                remote_path = request.form.get("remote_path", "").strip()
-                if not host or not username or not remote_path:
-                    flash("Host, username, and remote path are required.", "error")
-                elif auth_method == "key" and not ssh_key.strip():
-                    flash("SSH private key is required for key authentication.", "error")
-                elif auth_method == "password" and not password:
-                    flash("Password is required for password authentication.", "error")
+                try:
+                    port_int = int(port)
+                except ValueError:
+                    port_int = 22
+                cred = {
+                    "host": host,
+                    "port": port_int,
+                    "username": username,
+                    "auth_method": auth_method,
+                    "ssh_key": ssh_key if auth_method == "key" else "",
+                    "password": password if auth_method == "password" else "",
+                    "remote_path": remote_path,
+                }
+                if sync_crypto.encrypt_sync_config(cred, passphrase=master_pw):
+                    flash("Sync credentials encrypted and saved.", "success")
                 else:
-                    try:
-                        port_int = int(port)
-                    except ValueError:
-                        port_int = 22
-                    cred = {
-                        "host": host,
-                        "port": port_int,
-                        "username": username,
-                        "auth_method": auth_method,
-                        "ssh_key": ssh_key if auth_method == "key" else "",
-                        "password": password if auth_method == "password" else "",
-                        "remote_path": remote_path,
-                    }
-                    if sync_crypto.encrypt_sync_config(cred, udid=udid):
-                        flash("Sync credentials encrypted and saved.", "success")
-                    else:
-                        flash("Failed to encrypt sync credentials.", "error")
+                    flash("Failed to encrypt sync credentials.", "error")
         elif action == "test_connection":
-            result = sync_manager.test_connection(udid=udid)
-            if result["success"]:
-                flash(result["message"], "success")
+            master_pw = request.form.get("master_password", "").strip()
+            if not master_pw:
+                flash("Master password is required.", "error")
             else:
-                flash(result["message"], "error")
+                result = sync_manager.test_connection(passphrase=master_pw)
+                if result["success"]:
+                    flash(result["message"], "success")
+                else:
+                    flash(result["message"], "error")
         elif action == "run_sync":
-            result = sync_manager.run_sync(udid=udid)
-            if result["success"]:
-                flash(result["message"], "success")
+            master_pw = request.form.get("master_password", "").strip()
+            if not master_pw:
+                flash("Master password is required.", "error")
             else:
-                flash(result["message"], "error")
-        elif action == "backup_key":
-            key = sync_crypto.backup_encryption_key(udid=udid)
-            if key:
-                flash(f"Key backed up. Key: {key}", "success")
-            else:
-                flash("No iPhone connected. Cannot backup key.", "error")
+                result = sync_manager.run_sync(passphrase=master_pw)
+                if result["success"]:
+                    flash(result["message"], "success")
+                else:
+                    flash(result["message"], "error")
         return redirect(url_for("settings_sync"))
     return render_template("settings_sync.html",
                            cfg=cfg, udid=udid, has_enc_file=has_enc_file)
