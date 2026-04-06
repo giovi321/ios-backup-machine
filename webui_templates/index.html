@@ -12,7 +12,7 @@
             <div class="value" id="backup-state">
                 {% if backup_status %}
                     {% if backup_status.state == 'backing_up' %}
-                        <span class="badge badge-on"><span class="badge-dot"></span>Backing up{{ ' (%s%%)' % backup_status.percent if backup_status.percent is not none else '' }}</span>
+                        <span class="badge badge-on"><span class="badge-dot"></span>Backing up</span>
                     {% elif backup_status.state == 'complete' %}
                         <span class="badge badge-on"><span class="badge-dot"></span>Complete</span>
                     {% elif backup_status.state == 'waiting' %}
@@ -29,35 +29,23 @@
                 {% endif %}
             </div>
         </div>
-        {% if backup_status and backup_status.state == 'backing_up' and backup_status.percent is not none %}
-        <div class="info-item">
+        <div class="info-item" id="backup-progress-card">
             <div class="label">Progress</div>
-            <div class="value">
+            <div class="value" id="backup-progress">
+                {% if backup_status and backup_status.state == 'backing_up' and backup_status.percent is not none %}
                 <div style="background:#e8eaed;border-radius:4px;height:12px;width:100%;margin-top:4px;">
-                    <div style="background:var(--primary);border-radius:4px;height:12px;width:{{ backup_status.percent }}%;transition:width 0.5s;"></div>
+                    <div id="progress-bar" style="background:var(--primary);border-radius:4px;height:12px;width:{{ backup_status.percent }}%;transition:width 0.5s;"></div>
                 </div>
                 <small style="color:var(--text-muted);">{{ backup_status.percent }}%{% if backup_status.encrypted %} (encrypted){% endif %}</small>
+                {% elif backup_status and backup_status.state == 'complete' %}
+                <small style="color:var(--text-muted);">{{ backup_status.get('completed_at', '') }}{% if backup_status.usage %} &middot; {{ backup_status.usage }} used{% endif %}</small>
+                {% elif backup_status and backup_status.state == 'error' %}
+                <small style="color:var(--error);">{{ backup_status.get('message', '') }}</small>
+                {% else %}
+                <small style="color:var(--text-muted);">--</small>
+                {% endif %}
             </div>
         </div>
-        {% endif %}
-        {% if backup_status and backup_status.state == 'complete' and backup_status.completed_at %}
-        <div class="info-item">
-            <div class="label">Last Backup</div>
-            <div class="value" style="font-size:14px;">{{ backup_status.completed_at }}</div>
-        </div>
-        {% endif %}
-        {% if backup_status and backup_status.state == 'complete' and backup_status.usage %}
-        <div class="info-item">
-            <div class="label">Disk Usage</div>
-            <div class="value">{{ backup_status.usage }}</div>
-        </div>
-        {% endif %}
-        {% if backup_status and backup_status.state == 'error' and backup_status.message %}
-        <div class="info-item">
-            <div class="label">Error</div>
-            <div class="value" style="font-size:13px;color:var(--error);">{{ backup_status.message }}</div>
-        </div>
-        {% endif %}
     </div>
 </div>
 
@@ -143,19 +131,41 @@
         fetch('{{ url_for("api_backup_status") }}')
             .then(function(r) { return r.json(); })
             .then(function(data) {
-                var el = document.getElementById('backup-state');
-                if (!el || !data) return;
+                var stateEl = document.getElementById('backup-state');
+                var progEl = document.getElementById('backup-progress');
+                if (!stateEl || !data) return;
+
+                // Update state badge
                 if (data.state === 'backing_up') {
-                    var pct = data.percent !== null && data.percent !== undefined ? ' (' + data.percent + '%)' : '';
-                    el.innerHTML = '<span class="badge badge-on"><span class="badge-dot"></span>Backing up' + pct + '</span>';
+                    stateEl.innerHTML = '<span class="badge badge-on"><span class="badge-dot"></span>Backing up</span>';
                 } else if (data.state === 'complete') {
-                    el.innerHTML = '<span class="badge badge-on"><span class="badge-dot"></span>Complete</span>';
+                    stateEl.innerHTML = '<span class="badge badge-on"><span class="badge-dot"></span>Complete</span>';
                 } else if (data.state === 'error') {
-                    el.innerHTML = '<span class="badge" style="background:var(--error-bg);color:var(--error);"><span class="badge-dot" style="background:var(--error);"></span>Error</span>';
+                    stateEl.innerHTML = '<span class="badge" style="background:var(--error-bg);color:var(--error);"><span class="badge-dot" style="background:var(--error);"></span>Error</span>';
                 } else if (data.state === 'waiting') {
-                    el.innerHTML = '<span class="badge badge-off"><span class="badge-dot"></span>Waiting for iPhone</span>';
+                    stateEl.innerHTML = '<span class="badge badge-off"><span class="badge-dot"></span>Waiting for iPhone</span>';
                 } else if (data.state === 'connected') {
-                    el.innerHTML = '<span class="badge badge-on"><span class="badge-dot"></span>Device connected</span>';
+                    stateEl.innerHTML = '<span class="badge badge-on"><span class="badge-dot"></span>Device connected</span>';
+                } else {
+                    stateEl.innerHTML = '<span class="badge badge-off"><span class="badge-dot"></span>Idle</span>';
+                }
+
+                // Update progress card
+                if (progEl) {
+                    if (data.state === 'backing_up' && data.percent !== null && data.percent !== undefined) {
+                        var enc = data.encrypted ? ' (encrypted)' : '';
+                        progEl.innerHTML = '<div style="background:#e8eaed;border-radius:4px;height:12px;width:100%;margin-top:4px;">' +
+                            '<div style="background:var(--primary);border-radius:4px;height:12px;width:' + data.percent + '%;transition:width 0.5s;"></div></div>' +
+                            '<small style="color:var(--text-muted);">' + data.percent + '%' + enc + '</small>';
+                    } else if (data.state === 'complete') {
+                        var info = data.completed_at || '';
+                        if (data.usage) info += (info ? ' &middot; ' : '') + data.usage + ' used';
+                        progEl.innerHTML = '<small style="color:var(--text-muted);">' + (info || 'Done') + '</small>';
+                    } else if (data.state === 'error') {
+                        progEl.innerHTML = '<small style="color:var(--error);">' + (data.message || 'Unknown error') + '</small>';
+                    } else {
+                        progEl.innerHTML = '<small style="color:var(--text-muted);">--</small>';
+                    }
                 }
             })
             .catch(function() {});
