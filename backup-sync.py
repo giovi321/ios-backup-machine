@@ -45,8 +45,9 @@ def text_wh(d, t, f):
 # Guard: skip if backup is running
 def backup_running():
     try:
-        out = subprocess.run(["pgrep", "-f", "iosbackupmachine.py"],
-                             capture_output=True, text=True)
+        out = subprocess.run(
+            ["pgrep", "-f", "python.*iosbackupmachine\\.py"],
+            capture_output=True, text=True)
         return out.returncode == 0
     except Exception:
         return False

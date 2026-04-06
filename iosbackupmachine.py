@@ -624,7 +624,9 @@ def _get_ip_info():
         return "No network"
 
 def _pisugar_button_listener(panel, ui):
-    """Listen for PiSugar button press via TCP and show IP when idle."""
+    """Listen for PiSugar button press via TCP and show IP when idle.
+    Does nothing during backup — the external button-info.service also
+    skips when iosbackupmachine.py is running."""
     while True:
         try:
             s = socket.create_connection(("127.0.0.1", 8423), timeout=5)
@@ -637,7 +639,10 @@ def _pisugar_button_listener(panel, ui):
                     ip_info = _get_ip_info()
                     ui.set(subtitle=ip_info, percent=None, animate=False, show_header=True)
                     time.sleep(10)
-                    ui.set(subtitle="Waiting for iPhone...", percent=None, animate=True, show_header=True)
+                    # Only reset to waiting if still idle (backup may have started during the 10s)
+                    if not _backup_running:
+                        ui.set(subtitle="Waiting for iPhone...", percent=None, animate=True, show_header=True)
+                # During backup: do nothing, let the backup UI continue undisturbed
         except Exception:
             pass
         time.sleep(1)
