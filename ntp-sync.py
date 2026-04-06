@@ -8,7 +8,7 @@ Reads NTP servers from config.yaml.
 """
 import os, sys, subprocess, socket, time, yaml
 
-CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/config.yaml")
+CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/iosbackupmachine/config.yaml")
 LOG = "/var/log/iosbackupmachine/ntp-sync.log"
 
 def log(msg):

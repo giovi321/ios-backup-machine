@@ -4,8 +4,8 @@ set -euo pipefail
 LOG=/var/log/iosbackupmachine/autostart.log
 VENV=/root/iosbackupmachine
 PY="$VENV/bin/python3"
-NOTIFY=/root/unplug-notify.py
-CFG=/root/config.yaml
+NOTIFY=/root/iosbackupmachine/unplug-notify.py
+CFG=/root/iosbackupmachine/config.yaml
 
 # E-ink env (keep it here so the unit stays simple)
 export IOSBACKUP_CONFIG="$CFG"

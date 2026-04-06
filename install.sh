@@ -17,7 +17,7 @@ set -euo pipefail
 # Configuration
 # ---------------------------------------------------------------------------
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
-INSTALL_DIR="/root"
+INSTALL_DIR="/root/iosbackupmachine"
 VENV_DIR="/root/iosbackupmachine"
 BACKUP_DIR="/media/iosbackup"
 MARKER_FILE=".foldermarker"

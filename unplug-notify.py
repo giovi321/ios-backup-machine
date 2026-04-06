@@ -9,7 +9,7 @@ try:
 except ImportError:
     def send_notification(*a, **kw): pass
 
-CFG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/config.yaml")
+CFG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/iosbackupmachine/config.yaml")
 
 def load_cfg(p):
     with open(p, "r") as f:

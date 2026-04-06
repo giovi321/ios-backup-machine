@@ -9,8 +9,8 @@ import os, sys, json, base64
 
 import wg_crypto
 
-ENC_FILE = os.getenv("SYNC_ENC_FILE", "/root/sync.enc")
-KEY_BACKUP_FILE = os.getenv("SYNC_KEY_BACKUP", "/root/sync-key-backup.txt")
+ENC_FILE = os.getenv("SYNC_ENC_FILE", "/root/iosbackupmachine/sync.enc")
+KEY_BACKUP_FILE = os.getenv("SYNC_KEY_BACKUP", "/root/iosbackupmachine/sync-key-backup.txt")
 
 
 def encrypt_sync_config(config_dict, udid=None):

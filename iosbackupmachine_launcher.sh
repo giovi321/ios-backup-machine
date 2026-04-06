@@ -1,7 +1,7 @@
 #!/bin/bash
 LOGFILE=/var/log/iosbackupmachine/autostart.log
 VENV=/root/iosbackupmachine
-SCRIPT=/root/iosbackupmachine.py
+SCRIPT=/root/iosbackupmachine/iosbackupmachine.py
 
 # Variables
 export EPD_GPIO_CHIP=/dev/gpiochip3

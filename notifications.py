@@ -6,7 +6,7 @@ Reads notification config from the main config.yaml.
 """
 import os, json, time, threading, yaml
 
-CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/config.yaml")
+CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/iosbackupmachine/config.yaml")
 
 def _load_notify_config():
     try:

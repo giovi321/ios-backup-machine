@@ -9,7 +9,7 @@ import os, sys, subprocess, tempfile, time, yaml
 
 import sync_crypto
 
-CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/config.yaml")
+CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/iosbackupmachine/config.yaml")
 
 
 def _load_backup_dir():

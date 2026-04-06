@@ -6,7 +6,7 @@ from waveshare_epd import epd2in13_V4, epdconfig
 
 import sync_manager
 
-CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/config.yaml")
+CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/iosbackupmachine/config.yaml")
 
 def load_config(path):
     try:

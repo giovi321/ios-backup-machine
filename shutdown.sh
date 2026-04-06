@@ -7,7 +7,7 @@ export EPD_PIN_RST=1
 export EPD_PIN_BUSY=10
 export EPD_SPI_DEV=/dev/spidev3.0
 export EPD_SPI_HZ=2000000
-export IOSBACKUP_CONFIG=/root/config.yaml
+export IOSBACKUP_CONFIG=/root/iosbackupmachine/config.yaml
 
-/root/iosbackupmachine/bin/python3 /root/owner-message.py
+/root/iosbackupmachine/bin/python3 /root/iosbackupmachine/owner-message.py
 shutdown -h now

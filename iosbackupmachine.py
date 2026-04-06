@@ -22,7 +22,7 @@ try:
 except ImportError:
     _sync_manager = None
 
-CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/config.yaml")
+CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/iosbackupmachine/config.yaml")
 LOG_DIR = "/var/log/iosbackupmachine"
 IDLE_REFRESH_SEC = 4
 TITLE = "iOS Backup Machine"
