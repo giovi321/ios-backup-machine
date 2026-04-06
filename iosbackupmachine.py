@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import os, re, sys, time, subprocess, threading, socket
+import os, re, sys, time, json, subprocess, threading, socket
 from datetime import datetime
 from periphery.gpio import GPIOError
 
@@ -24,6 +24,7 @@ except ImportError:
 
 CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/iosbackupmachine/config.yaml")
 LOG_DIR = "/var/log/iosbackupmachine"
+STATUS_FILE = os.path.join(LOG_DIR, "backup_status.json")
 IDLE_REFRESH_SEC = 4
 TITLE = "iOS Backup Machine"
 
@@ -333,6 +334,16 @@ class Animator:
 
 def ensure_dir(p): os.makedirs(p, exist_ok=True)
 
+def write_status(state, **extra):
+    """Write backup status JSON for the web UI dashboard."""
+    try:
+        ensure_dir(LOG_DIR)
+        data = {"state": state, "timestamp": datetime.now().isoformat(), **extra}
+        with open(STATUS_FILE, "w") as f:
+            json.dump(data, f)
+    except Exception:
+        pass
+
 def get_connected_udids():
     """Return list of currently connected iPhone UDIDs."""
     try:
@@ -488,6 +499,7 @@ def run_backup(panel, logf, ui):
     )
 
     def error_and_exit(user_msg, code=None, tail=None):
+        write_status("error", message=user_msg, code=code)
         ui.set(subtitle=f"Error: {user_msg}", percent=pct if pct is not None else 0,
                show_tail_lines=([tail] if tail else None), animate=True, show_header=True)
         if logf: logf.write(f"[ERROR] {user_msg} code={code} tail='{tail or ''}'\n")
@@ -521,6 +533,7 @@ def run_backup(panel, logf, ui):
                 if pct != last_pct:
                     subtitle = "Backing up (encrypted)..." if encrypted else "Backing up (not encrypted)..."
                     ui.set(subtitle=subtitle, percent=pct, animate=True, show_header=True)
+                    write_status("backing_up", percent=pct, encrypted=encrypted)
                     last_pct = pct
                     last_ui = time.time()
 
@@ -540,6 +553,7 @@ def run_backup(panel, logf, ui):
                     ui.set(subtitle=subtitle, percent=pct, animate=True, show_header=True)
                 last_ui = time.time()
 
+    write_status("backing_up", percent=0)
     send_notification("backup_start")
     tee_and_parse(proc, logf, feed_parser)
     proc.wait(); rc = proc.returncode
@@ -555,6 +569,7 @@ def run_backup(panel, logf, ui):
             f"{owner[0]}\n{owner[1]}\n{owner[2]}\n{owner[3]}"
         )
         ui.stop()
+        write_status("complete", usage=usage_str, completed_at=ts_end)
         panel.draw("", percent=None, animate=False, center_block=center, show_header=False)
         if logf: logf.write(f"[OK] completed at {ts_end} usage={usage_str}\n")
         send_notification("backup_complete", {"usage": usage_str, "timestamp": ts_end})
@@ -660,11 +675,13 @@ def main():
 
     _last_reject_udid = None
     try:
+        write_status("waiting")
         ui.set(subtitle="Waiting for iPhone...", percent=None, animate=True, show_header=True)
         while True:
             allowed, udid, reason = device_allowed()
             if allowed:
                 _backup_running = True
+                write_status("connected", udid=udid)
                 send_notification("device_connected", {"udid": udid})
                 ui.set(subtitle="Device detected. Preparing...", percent=None, animate=True, show_header=True)
                 try: subprocess.run(["idevicepair", "validate"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

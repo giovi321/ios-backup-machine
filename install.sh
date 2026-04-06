@@ -254,7 +254,7 @@ done
 
 # Copy config.yaml only if it doesn't already exist (preserve user settings on upgrade)
 if [ ! -f "${INSTALL_DIR}/config.yaml" ]; then
-    cp "${REPO_DIR}/config.yaml" "${INSTALL_DIR}/config.yaml"
+    cp "${REPO_DIR}/config.yaml.example" "${INSTALL_DIR}/config.yaml"
     detail "Copied config.yaml (fresh install)"
 else
     info "config.yaml already exists, preserving user settings"

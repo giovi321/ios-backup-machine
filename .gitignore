@@ -32,6 +32,12 @@ wireguard-key-backup.txt
 # Logs
 *.log
 
-# Config with secrets (template is committed, actual device config is not)
-# The config.yaml in the repo is a template; on the device it contains passwords/keys.
-# If you deploy to a device, do NOT push the device copy back to git.
+# Device config (contains passwords/secrets; template is config.yaml.example)
+config.yaml
+
+# Encrypted credentials
+sync.enc
+sync-key-backup.txt
+
+# Claude Code local data
+.claude/

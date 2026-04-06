@@ -60,37 +60,33 @@ else:
 img = Image.new("1", (LW, LH), 255)
 drw = ImageDraw.Draw(img)
 
-# Power-on icon (bottom-left)
-def draw_power_icon(d, x, y, size=10):
-    cx, cy = x + size // 2, y + size // 2
-    r = size // 2
-    d.arc((cx - r, cy - r, cx + r, cy + r), start=300, end=240, fill=0, width=1)
-    d.line((cx, cy - r, cx, cy - 1), fill=0, width=1)
-draw_power_icon(drw, 4, LH - 14, size=10)
-
-# Border box
-margin = 0
-for t in range(0,1): # 1 pixel thickness
-    drw.rectangle((margin+t, margin+t, LW-margin-t-1, LH-margin-t-1), outline=0, width=1)
-
-# Header line
-ts = datetime.now().strftime("%H:%M / %d %b %Y").lower()
-title = f"Backup interrupted at {ts}"
+# Header lines (split date to avoid overflow)
+now = datetime.now()
+line1 = "Backup interrupted"
+line2 = now.strftime("%H:%M / %d %b %Y").lower()
 
 # Owner lines
 owner = [ln for ln in CFG.get("owner_lines", []) if str(ln).strip()]
 
-# Measure block height
-lines = [title, ""] + owner
-heights = [(text_wh(drw, ln, F_L if i==0 else F_S)[1]) for i,ln in enumerate(lines)]
-total_h = sum(heights) + (len(lines)-1)*6
-y = (LH - total_h)//2
+# Build line list: header, date, spacer, owner lines
+lines = [
+    (line1, F_L),
+    (line2, F_S),
+    ("", F_S),  # spacer
+] + [(ln, F_S) for ln in owner]
 
-for i, ln in enumerate(lines):
-    font_use = F_L if i==0 else F_S
-    tw, th = text_wh(drw, ln, font_use)
-    drw.text(((LW - tw)//2, y), ln, font=font_use, fill=0)
-    y += th + 6
+spacing = 5
+line_heights = [text_wh(drw, ln, f)[1] if ln else 4 for ln, f in lines]
+total_h = sum(line_heights) + spacing * (len(lines) - 1)
+y = (LH - total_h) // 2
+
+for ln, f in lines:
+    if ln:
+        tw, th = text_wh(drw, ln, f)
+        drw.text(((LW - tw) // 2, y), ln, font=f, fill=0)
+        y += th + spacing
+    else:
+        y += 4 + spacing
 
 # Rotate to physical
 if orient == "landscape_right":
