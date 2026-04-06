@@ -1056,6 +1056,93 @@ def purge_logs():
     flash(f"Purged {count} log file(s).", "success")
     return redirect(url_for("logs"))
 
+# --- System Update ---
+REPO_DIR = os.getenv("IOSBACKUP_REPO", "/root/ios-backup-machine")
+VERSION_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".installed_version")
+
+@app.route("/update", methods=["GET", "POST"])
+@login_required
+def system_update():
+    installed_version = VERSION
+    try:
+        if os.path.exists(VERSION_FILE):
+            with open(VERSION_FILE, "r") as f:
+                installed_version = f.read().strip() or VERSION
+    except Exception:
+        pass
+
+    remote_version = None
+    recent_commits = []
+    update_log = None
+
+    if request.method == "POST":
+        action = request.form.get("action", "")
+
+        if action == "check":
+            # Fetch latest from remote
+            try:
+                subprocess.run(["git", "-C", REPO_DIR, "fetch", "--quiet", "origin"],
+                               capture_output=True, timeout=30)
+                # Get remote version from webui.py on origin/main
+                r = subprocess.run(
+                    ["git", "-C", REPO_DIR, "show", "origin/main:webui.py"],
+                    capture_output=True, text=True, timeout=10
+                )
+                import re as _re
+                m = _re.search(r'VERSION\s*=\s*"([^"]+)"', r.stdout)
+                if m:
+                    remote_version = m.group(1)
+
+                # Get recent commits
+                r2 = subprocess.run(
+                    ["git", "-C", REPO_DIR, "log", "--oneline", "-10", "HEAD..origin/main"],
+                    capture_output=True, text=True, timeout=10
+                )
+                recent_commits = [ln for ln in r2.stdout.strip().splitlines() if ln.strip()]
+                if not recent_commits:
+                    remote_version = remote_version or installed_version
+
+                if remote_version and remote_version != installed_version:
+                    flash(f"Update available: v{installed_version} -> v{remote_version}", "success")
+                elif remote_version:
+                    flash("Already up to date.", "success")
+            except Exception as e:
+                flash(f"Failed to check for updates: {e}", "error")
+
+        elif action == "update":
+            # Run update.sh in background and capture output
+            update_script = os.path.join(REPO_DIR, "update.sh")
+            if not os.path.isfile(update_script):
+                flash("update.sh not found in repo directory.", "error")
+            else:
+                try:
+                    r = subprocess.run(
+                        ["bash", update_script],
+                        capture_output=True, text=True, timeout=300,
+                        env={**os.environ, "DEBIAN_FRONTEND": "noninteractive"}
+                    )
+                    update_log = r.stdout + r.stderr
+                    if r.returncode == 0:
+                        flash("Update completed successfully. The page will reload.", "success")
+                    else:
+                        flash(f"Update finished with errors (exit code {r.returncode}).", "error")
+                except subprocess.TimeoutExpired:
+                    flash("Update timed out after 5 minutes.", "error")
+                except Exception as e:
+                    flash(f"Update failed: {e}", "error")
+
+        return render_template("system_update.html",
+                               installed_version=installed_version,
+                               remote_version=remote_version,
+                               recent_commits=recent_commits,
+                               update_log=update_log)
+
+    return render_template("system_update.html",
+                           installed_version=installed_version,
+                           remote_version=remote_version,
+                           recent_commits=recent_commits,
+                           update_log=update_log)
+
 # --- API endpoints ---
 @app.route("/api/status")
 @login_required
