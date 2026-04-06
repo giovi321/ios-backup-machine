@@ -23,13 +23,24 @@ import netutil
 import wg_crypto
 import wg_manager
 
-LOG_DIR = "/var/log/iosbackupmachine"
+VERSION = "2.0"
 
 CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/config.yaml")
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webui_static")
 TEMPLATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webui_templates")
 
-app = Flask(__name__, static_folder=STATIC_DIR, template_folder=TEMPLATE_DIR)
+app = Flask(
+    __name__,
+    template_folder=TEMPLATE_DIR,
+    static_folder=STATIC_DIR,
+    static_url_path="/static"
+)
+
+@app.context_processor
+def inject_version():
+    return {"app_version": VERSION}
+
+LOG_DIR = "/var/log/iosbackupmachine"
 
 # ---------------------------------------------------------------------------
 # Config helpers
@@ -138,30 +149,69 @@ def setup():
     cfg = load_config()
     if not _setup_needed():
         return redirect(url_for("index"))
+
+    # Detect connected iPhone for encryption & device filter steps
+    connected_udid = wg_crypto.get_iphone_udid()
+    connected_name = ""
+    if connected_udid:
+        try:
+            r = subprocess.run(["ideviceinfo", "-k", "DeviceName"],
+                               capture_output=True, text=True, timeout=5)
+            connected_name = r.stdout.strip() if r.returncode == 0 else ""
+        except Exception:
+            pass
+
+    current_time = time.strftime("%Y-%m-%dT%H:%M")
+
     if request.method == "POST":
-        # Step: save owner info
+        # --- Step 1: Owner info ---
         owner = []
         for i in range(4):
             owner.append(request.form.get(f"owner_line_{i}", ""))
         cfg["owner_lines"] = owner
-        # Optional password
-        pw = request.form.get("password", "").strip()
-        if pw:
-            confirm = request.form.get("confirm_password", "")
-            if pw != confirm:
-                flash("Passwords do not match.", "error")
-                return render_template("setup.html", cfg=cfg)
-            if len(pw) < 4:
-                flash("Password must be at least 4 characters.", "error")
-                return render_template("setup.html", cfg=cfg)
-            auth = cfg.get("auth", {})
-            auth["password_hash"] = _hash_password(pw)
-            cfg["auth"] = auth
-            session["authenticated"] = True
-        # Backup encryption — try to enable live on connected iPhone, never store password
+
+        # --- Step 2: WiFi ---
+        wifi = cfg.get("wifi", {})
+        wifi["enabled"] = request.form.get("wifi_enabled") == "on"
+        wifi["ssid"] = request.form.get("wifi_ssid", "")
+        wifi["password"] = request.form.get("wifi_password", "")
+        cfg["wifi"] = wifi
+        if wifi["enabled"] and wifi["ssid"]:
+            _apply_wifi(wifi["ssid"], wifi["password"])
+
+        # --- Step 3: Date/Time & NTP ---
+        new_dt = request.form.get("setup_datetime", "").strip()
+        if new_dt and new_dt != current_time:
+            try:
+                subprocess.run(["date", "-s", new_dt.replace("T", " ")],
+                               capture_output=True, text=True, timeout=5)
+                # Update RTC
+                try:
+                    import socket
+                    s = socket.create_connection(("127.0.0.1", 8423), timeout=5)
+                    s.sendall(b"rtc_pi2rtc\n")
+                    time.sleep(0.5)
+                    s.close()
+                except Exception:
+                    pass
+                flash("Date/time updated.", "success")
+            except Exception as e:
+                flash(f"Failed to set date: {e}", "warning")
+
+        ntp = cfg.get("ntp", {})
+        ntp["enabled"] = request.form.get("ntp_enabled") == "on"
+        servers = request.form.get("ntp_servers", "").strip().splitlines()
+        ntp["servers"] = [s.strip() for s in servers if s.strip()]
+        cfg["ntp"] = ntp
+
+        # --- Step 4: Backup directory ---
+        bd = request.form.get("backup_dir", "").strip()
+        if bd:
+            cfg["backup_dir"] = bd
+
+        # --- Step 5: Backup encryption ---
         enc_pw = request.form.get("encryption_password", "").strip()
         if enc_pw:
-            connected_udid = wg_crypto.get_iphone_udid()
             if connected_udid:
                 try:
                     r = subprocess.run(
@@ -186,19 +236,82 @@ def setup():
             else:
                 flash("No iPhone connected — encryption password was NOT stored. "
                       "Connect your iPhone and visit the Encryption page to enable it.", "warning")
-        # Backup directory
-        bd = request.form.get("backup_dir", "").strip()
-        if bd:
-            cfg["backup_dir"] = bd
-        # Orientation
+
+        # --- Step 6: Device filter ---
+        df = cfg.get("device_filter", {})
+        df["enabled"] = request.form.get("filter_enabled") == "on"
+        if connected_udid and request.form.get("add_connected_device") == "on":
+            allowed = df.get("allowed_devices", [])
+            existing_udids = [d.get("udid", "") for d in allowed]
+            if connected_udid not in existing_udids:
+                name = connected_name or "iPhone"
+                allowed.append({"udid": connected_udid, "name": name})
+                df["allowed_devices"] = allowed
+                flash(f"Added device: {name} ({connected_udid})", "success")
+        cfg["device_filter"] = df
+
+        # --- Step 7: Notifications ---
+        notif = cfg.get("notifications", {})
+        # Webhook
+        wh = notif.get("webhook", {})
+        wh["enabled"] = request.form.get("webhook_enabled") == "on"
+        wh["url"] = request.form.get("webhook_url", "")
+        wh_events = request.form.getlist("webhook_events")
+        if wh_events:
+            wh["events"] = wh_events
+        notif["webhook"] = wh
+        # MQTT
+        mq = notif.get("mqtt", {})
+        mq["enabled"] = request.form.get("mqtt_enabled") == "on"
+        mq["broker"] = request.form.get("mqtt_broker", "")
+        try:
+            mq["port"] = int(request.form.get("mqtt_port", "1883"))
+        except ValueError:
+            mq["port"] = 1883
+        mq["username"] = request.form.get("mqtt_username", "")
+        mq["password"] = request.form.get("mqtt_password", "")
+        mq["topic_prefix"] = request.form.get("mqtt_topic_prefix", "iosbackupmachine")
+        mq_events = request.form.getlist("mqtt_events")
+        if mq_events:
+            mq["events"] = mq_events
+        notif["mqtt"] = mq
+        cfg["notifications"] = notif
+
+        # --- Step 8: Orientation ---
         orient = request.form.get("orientation", "")
         if orient:
             cfg["orientation"] = orient
+
+        # --- Step 9: Web UI password ---
+        pw = request.form.get("password", "").strip()
+        if pw:
+            confirm = request.form.get("confirm_password", "")
+            if pw != confirm:
+                flash("Passwords do not match.", "error")
+                return render_template("setup.html", cfg=cfg,
+                                       connected_udid=connected_udid,
+                                       connected_name=connected_name,
+                                       current_time=current_time)
+            if len(pw) < 4:
+                flash("Password must be at least 4 characters.", "error")
+                return render_template("setup.html", cfg=cfg,
+                                       connected_udid=connected_udid,
+                                       connected_name=connected_name,
+                                       current_time=current_time)
+            auth = cfg.get("auth", {})
+            auth["password_hash"] = _hash_password(pw)
+            cfg["auth"] = auth
+            session["authenticated"] = True
+
         cfg["setup_completed"] = True
         save_config(cfg)
         flash("Setup complete! Your iOS Backup Machine is ready.", "success")
         return redirect(url_for("index"))
-    return render_template("setup.html", cfg=cfg)
+
+    return render_template("setup.html", cfg=cfg,
+                           connected_udid=connected_udid,
+                           connected_name=connected_name,
+                           current_time=current_time)
 
 @app.route("/login", methods=["GET", "POST"])
 def login():

@@ -17,6 +17,8 @@
             --error-bg: #fce8e6;
             --success: #0d652d;
             --success-bg: #e6f4ea;
+            --warning: #e37400;
+            --warning-bg: #fef7e0;
             --radius: 8px;
         }
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -47,11 +49,11 @@
             padding: 24px;
             margin-bottom: 20px;
         }
-        .card h2 { font-size: 16px; margin-bottom: 4px; }
+        .card h2 { font-size: 16px; margin-bottom: 4px; display: flex; align-items: center; }
         .card .card-desc { font-size: 13px; color: var(--text-muted); margin-bottom: 16px; }
         .form-group { margin-bottom: 16px; }
         .form-group label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; }
-        .form-group input, .form-group select {
+        .form-group input, .form-group select, .form-group textarea {
             width: 100%;
             padding: 8px 12px;
             border: 1px solid var(--border);
@@ -60,12 +62,32 @@
             color: var(--text);
             background: #fff;
         }
-        .form-group input:focus, .form-group select:focus {
+        .form-group textarea { min-height: 60px; resize: vertical; font-family: monospace; }
+        .form-group input:focus, .form-group select:focus, .form-group textarea:focus {
             outline: none;
             border-color: var(--primary);
             box-shadow: 0 0 0 2px rgba(26,115,232,0.15);
         }
         .form-group .hint { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+        .form-check {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+        .form-check input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--primary); }
+        .form-check label { font-size: 14px; margin-bottom: 0; }
+        .checkbox-group { display: flex; flex-wrap: wrap; gap: 8px; }
+        .checkbox-group label {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 10px;
+            background: var(--bg);
+            border-radius: 6px;
+            font-size: 13px;
+            cursor: pointer;
+        }
         .btn {
             display: inline-flex;
             align-items: center;
@@ -90,6 +112,7 @@
         }
         .flash-error { background: var(--error-bg); color: var(--error); }
         .flash-success { background: var(--success-bg); color: var(--success); }
+        .flash-warning { background: var(--warning-bg); color: var(--warning); }
         .step-number {
             display: inline-flex;
             align-items: center;
@@ -104,7 +127,48 @@
             margin-right: 8px;
             flex-shrink: 0;
         }
-        .card h2 { display: flex; align-items: center; }
+        .optional-tag {
+            font-size: 12px;
+            font-weight: 400;
+            color: var(--text-muted);
+            margin-left: 8px;
+        }
+        .section-divider {
+            text-align: center;
+            margin: 28px 0 20px;
+            color: var(--text-muted);
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            position: relative;
+        }
+        .section-divider::before,
+        .section-divider::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            width: 35%;
+            height: 1px;
+            background: var(--border);
+        }
+        .section-divider::before { left: 0; }
+        .section-divider::after { right: 0; }
+        .device-info {
+            padding: 10px 14px;
+            background: var(--success-bg);
+            border-radius: 6px;
+            font-size: 13px;
+            color: var(--success);
+            margin-bottom: 12px;
+        }
+        .device-info-none {
+            padding: 10px 14px;
+            background: var(--bg);
+            border-radius: 6px;
+            font-size: 13px;
+            color: var(--text-muted);
+            margin-bottom: 12px;
+        }
     </style>
 </head>
 <body>
@@ -112,7 +176,8 @@
         <div class="setup-header">
             <img src="{{ url_for('static', filename='icon.svg') }}" alt="Logo">
             <h1>Welcome to iOS Backup Machine</h1>
-            <p>Let's set up your device. This will only take a moment.</p>
+            <p>Let's set up your device. This will only take a moment.<br>
+            All optional steps can be configured later from the settings pages.</p>
         </div>
 
         {% with messages = get_flashed_messages(with_categories=true) %}
@@ -124,6 +189,7 @@
         {% endwith %}
 
         <form method="POST">
+            <!-- Step 1: Owner Information -->
             <div class="card">
                 <h2><span class="step-number">1</span> Owner Information</h2>
                 <p class="card-desc">This is displayed on the e-ink screen when idle. Use it to show contact info in case the device is lost.</p>
@@ -145,8 +211,47 @@
                 </div>
             </div>
 
+            <!-- Step 2: WiFi -->
             <div class="card">
-                <h2><span class="step-number">2</span> Backup Storage</h2>
+                <h2><span class="step-number">2</span> WiFi <span class="optional-tag">(optional)</span></h2>
+                <p class="card-desc">Connect to a WiFi network for NTP time sync, notifications, and remote access. Skip if you don't need network connectivity.</p>
+                <div class="form-check">
+                    <input type="checkbox" id="wifi_enabled" name="wifi_enabled" {% if cfg.get('wifi', {}).get('enabled') %}checked{% endif %}>
+                    <label for="wifi_enabled">Enable WiFi</label>
+                </div>
+                <div class="form-group">
+                    <label for="wifi_ssid">SSID (Network Name)</label>
+                    <input type="text" id="wifi_ssid" name="wifi_ssid" value="{{ cfg.get('wifi', {}).get('ssid', '') }}" placeholder="MyNetwork">
+                </div>
+                <div class="form-group">
+                    <label for="wifi_password">WiFi Password</label>
+                    <input type="password" id="wifi_password" name="wifi_password" value="{{ cfg.get('wifi', {}).get('password', '') }}" placeholder="Leave empty for open networks">
+                </div>
+            </div>
+
+            <!-- Step 3: Date & Time / NTP -->
+            <div class="card">
+                <h2><span class="step-number">3</span> Date & Time</h2>
+                <p class="card-desc">Set the system clock or enable automatic NTP synchronization. NTP requires an internet connection (WiFi or iPhone USB hotspot).</p>
+                <div class="form-group">
+                    <label for="setup_datetime">Current date & time</label>
+                    <input type="datetime-local" id="setup_datetime" name="setup_datetime" value="{{ current_time }}">
+                    <div class="hint">Only applied if you change this field. Leave as-is to keep the current system time.</div>
+                </div>
+                <div class="form-check">
+                    <input type="checkbox" id="ntp_enabled" name="ntp_enabled" {% if cfg.get('ntp', {}).get('enabled', true) %}checked{% endif %}>
+                    <label for="ntp_enabled">Enable automatic NTP time sync</label>
+                </div>
+                <div class="form-group">
+                    <label for="ntp_servers">NTP servers (one per line)</label>
+                    <textarea id="ntp_servers" name="ntp_servers" rows="2">{% for s in cfg.get('ntp', {}).get('servers', ['pool.ntp.org', 'time.google.com']) %}{{ s }}
+{% endfor %}</textarea>
+                </div>
+            </div>
+
+            <!-- Step 4: Backup Storage -->
+            <div class="card">
+                <h2><span class="step-number">4</span> Backup Storage</h2>
                 <p class="card-desc">Where should iPhone backups be saved?</p>
                 <div class="form-group">
                     <label for="backup_dir">Backup directory</label>
@@ -155,24 +260,135 @@
                 </div>
             </div>
 
+            <!-- Step 5: Backup Encryption -->
             <div class="card">
-                <h2><span class="step-number">3</span> Backup Encryption</h2>
+                <h2><span class="step-number">5</span> Backup Encryption</h2>
                 <p class="card-desc">
                     iOS backups should be encrypted to protect your data. Choose a password that will be set <strong>directly on your iPhone</strong>.
                     <strong>This password is NEVER stored on this device</strong> — write it down and keep it safe. You will need it to restore backups.
                 </p>
+                {% if connected_udid %}
+                <div class="device-info">
+                    iPhone detected: {{ connected_name or connected_udid }}
+                </div>
+                {% else %}
+                <div class="device-info-none">
+                    No iPhone connected. You can skip this step and enable encryption later from the Encryption settings page.
+                </div>
+                {% endif %}
                 <div class="form-group">
                     <label for="encryption_password">Encryption password</label>
                     <input type="password" id="encryption_password" name="encryption_password" placeholder="Choose a strong password">
                     <div class="hint">
                         If your iPhone is connected right now, encryption will be enabled immediately and the password discarded.
-                        If no iPhone is connected, you can skip this and enable encryption later from the Encryption settings page.
                     </div>
                 </div>
             </div>
 
+            <!-- Step 6: Device Filter -->
             <div class="card">
-                <h2><span class="step-number">4</span> Display</h2>
+                <h2><span class="step-number">6</span> Device Filter <span class="optional-tag">(optional)</span></h2>
+                <p class="card-desc">Restrict which iPhones can trigger a backup. When enabled, only devices in the allowed list will be backed up.</p>
+                <div class="form-check">
+                    <input type="checkbox" id="filter_enabled" name="filter_enabled" {% if cfg.get('device_filter', {}).get('enabled') %}checked{% endif %}>
+                    <label for="filter_enabled">Enable device filter</label>
+                </div>
+                {% if connected_udid %}
+                <div class="device-info">
+                    iPhone detected: {{ connected_name or connected_udid }}
+                </div>
+                <div class="form-check">
+                    <input type="checkbox" id="add_connected_device" name="add_connected_device" checked>
+                    <label for="add_connected_device">Add this iPhone to the allowed list</label>
+                </div>
+                {% else %}
+                <div class="device-info-none">
+                    No iPhone connected. You can add devices later from the Device Filter settings page.
+                </div>
+                {% endif %}
+            </div>
+
+            <div class="section-divider">Advanced (optional)</div>
+
+            <!-- Step 7: Notifications -->
+            <div class="card">
+                <h2><span class="step-number">7</span> Notifications <span class="optional-tag">(optional)</span></h2>
+                <p class="card-desc">Get notified about backup events via webhook or MQTT. You can configure these later from the settings page.</p>
+
+                {% set all_events = ["backup_start", "backup_complete", "backup_error", "device_connected", "device_disconnected"] %}
+
+                <details>
+                    <summary style="cursor:pointer; font-weight:500; font-size:14px; margin-bottom:12px; color:var(--primary);">Configure Webhook</summary>
+                    <div style="padding-top:8px;">
+                        <div class="form-check">
+                            <input type="checkbox" id="webhook_enabled" name="webhook_enabled" {% if cfg.get('notifications', {}).get('webhook', {}).get('enabled') %}checked{% endif %}>
+                            <label for="webhook_enabled">Enable Webhook</label>
+                        </div>
+                        <div class="form-group">
+                            <label for="webhook_url">Webhook URL</label>
+                            <input type="url" id="webhook_url" name="webhook_url" value="{{ cfg.get('notifications', {}).get('webhook', {}).get('url', '') }}" placeholder="https://example.com/webhook">
+                            <div class="hint">JSON POST will be sent to this URL on selected events.</div>
+                        </div>
+                        <div class="form-group">
+                            <label>Events</label>
+                            <div class="checkbox-group">
+                                {% for ev in all_events %}
+                                <label>
+                                    <input type="checkbox" name="webhook_events" value="{{ ev }}" {% if ev in cfg.get('notifications', {}).get('webhook', {}).get('events', ['backup_complete', 'backup_error']) %}checked{% endif %}>
+                                    {{ ev }}
+                                </label>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </div>
+                </details>
+
+                <details style="margin-top:12px;">
+                    <summary style="cursor:pointer; font-weight:500; font-size:14px; margin-bottom:12px; color:var(--primary);">Configure MQTT</summary>
+                    <div style="padding-top:8px;">
+                        <div class="form-check">
+                            <input type="checkbox" id="mqtt_enabled" name="mqtt_enabled" {% if cfg.get('notifications', {}).get('mqtt', {}).get('enabled') %}checked{% endif %}>
+                            <label for="mqtt_enabled">Enable MQTT</label>
+                        </div>
+                        <div class="form-group">
+                            <label for="mqtt_broker">Broker Address</label>
+                            <input type="text" id="mqtt_broker" name="mqtt_broker" value="{{ cfg.get('notifications', {}).get('mqtt', {}).get('broker', '') }}" placeholder="mqtt.example.com">
+                        </div>
+                        <div class="form-group">
+                            <label for="mqtt_port">Port</label>
+                            <input type="number" id="mqtt_port" name="mqtt_port" value="{{ cfg.get('notifications', {}).get('mqtt', {}).get('port', 1883) }}">
+                        </div>
+                        <div class="form-group">
+                            <label for="mqtt_username">Username</label>
+                            <input type="text" id="mqtt_username" name="mqtt_username" value="{{ cfg.get('notifications', {}).get('mqtt', {}).get('username', '') }}">
+                        </div>
+                        <div class="form-group">
+                            <label for="mqtt_password">MQTT Password</label>
+                            <input type="password" id="mqtt_password" name="mqtt_password" value="{{ cfg.get('notifications', {}).get('mqtt', {}).get('password', '') }}">
+                        </div>
+                        <div class="form-group">
+                            <label for="mqtt_topic_prefix">Topic Prefix</label>
+                            <input type="text" id="mqtt_topic_prefix" name="mqtt_topic_prefix" value="{{ cfg.get('notifications', {}).get('mqtt', {}).get('topic_prefix', 'iosbackupmachine') }}">
+                            <div class="hint">Messages published to: prefix/event_name</div>
+                        </div>
+                        <div class="form-group">
+                            <label>Events</label>
+                            <div class="checkbox-group">
+                                {% for ev in all_events %}
+                                <label>
+                                    <input type="checkbox" name="mqtt_events" value="{{ ev }}" {% if ev in cfg.get('notifications', {}).get('mqtt', {}).get('events', ['backup_complete', 'backup_error']) %}checked{% endif %}>
+                                    {{ ev }}
+                                </label>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </div>
+                </details>
+            </div>
+
+            <!-- Step 8: Display -->
+            <div class="card">
+                <h2><span class="step-number">8</span> Display</h2>
                 <p class="card-desc">How is the e-ink display oriented on your device?</p>
                 <div class="form-group">
                     <label for="orientation">Screen orientation</label>
@@ -183,8 +399,9 @@
                 </div>
             </div>
 
+            <!-- Step 9: Web UI Password -->
             <div class="card">
-                <h2><span class="step-number">5</span> Web UI Password <span style="font-size:12px; font-weight:400; color:var(--text-muted); margin-left:8px;">(optional)</span></h2>
+                <h2><span class="step-number">9</span> Web UI Password <span class="optional-tag">(optional)</span></h2>
                 <p class="card-desc">Protect this settings interface with a password. You can skip this and set it later.</p>
                 <div class="form-group">
                     <label for="password">Password</label>

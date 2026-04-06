@@ -1,4 +1,5 @@
 [![License](https://img.shields.io/github/license/giovi321/ios-backup-machine)](LICENSE)
+![Version](https://img.shields.io/badge/version-2.0-brightgreen)
 [![Python 3.13](https://img.shields.io/badge/Python-3.13-blue?logo=python&logoColor=white)](https://www.python.org/downloads/release/python-3130/)
 [![Armbian](https://img.shields.io/badge/OS-Armbian-orange?logo=armbian)](https://www.armbian.com/radxa-zero-3/)
 ![Offline](https://img.shields.io/badge/network-optional-blue.svg)
@@ -235,6 +236,35 @@ rkdeveloptool wl 0 Armbian_community_25.11.0-trunk.334_Radxa-zero3_trixie_vendor
 rkdeveloptool rd
 ```
 
+### 2. Automated install (recommended)
+
+After flashing Armbian and logging in as root, run:
+```bash
+cd /root
+git clone https://github.com/giovi321/ios-backup-machine.git
+bash ios-backup-machine/install.sh
+```
+
+The install script automatically performs all remaining setup steps:
+- Enables I2C and SPI overlays in `/boot/armbianEnv.txt`
+- Installs system packages (`libimobiledevice`, `python3`, `wireguard-tools`, etc.)
+- Creates a Python virtual environment and installs dependencies
+- Clones and links the Waveshare e-Paper driver
+- Copies application files to `/root`
+- Installs systemd services and udev rules
+- Prepares the backup storage directory
+- Downloads and configures PiSugar UPS
+- Prompts to reboot if overlay changes were made
+
+After the script finishes, open the web UI at `http://<device-ip>:8080` to complete the first-start wizard.
+
+---
+
+<details>
+<summary><strong>Manual installation (step-by-step reference)</strong></summary>
+
+If you prefer to install manually, follow these steps after flashing Armbian:
+
 ### 2. Enable I2C and SPI
 Edit `/boot/armbianEnv.txt`:
 ```
@@ -306,6 +336,9 @@ Automatically set the time of the Radxa Zero based on the RTC time at every boot
 ```bash
 systemctl enable rtc-sync.service
 ```
+
+</details>
+
 ## First run
 
 1. Open the web UI at `http://<device-ip>:8080`. The **first-start wizard** will guide you through owner info, backup directory, encryption password, display orientation, and optional web UI password.
@@ -342,10 +375,14 @@ Access the web interface at `http://<device-ip>:8080`.
 
 On the very first boot (when owner info has not been configured), the web UI automatically shows a **guided setup wizard** that walks you through:
 1. **Owner information** — displayed on the e-ink screen when idle
-2. **Backup directory** — where backups are stored
-3. **Backup encryption** — set directly on your iPhone (password is never stored on this device)
-4. **Display orientation** — landscape left or right
-5. **Web UI password** (optional) — protect the settings interface
+2. **WiFi** (optional) — connect to a wireless network for NTP sync, notifications, and remote access
+3. **Date & Time** — set the system clock manually or enable automatic NTP synchronization
+4. **Backup directory** — where backups are stored
+5. **Backup encryption** — set directly on your iPhone (password is never stored on this device)
+6. **Device filter** (optional) — restrict which iPhones can trigger a backup; auto-detects connected device
+7. **Notifications** (optional) — webhook and MQTT alerts for backup events
+8. **Display orientation** — landscape left or right
+9. **Web UI password** (optional) — protect the settings interface
 
 The Flask session `secret_key` is automatically generated on first start and saved to `config.yaml` — no manual configuration needed.
 
