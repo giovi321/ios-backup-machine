@@ -1,31 +1,22 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect width="64" height="64" rx="14" fill="#1a1a2e"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="256" height="256">
+  <!-- ios-backup-machine logo - https://github.com/giovi321/ios-backup-machine -->
+  <!-- Based on apple-juicer logo style with downward arrow instead of drop -->
   <defs>
-    <clipPath id="apple-clip">
-      <!-- Apple silhouette path (bite on right side) -->
-      <path d="M32 14c1.5-3.5 5-6 8-6c0.5 3-1 6-3.5 8.2
-               C40 16.5 44 18 46 21c2.5 3.8 3 9.5 0.5 16
-               c-1.5 4-3.5 7-6 9.5c-2 2-4 3.5-6.5 3.5
-               c-1.5 0-3-0.5-4.5-1c-1.5-0.5-3-1-4.5-1
-               c-1.5 0-3 0.5-4.5 1c-1.5 0.5-3 1-4.5 1
-               c-2.5 0-4.5-1.5-6.5-3.5c-2.5-2.5-4.5-5.5-6-9.5
-               c-2.5-6.5-2-12.2 0.5-16c2-3 6-4.5 9.5-5
-               c3-0.3 6 1 8 2.5c1.5-1.2 3.5-2 5.5-2.5
-               C30.5 15.5 31 14.5 32 14z"/>
+    <clipPath id="rounded">
+      <rect x="0" y="0" width="100" height="100" rx="6" ry="6"/>
     </clipPath>
   </defs>
-  <!-- Rainbow stripes clipped to apple shape -->
-  <g clip-path="url(#apple-clip)">
-    <rect x="8" y="14" width="40" height="6" fill="#61BB46"/>
-    <rect x="8" y="20" width="40" height="6" fill="#FDB827"/>
-    <rect x="8" y="26" width="40" height="6" fill="#F5821F"/>
-    <rect x="8" y="32" width="40" height="6" fill="#E03A3E"/>
-    <rect x="8" y="38" width="40" height="6" fill="#963D97"/>
-    <rect x="8" y="44" width="40" height="6" fill="#009DDC"/>
+
+  <g clip-path="url(#rounded)">
+    <rect x="0" y="0"        width="100" height="16.6667" fill="#5EBD3E"/>
+    <rect x="0" y="16.6667"  width="100" height="16.6667" fill="#FFB900"/>
+    <rect x="0" y="33.3334"  width="100" height="16.6667" fill="#F78200"/>
+    <rect x="0" y="50"       width="100" height="16.6667" fill="#E23838"/>
+    <rect x="0" y="66.6667"  width="100" height="16.6667" fill="#973999"/>
+    <rect x="0" y="83.3334"  width="100" height="16.6666" fill="#009CDF"/>
   </g>
-  <!-- Leaf -->
-  <path d="M32 14c1.5-3.5 4.5-5.5 7.5-5.8c-0.5 2.5-2 4.5-4 6" stroke="#61BB46" stroke-width="1.5" fill="none" stroke-linecap="round"/>
-  <!-- Downward arrow (white) centered in apple body -->
-  <line x1="32" y1="25" x2="32" y2="40" stroke="white" stroke-width="3" stroke-linecap="round"/>
-  <polyline points="26,35 32,41 38,35" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+
+  <!-- centered white downward arrow -->
+  <line x1="50" y1="22" x2="50" y2="72" stroke="#FFFFFF" stroke-width="8" stroke-linecap="round"/>
+  <polyline points="32,56 50,76 68,56" stroke="#FFFFFF" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
 </svg>
