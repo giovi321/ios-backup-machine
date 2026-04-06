@@ -1,4 +1,5 @@
 # /root/config.yaml
+setup_completed: false
 backup_dir: /media/iosbackup/
 marker_file: .foldermarker
 disk_device: /dev/mmcblk1
@@ -16,3 +17,77 @@ error_codes:
   "106": "No space left for the backup"
   "208": "Wrong iPhone password"
   "-4":  "iPhone disconnected during backup"
+
+# --- Authentication ---
+auth:
+  password_hash: ""  # SHA-256 salted hash; empty = no auth required (set via web UI)
+
+# --- Backup behavior ---
+backup:
+  auto_start: true          # start backup automatically when iPhone is plugged in
+  notify_on_rejected: true   # send notification when a non-allowed device is rejected
+
+# --- Backup encryption ---
+# Encryption is set ON THE iPHONE via the web UI Encryption page.
+# The password is NEVER stored on this device — you must remember it
+# yourself (it is only needed to restore backups).
+backup_encryption:
+  encryption_confirmed: false   # set true once encryption has been verified enabled on a device
+
+# --- Device filter ---
+device_filter:
+  enabled: false             # if true, only UDIDs in allowed_udids can trigger backup
+  allowed_devices: []        # list of {udid: "...", name: "..."} dicts
+  # Example:
+  # allowed_devices:
+  #   - udid: "00008030-001A34E22.."
+  #     name: "John's iPhone 15"
+
+# --- WiFi settings ---
+wifi:
+  enabled: false
+  ssid: ""
+  password: ""
+
+# --- NTP time sync ---
+ntp:
+  enabled: true
+  servers:
+    - "pool.ntp.org"
+    - "time.google.com"
+
+# --- Web UI ---
+webui:
+  enabled: true
+  port: 8080
+  # Which interfaces the web UI listens on: wifi, usb_iphone, all
+  bind_interfaces:
+    - "all"
+  secret_key: "change-me-to-a-random-string"
+
+# --- Notifications ---
+notifications:
+  webhook:
+    enabled: false
+    url: ""
+    # Events: backup_start, backup_complete, backup_error, device_connected, device_disconnected, device_rejected
+    events:
+      - "backup_complete"
+      - "backup_error"
+  mqtt:
+    enabled: false
+    broker: ""
+    port: 1883
+    username: ""
+    password: ""
+    topic_prefix: "iosbackupmachine"
+    events:
+      - "backup_complete"
+      - "backup_error"
+
+# --- WireGuard client ---
+wireguard:
+  enabled: false
+  interface_name: "wg0"
+  # WireGuard config is stored encrypted in /root/wireguard.enc
+  # The encryption key is derived from the connected iPhone's UUID

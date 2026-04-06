@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}Notifications — iOS Backup Machine{% endblock %}
+{% block content %}
+<h1>Notifications</h1>
+<p class="subtitle">Configure webhook and MQTT notifications for backup events</p>
+
+{% set all_events = ["backup_start", "backup_complete", "backup_error", "device_connected", "device_disconnected"] %}
+
+<form method="POST">
+    <div class="card">
+        <h2>Webhook</h2>
+        <div class="form-check">
+            <input type="checkbox" id="webhook_enabled" name="webhook_enabled" {% if cfg.notifications.webhook.enabled %}checked{% endif %}>
+            <label for="webhook_enabled">Enable Webhook Notifications</label>
+        </div>
+        <div class="form-group">
+            <label for="webhook_url">Webhook URL</label>
+            <input type="url" id="webhook_url" name="webhook_url" value="{{ cfg.notifications.webhook.url }}" placeholder="https://example.com/webhook">
+            <div class="hint">JSON POST will be sent to this URL</div>
+        </div>
+        <div class="form-group">
+            <label>Events</label>
+            <div class="checkbox-group">
+                {% for ev in all_events %}
+                <label>
+                    <input type="checkbox" name="webhook_events" value="{{ ev }}" {% if ev in cfg.notifications.webhook.events %}checked{% endif %}>
+                    {{ ev }}
+                </label>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>MQTT</h2>
+        <div class="form-check">
+            <input type="checkbox" id="mqtt_enabled" name="mqtt_enabled" {% if cfg.notifications.mqtt.enabled %}checked{% endif %}>
+            <label for="mqtt_enabled">Enable MQTT Notifications</label>
+        </div>
+        <div class="form-group">
+            <label for="mqtt_broker">Broker Address</label>
+            <input type="text" id="mqtt_broker" name="mqtt_broker" value="{{ cfg.notifications.mqtt.broker }}" placeholder="mqtt.example.com">
+        </div>
+        <div class="form-group">
+            <label for="mqtt_port">Port</label>
+            <input type="number" id="mqtt_port" name="mqtt_port" value="{{ cfg.notifications.mqtt.port }}">
+        </div>
+        <div class="form-group">
+            <label for="mqtt_username">Username</label>
+            <input type="text" id="mqtt_username" name="mqtt_username" value="{{ cfg.notifications.mqtt.username }}">
+        </div>
+        <div class="form-group">
+            <label for="mqtt_password">Password</label>
+            <input type="password" id="mqtt_password" name="mqtt_password" value="{{ cfg.notifications.mqtt.password }}">
+        </div>
+        <div class="form-group">
+            <label for="mqtt_topic_prefix">Topic Prefix</label>
+            <input type="text" id="mqtt_topic_prefix" name="mqtt_topic_prefix" value="{{ cfg.notifications.mqtt.topic_prefix }}">
+            <div class="hint">Messages published to: prefix/event_name</div>
+        </div>
+        <div class="form-group">
+            <label>Events</label>
+            <div class="checkbox-group">
+                {% for ev in all_events %}
+                <label>
+                    <input type="checkbox" name="mqtt_events" value="{{ ev }}" {% if ev in cfg.notifications.mqtt.events %}checked{% endif %}>
+                    {{ ev }}
+                </label>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+
+    <div class="btn-group">
+        <button type="submit" class="btn btn-primary">Save Notification Settings</button>
+    </div>
+</form>
+
+<div class="card" style="margin-top: 8px;">
+    <h2>Test</h2>
+    <form method="POST" action="{{ url_for('test_notification') }}">
+        <button type="submit" class="btn btn-secondary">Send Test Notification</button>
+    </form>
+</div>
+{% endblock %}

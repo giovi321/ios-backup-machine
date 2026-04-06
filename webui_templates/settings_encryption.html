@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block title %}Backup Encryption — iOS Backup Machine{% endblock %}
+{% block content %}
+<h1>Backup Encryption</h1>
+<p class="subtitle">Manage iOS backup encryption. The password is sent directly to the iPhone and is <strong>never stored</strong> on this device.</p>
+
+<div class="card">
+    <h2>Encryption Status</h2>
+    <div class="info-grid">
+        <div class="info-item">
+            <div class="label">iPhone connected</div>
+            <div class="value">
+                {% if connected_udid %}
+                <span class="badge badge-on"><span class="badge-dot"></span> {{ connected_udid[:20] }}...</span>
+                {% else %}
+                <span class="badge badge-off"><span class="badge-dot"></span> Not connected</span>
+                {% endif %}
+            </div>
+        </div>
+        <div class="info-item">
+            <div class="label">Device encryption</div>
+            <div class="value">
+                {% if enc_status == 'enabled' %}
+                <span class="badge badge-on"><span class="badge-dot"></span> Enabled</span>
+                {% elif enc_status == 'disabled' %}
+                <span class="badge badge-off"><span class="badge-dot"></span> Disabled</span>
+                {% else %}
+                <span class="badge badge-off"><span class="badge-dot"></span> Unknown (connect iPhone to check)</span>
+                {% endif %}
+            </div>
+        </div>
+        <div class="info-item">
+            <div class="label">Ever confirmed</div>
+            <div class="value">
+                {% if enc.get('encryption_confirmed') %}
+                <span class="badge badge-on"><span class="badge-dot"></span> Yes</span>
+                {% else %}
+                <span class="badge badge-off"><span class="badge-dot"></span> Not yet</span>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if enc_status != 'enabled' %}
+<div class="card">
+    <h2>Enable Encryption on iPhone</h2>
+    <p style="font-size:13px; color:var(--text-muted); margin-bottom:16px;">
+        Enable backup encryption on the connected iPhone. The iPhone must be <strong>connected, unlocked, and trusted</strong>.
+        Once enabled, all future backups are encrypted automatically.
+    </p>
+    {% if not connected_udid %}
+    <p style="color:var(--error); font-size:14px;">Connect your iPhone to enable encryption.</p>
+    {% else %}
+    <form method="POST">
+        <input type="hidden" name="action" value="enable_encryption">
+        <div class="form-group">
+            <label for="enable_password">Encryption password</label>
+            <input type="password" id="enable_password" name="enable_password" required placeholder="Choose a strong password">
+            <div class="hint">This password is sent directly to the iPhone and immediately discarded. It is <strong>never saved</strong> on this device. Write it down — you need it to restore backups.</div>
+        </div>
+        <div class="btn-group">
+            <button type="submit" class="btn btn-success">Enable Encryption</button>
+        </div>
+    </form>
+    {% endif %}
+</div>
+{% endif %}
+
+{% if enc_status == 'enabled' %}
+<div class="card">
+    <h2>Change Encryption Password</h2>
+    <p style="font-size:13px; color:var(--text-muted); margin-bottom:16px;">
+        Change the backup encryption password on the connected iPhone. Neither the old nor the new password is stored on this device.
+    </p>
+    {% if not connected_udid %}
+    <p style="color:var(--error); font-size:14px;">Connect your iPhone to change the password.</p>
+    {% else %}
+    <form method="POST">
+        <input type="hidden" name="action" value="change_password">
+        <div class="form-group">
+            <label for="old_password">Current password</label>
+            <input type="password" id="old_password" name="old_password" required>
+        </div>
+        <div class="form-group">
+            <label for="new_password">New password</label>
+            <input type="password" id="new_password" name="new_password" required>
+            <div class="hint">Write down the new password — it will not be stored anywhere on this device.</div>
+        </div>
+        <div class="btn-group">
+            <button type="submit" class="btn btn-primary">Change Password</button>
+        </div>
+    </form>
+    {% endif %}
+</div>
+{% endif %}
+
+<div class="card" style="background: #fffbe6; border-color: #f0e68c;">
+    <h2 style="color: var(--warning);">How backup encryption works</h2>
+    <ul style="font-size:13px; color:var(--text-muted); margin-left:18px; line-height:1.8;">
+        <li>Encryption is set <strong>on the iPhone</strong>, not on this device.</li>
+        <li>Once enabled, the iPhone remembers the setting — all future backups are encrypted automatically.</li>
+        <li>The password is only needed to <strong>restore</strong> a backup, not to create one.</li>
+        <li>The password is <strong>never stored</strong> on the iOS Backup Machine — it is sent to the iPhone and immediately discarded.</li>
+        <li>If you forget the password, you <strong>cannot</strong> restore encrypted backups.</li>
+        <li>If the first backup is interrupted after encryption is enabled, the encryption remains active — the next backup will proceed normally.</li>
+    </ul>
+</div>
+{% endblock %}

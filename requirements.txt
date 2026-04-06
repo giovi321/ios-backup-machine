@@ -1,0 +1,6 @@
+Pillow
+pyyaml
+python-periphery
+flask
+paho-mqtt
+cryptography
