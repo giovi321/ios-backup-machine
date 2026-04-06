@@ -20,14 +20,8 @@ mkdir -p "$(dirname "$LOG")"
 
 echo "$(date '+%F %T') [unplug-notify] invoked" >>"$LOG"
 
-# Run only if the backup script is active
-if ! pgrep -f "iosbackupmachine.py" >/dev/null; then
-  echo "$(date '+%F %T') [unplug-notify] backup not running, nothing to do" >>"$LOG"
-  exit 0
-fi
-
-# Stop the backup cleanly
-pids=$(pgrep -f "iosbackupmachine.py" || true)
+# Stop the backup if still running
+pids=$(pgrep -f "python.*iosbackupmachine\.py" || true)
 if [[ -n "${pids:-}" ]]; then
   echo "$(date '+%F %T') [unplug-notify] killing PIDs: $pids" >>"$LOG"
   kill -TERM $pids || true
