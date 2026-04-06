@@ -56,7 +56,7 @@ if [ -n "${REMOTE}" ] && [ "${LOCAL}" = "${REMOTE}" ]; then
     fi
 fi
 
-git pull --quiet origin main 2>/dev/null || {
+git pull --quiet origin main || {
     echo -e "${RED}  ✗ git pull failed. Check network and repository access.${NC}"
     exit 1
 }
@@ -67,17 +67,16 @@ echo -e "  ${GREEN}✓ Updated to ${NEW_VERSION}${NC}"
 # Show changelog (commits since last installed version)
 INSTALLED_VERSION_FILE="/root/iosbackupmachine/.installed_version"
 if [ -f "${INSTALLED_VERSION_FILE}" ]; then
-    INSTALLED_TAG=$(cat "${INSTALLED_VERSION_FILE}" 2>/dev/null || echo "")
     echo ""
-    echo -e "  ${BLUE}Changes since v${INSTALLED_TAG}:${NC}"
-    # Show last 10 commits
+    echo -e "  ${BLUE}Recent changes:${NC}"
     git log --oneline -10 "${LOCAL}..HEAD" 2>/dev/null | while IFS= read -r line; do
         echo -e "    ${line}"
     done
     echo ""
 fi
 
-# Run installer
+# Run installer with skip-version-check flag (we already confirmed above)
 echo -e "  ${BLUE}Running installer...${NC}"
 echo ""
-bash "${REPO_DIR}/install.sh"
+export IOSBACKUP_SKIP_VERSION_CHECK=1
+exec bash "${REPO_DIR}/install.sh"
