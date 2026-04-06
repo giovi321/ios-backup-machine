@@ -17,6 +17,11 @@ try:
 except ImportError:
     netutil = None
 
+try:
+    import sync_manager as _sync_manager
+except ImportError:
+    _sync_manager = None
+
 CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/config.yaml")
 LOG_DIR = "/var/log/iosbackupmachine"
 IDLE_REFRESH_SEC = 4
@@ -554,6 +559,22 @@ def run_backup(panel, logf, ui):
         if logf: logf.write(f"[OK] completed at {ts_end} usage={usage_str}\n")
         send_notification("backup_complete", {"usage": usage_str, "timestamp": ts_end})
         time.sleep(2)
+
+        # Auto-sync to remote server if enabled
+        sync_cfg = CFG.get("sync", {})
+        if sync_cfg.get("enabled") and sync_cfg.get("auto_sync") and _sync_manager:
+            if logf: logf.write("[SYNC] Auto-sync triggered after successful backup.\n")
+            try:
+                result = _sync_manager.run_sync(backup_dir=CFG.get("backup_dir"))
+                if result["success"]:
+                    if logf: logf.write(f"[SYNC] {result['message']}\n")
+                    send_notification("sync_complete", {"message": result["message"]})
+                else:
+                    if logf: logf.write(f"[SYNC] Failed: {result['message']}\n")
+                    send_notification("sync_error", {"error": result["message"]})
+            except Exception as e:
+                if logf: logf.write(f"[SYNC] Error: {e}\n")
+
         return 0
     else:
         send_notification("backup_error", {"error": "Unknown error, rc!=0"})
