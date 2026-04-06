@@ -558,9 +558,14 @@ fi
 
 if command -v nc &>/dev/null; then
     info "Syncing system clock to RTC..."
-    echo "rtc_pi2rtc" | nc -q 1 127.0.0.1 8423 2>/dev/null || {
-        warn "Could not sync RTC (PiSugar server may not be running yet)"
-    }
+    # Wait for PiSugar server to be ready after restart
+    for i in 1 2 3 4 5; do
+        if echo "rtc_pi2rtc" | nc -q 1 127.0.0.1 8423 2>/dev/null; then
+            info "RTC synced"
+            break
+        fi
+        sleep 2
+    done
 fi
 
 if [ -f /etc/systemd/system/rtc-sync.service ]; then
