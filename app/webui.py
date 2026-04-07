@@ -1205,6 +1205,37 @@ def api_backup_status():
     status = _read_backup_status()
     return jsonify(status or {"state": "idle"})
 
+@app.route("/api/start-backup", methods=["POST"])
+@login_required
+def api_start_backup():
+    """Start or restart the backup service."""
+    try:
+        subprocess.run(["systemctl", "reset-failed", "iosbackupmachine.service"],
+                       capture_output=True, timeout=5)
+        r = subprocess.run(["systemctl", "restart", "iosbackupmachine.service"],
+                           capture_output=True, text=True, timeout=10)
+        if r.returncode == 0:
+            flash("Backup service started.", "success")
+        else:
+            flash(f"Failed to start backup: {r.stderr.strip()[:200]}", "error")
+    except Exception as e:
+        flash(f"Error: {e}", "error")
+    return redirect(url_for("index"))
+
+@app.route("/api/stop-backup", methods=["POST"])
+@login_required
+def api_stop_backup():
+    """Stop the backup service and kill any running idevicebackup2."""
+    try:
+        subprocess.run(["systemctl", "stop", "iosbackupmachine.service"],
+                       capture_output=True, timeout=10)
+        subprocess.run(["pkill", "-f", "idevicebackup2"],
+                       capture_output=True, timeout=5)
+        flash("Backup stopped.", "success")
+    except Exception as e:
+        flash(f"Error: {e}", "error")
+    return redirect(url_for("index"))
+
 @app.route("/api/encryption-key")
 @login_required
 def api_encryption_key():

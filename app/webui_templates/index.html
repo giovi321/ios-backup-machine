@@ -107,6 +107,19 @@
 </div>
 
 <div class="card" style="margin-top: 24px;">
+    <h2>Backup Control</h2>
+    <div class="btn-group">
+        <form method="POST" action="{{ url_for('api_start_backup') }}" style="display:inline;">
+            <button type="submit" class="btn btn-primary">Start Backup</button>
+        </form>
+        <form method="POST" action="{{ url_for('api_stop_backup') }}" style="display:inline;">
+            <button type="submit" class="btn btn-secondary">Stop Backup</button>
+        </form>
+    </div>
+    <p class="hint" style="margin-top:8px;">Start requires an iPhone to be connected. Stop kills any running backup.</p>
+</div>
+
+<div class="card" style="margin-top: 24px;">
     <h2>Quick Actions</h2>
     <div class="btn-group">
         <a href="{{ url_for('settings_general') }}" class="btn btn-secondary">General Settings</a>

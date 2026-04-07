@@ -714,7 +714,9 @@ def main():
         if wg_cfg.get("enabled") and wg_cfg.get("auto_connect"):
             import wg_manager as _wg
             iface = wg_cfg.get("interface_name", "wg0")
-            if not _wg.is_interface_up(iface):
+            if _wg.is_interface_up(iface):
+                if logf: logf.write(f"[WG] {iface} already up, skipping\n")
+            else:
                 ok, err = _wg.start_wireguard(iface)
                 if ok:
                     if logf: logf.write(f"[WG] Auto-connected {iface}\n")
