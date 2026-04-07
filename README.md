@@ -13,7 +13,7 @@
 
 
 <p align="center">
-  <img src="webui_static/icon.svg" alt="iOS Backup Machine logo" width="120" height="120">
+  <img src="app/webui_static/icon.svg" alt="iOS Backup Machine logo" width="120" height="120">
 </p>
 
 # iOS Backup Machine
@@ -50,7 +50,7 @@ All backups stay local on the microSD card and can be restored anytime using too
 - **Notifications**: webhook and MQTT alerts for backup events.
 - **Remote sync**: rsync backups to a remote server over SSH (manual or auto after backup).
 - **WireGuard VPN**: built-in client with encrypted config.
-- **Master password encryption**: WireGuard and sync credentials are encrypted with a user-chosen password (AES-256-GCM via PBKDF2).
+- **Credential encryption**: WireGuard and sync credentials are encrypted with AES-256-GCM. Choose between iPhone UDID (auto-decrypt when connected) or a custom password.
 - **Network-aware sync**: restrict remote sync to WiFi only, a specific SSID, or iPhone USB tethering.
 - **Power-on indicator**: visible on every e-ink screen.
 
@@ -115,35 +115,38 @@ All backups stay local on the microSD card and can be restored anytime using too
 
 **Repository** (cloned to `/root/ios-backup-machine/`):
 ```
-├── install.sh / update.sh / uninstall.sh   # Install, update, uninstall scripts
-├── Case/                                    # 3D printable case (.stl)
-├── config.yaml.example                      # Config template (copied on fresh install)
-├── *.service                                # Systemd service files
-├── 90-iosbackupmachine.rules                # Udev rules for iPhone detection
-├── [pisugar]config.json                     # PiSugar UPS configuration
-└── *.py / *.sh / *.ttf                      # Application source files
+├── install.sh / update.sh / uninstall.sh
+├── requirements.txt
+├── app/                             # Python source files
+│   ├── iosbackupmachine.py          # Main backup program
+│   ├── webui.py                     # Flask web UI
+│   ├── boot-message.py              # Boot screen (power icon + title + owner info)
+│   ├── owner-message.py             # Power-off screen (owner info only)
+│   ├── button-info.py               # Single-tap: system info (30s)
+│   ├── backup-sync.py               # Double-tap: remote sync via rsync
+│   ├── unplug-notify.py             # Unplug interruption screen
+│   ├── last-backup.py, ntp-sync.py, notifications.py, netutil.py
+│   ├── wg_crypto.py, wg_manager.py  # WireGuard encryption & management
+│   ├── sync_crypto.py, sync_manager.py  # Remote sync encryption & execution
+│   ├── epdconfig.py                 # E-paper hardware config
+│   ├── webui_templates/             # HTML templates (19 files)
+│   └── webui_static/                # Icon, favicon
+├── config/                          # Configuration templates
+│   ├── config.yaml.example, [pisugar]config.json
+│   ├── armbianEnv.txt, 90-iosbackupmachine.rules
+├── services/                        # Systemd service files (9)
+├── scripts/                         # Shell scripts (launcher, shutdown, unplug)
+└── assets/                          # Font, 3D case STL, images
 ```
 
-**Installed** (to `/root/iosbackupmachine/`):
+**Installed** (to `/root/iosbackupmachine/` — flat):
 ```
-├── iosbackupmachine.py              # Main backup program
-├── webui.py                         # Flask web UI
-├── config.yaml                      # User configuration (never overwritten on update)
-├── boot-message.py                  # Boot screen (power icon + title + owner info)
-├── owner-message.py                 # Power-off screen (owner info only)
-├── button-info.py                   # Single-tap: system info display (30s)
-├── backup-sync.py                   # Double-tap: remote sync via rsync
-├── unplug-notify.py                 # Unplug interruption screen
-├── last-backup.py                   # Last backup info display
-├── wg_crypto.py                     # Credential encryption (AES-256-GCM)
-├── sync_crypto.py / sync_manager.py # Remote sync encryption and execution
-├── wg_manager.py                    # WireGuard interface management
-├── netutil.py / notifications.py    # Network utilities, webhook/MQTT
-├── ntp-sync.py / epdconfig.py       # NTP sync, e-paper hardware config
+├── *.py                             # All Python files (co-located for imports)
+├── *.sh                             # Shell scripts
+├── config.yaml                      # User config (never overwritten on update)
 ├── UbuntuMono-Regular.ttf           # Display font
-├── webui_templates/                 # HTML templates for web UI
-├── webui_static/                    # Static assets (icon, favicon)
-└── .installed_version               # Version tracking for updates
+├── webui_templates/ / webui_static/ # Web UI assets
+└── .installed_version               # Version tracking
 ```
 
 ## Configuration
@@ -443,14 +446,17 @@ You can change or remove the password at any time from the **Password** page.
 
 ## Credential Encryption
 
-WireGuard and remote sync credentials are encrypted using a **master password** you choose.
-The password is never stored on disk — it is used to derive an AES-256 key via PBKDF2 (100,000 iterations).
+WireGuard and remote sync credentials are encrypted using AES-256-GCM with a key derived via PBKDF2 (100,000 iterations).
 
-- **Encrypt**: enter your master password in the web UI when saving WireGuard or sync credentials
-- **Decrypt**: enter the same master password to start WireGuard, run sync, or test connections
-- **CLI**: `python3 wg_crypto.py decrypt` (prompts for master password)
+**Two passphrase modes** (configurable in WireGuard settings):
 
-> **Security note**: the master password is only held in memory during the operation. If the device is lost, the encrypted files (`wireguard.enc`, `sync.enc`) cannot be decrypted without it.
+| Mode | Passphrase | Auto-start | Security |
+|------|-----------|------------|----------|
+| **iPhone UDID** (default) | iPhone's unique device ID | Yes, when iPhone is connected | Protected if device stolen without iPhone |
+| **Custom password** | User-chosen password | No, manual entry required | Protected by password strength |
+
+- **CLI**: `python3 wg_crypto.py decrypt` (auto-uses UDID if available, else prompts)
+- Encrypted files: `wireguard.enc`, `sync.enc` in the install directory
 
 ## Remote Sync
 

@@ -35,31 +35,31 @@ BACKUP_ARCHIVE_DIR="/root/iosbackupmachine-backups"
 REQUIRED_OVERLAYS="rk3568-spi3-m1-cs0-spidev rk3568-i2c3-m0"
 
 # Get version from repo
-REPO_VERSION=$(grep -oP 'VERSION\s*=\s*"\K[^"]+' "${REPO_DIR}/webui.py" 2>/dev/null || echo "unknown")
+REPO_VERSION=$(grep -oP 'VERSION\s*=\s*"\K[^"]+' "${REPO_DIR}/app/webui.py" 2>/dev/null || echo "unknown")
 
-# Files to copy
+# Files to copy (repo_path:install_name)
 APP_FILES=(
-    iosbackupmachine.py
-    iosbackupmachine_launcher.sh
-    last-backup.py
-    owner-message.py
-    boot-message.py
-    button-info.py
-    backup-sync.py
-    unplug-notify.py
-    unplug-notify.sh
-    shutdown.sh
-    ntp-sync.py
-    webui.py
-    netutil.py
-    notifications.py
-    wg_crypto.py
-    wg_manager.py
-    sync_crypto.py
-    sync_manager.py
-    epdconfig.py
-    UbuntuMono-Regular.ttf
-    requirements.txt
+    "app/iosbackupmachine.py:iosbackupmachine.py"
+    "app/webui.py:webui.py"
+    "app/boot-message.py:boot-message.py"
+    "app/owner-message.py:owner-message.py"
+    "app/button-info.py:button-info.py"
+    "app/backup-sync.py:backup-sync.py"
+    "app/last-backup.py:last-backup.py"
+    "app/unplug-notify.py:unplug-notify.py"
+    "app/ntp-sync.py:ntp-sync.py"
+    "app/notifications.py:notifications.py"
+    "app/netutil.py:netutil.py"
+    "app/epdconfig.py:epdconfig.py"
+    "app/wg_crypto.py:wg_crypto.py"
+    "app/wg_manager.py:wg_manager.py"
+    "app/sync_crypto.py:sync_crypto.py"
+    "app/sync_manager.py:sync_manager.py"
+    "scripts/iosbackupmachine_launcher.sh:iosbackupmachine_launcher.sh"
+    "scripts/unplug-notify.sh:unplug-notify.sh"
+    "scripts/shutdown.sh:shutdown.sh"
+    "assets/UbuntuMono-Regular.ttf:UbuntuMono-Regular.ttf"
+    "requirements.txt:requirements.txt"
 )
 
 # Services
@@ -131,8 +131,8 @@ if [ "$(id -u)" -ne 0 ]; then
     fail "This script must be run as root. Try: sudo bash $0"
 fi
 
-if [ ! -f "${REPO_DIR}/iosbackupmachine.py" ]; then
-    fail "Cannot find iosbackupmachine.py in ${REPO_DIR}. Run this script from the cloned repo directory."
+if [ ! -f "${REPO_DIR}/app/iosbackupmachine.py" ]; then
+    fail "Cannot find app/iosbackupmachine.py in ${REPO_DIR}. Run this script from the cloned repo directory."
 fi
 
 # --- Lock file: prevent concurrent installs ---
@@ -205,8 +205,9 @@ if [ "${IS_UPGRADE}" = true ]; then
     mkdir -p "${BACKUP_PATH}"
 
     # Backup app files
-    for f in "${APP_FILES[@]}"; do
-        src="${INSTALL_DIR}/${f}"
+    for entry in "${APP_FILES[@]}"; do
+        install_name="${entry##*:}"
+        src="${INSTALL_DIR}/${install_name}"
         if [ -f "${src}" ]; then
             cp "${src}" "${BACKUP_PATH}/" 2>/dev/null || true
         fi
@@ -315,6 +316,7 @@ fi
 info "Installing Python packages..."
 "${VENV_DIR}/bin/pip" install --quiet --upgrade pip
 "${VENV_DIR}/bin/pip" install --quiet -r "${REPO_DIR}/requirements.txt"
+# requirements.txt stays at repo root
 info "Python packages installed"
 
 # ---------------------------------------------------------------------------
@@ -331,7 +333,7 @@ fi
 
 WAVESHARE_LIB="${EPAPER_DIR}/RaspberryPi_JetsonNano/python/lib/waveshare_epd"
 if [ -d "${WAVESHARE_LIB}" ]; then
-    cp "${REPO_DIR}/epdconfig.py" "${WAVESHARE_LIB}/epdconfig.py"
+    cp "${REPO_DIR}/app/epdconfig.py" "${WAVESHARE_LIB}/epdconfig.py"
     info "Copied custom epdconfig.py to waveshare driver"
 else
     warn "Waveshare driver lib not found at expected path"
@@ -354,12 +356,14 @@ fi
 # ---------------------------------------------------------------------------
 step "Install application files"
 
-for f in "${APP_FILES[@]}"; do
-    src="${REPO_DIR}/${f}"
-    dst="${INSTALL_DIR}/${f}"
+for entry in "${APP_FILES[@]}"; do
+    repo_path="${entry%%:*}"
+    install_name="${entry##*:}"
+    src="${REPO_DIR}/${repo_path}"
+    dst="${INSTALL_DIR}/${install_name}"
     if [ -f "${src}" ]; then
         cp "${src}" "${dst}"
-        detail "Copied ${f}"
+        detail "Copied ${install_name}"
     else
         warn "File not found: ${src}"
     fi
@@ -369,7 +373,7 @@ done
 if [ -f "${INSTALL_DIR}/config.yaml" ]; then
     info "Migrating config: merging new defaults into existing config.yaml"
     # Use Python to merge new defaults without overwriting existing values
-    "${VENV_DIR}/bin/python3" - "${REPO_DIR}/config.yaml.example" "${INSTALL_DIR}/config.yaml" <<'PYEOF'
+    "${VENV_DIR}/bin/python3" - "${REPO_DIR}/config/config.yaml.example" "${INSTALL_DIR}/config.yaml" <<'PYEOF'
 import sys, yaml
 
 example_path, config_path = sys.argv[1], sys.argv[2]
@@ -399,7 +403,7 @@ if added:
     print(f"    Added new config keys: {', '.join(added)}")
 PYEOF
 else
-    cp "${REPO_DIR}/config.yaml.example" "${INSTALL_DIR}/config.yaml"
+    cp "${REPO_DIR}/config/config.yaml.example" "${INSTALL_DIR}/config.yaml"
     detail "Copied config.yaml (fresh install)"
 fi
 
@@ -409,8 +413,9 @@ if [ "${IS_UPGRADE}" = true ]; then
         [ -f "$f" ] || continue
         base=$(basename "$f")
         found=false
-        for af in "${APP_FILES[@]}"; do
-            if [ "$af" = "$base" ]; then
+        for entry in "${APP_FILES[@]}"; do
+            install_name="${entry##*:}"
+            if [ "$install_name" = "$base" ]; then
                 found=true
                 break
             fi
@@ -425,11 +430,11 @@ fi
 # Clean Python bytecode cache
 find "${INSTALL_DIR}" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 
-# Copy webui directories (remove first to avoid cp -r nesting)
+# Copy webui directories from app/ (remove first to avoid cp -r nesting)
 for d in webui_templates webui_static; do
-    if [ -d "${REPO_DIR}/${d}" ]; then
+    if [ -d "${REPO_DIR}/app/${d}" ]; then
         rm -rf "${INSTALL_DIR}/${d}"
-        cp -r "${REPO_DIR}/${d}" "${INSTALL_DIR}/${d}"
+        cp -r "${REPO_DIR}/app/${d}" "${INSTALL_DIR}/${d}"
         info "Copied ${d}/"
     fi
 done
@@ -446,7 +451,7 @@ info "Application files installed to ${INSTALL_DIR}"
 # ---------------------------------------------------------------------------
 step "Install systemd services and udev rules"
 
-for f in "${REPO_DIR}"/*.rules; do
+for f in "${REPO_DIR}"/config/*.rules; do
     [ -f "$f" ] || continue
     cp "$f" /etc/udev/rules.d/
     detail "Installed $(basename "$f")"
@@ -454,7 +459,7 @@ done
 
 # Build list of service files from repo
 REPO_SERVICES=()
-for f in "${REPO_DIR}"/*.service; do
+for f in "${REPO_DIR}"/services/*.service; do
     [ -f "$f" ] || continue
     cp "$f" /etc/systemd/system/
     REPO_SERVICES+=("$(basename "$f")")
@@ -543,7 +548,7 @@ else
     fi
 fi
 
-PISUGAR_CONFIG="${REPO_DIR}/[pisugar]config.json"
+PISUGAR_CONFIG="${REPO_DIR}/config/[pisugar]config.json"
 if [ -f "${PISUGAR_CONFIG}" ] && [ -d /etc/pisugar-server ]; then
     cp "${PISUGAR_CONFIG}" /etc/pisugar-server/config.json
     info "Installed PiSugar configuration"
