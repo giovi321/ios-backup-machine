@@ -39,5 +39,5 @@ config.yaml
 sync.enc
 sync-key-backup.txt
 
-# Claude Code local data
+# IDE / tool local data
 .claude/
