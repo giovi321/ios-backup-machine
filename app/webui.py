@@ -559,7 +559,7 @@ def settings_wireguard():
         elif action == "upload_config":
             wg_conf = request.form.get("wg_config", "")
             mode = cfg.get("credential_encryption", {}).get("passphrase_mode", "udid")
-            pw = udid if mode == "udid" else request.form.get("master_password", "").strip()
+            pw = wg_crypto.get_iphone_serial() if mode == "udid" else request.form.get("master_password", "").strip()
             if not wg_conf.strip():
                 flash("Empty WireGuard config.", "error")
             elif not pw:
@@ -570,7 +570,7 @@ def settings_wireguard():
                 flash("Failed to encrypt WireGuard config.", "error")
         elif action == "start":
             mode = cfg.get("credential_encryption", {}).get("passphrase_mode", "udid")
-            pw = udid if mode == "udid" else request.form.get("master_password", "").strip()
+            pw = wg_crypto.get_iphone_serial() if mode == "udid" else request.form.get("master_password", "").strip()
             if wg_manager.start_wireguard(iface, passphrase=pw):
                 flash(f"WireGuard interface {iface} started.", "success")
             else:
@@ -607,7 +607,7 @@ def settings_sync():
             flash("Sync settings saved.", "success")
         elif action == "upload_credentials":
             mode = cfg.get("credential_encryption", {}).get("passphrase_mode", "udid")
-            pw = udid if mode == "udid" else request.form.get("master_password", "").strip()
+            pw = wg_crypto.get_iphone_serial() if mode == "udid" else request.form.get("master_password", "").strip()
             host = request.form.get("host", "").strip()
             port = request.form.get("port", "22").strip()
             username = request.form.get("username", "").strip()
@@ -641,12 +641,12 @@ def settings_sync():
                     flash("Failed to encrypt sync credentials.", "error")
         elif action == "test_connection":
             mode = cfg.get("credential_encryption", {}).get("passphrase_mode", "udid")
-            pw = udid if mode == "udid" else request.form.get("master_password", "").strip()
+            pw = wg_crypto.get_iphone_serial() if mode == "udid" else request.form.get("master_password", "").strip()
             result = sync_manager.test_connection(passphrase=pw)
             flash(result["message"], "success" if result["success"] else "error")
         elif action == "run_sync":
             mode = cfg.get("credential_encryption", {}).get("passphrase_mode", "udid")
-            pw = udid if mode == "udid" else request.form.get("master_password", "").strip()
+            pw = wg_crypto.get_iphone_serial() if mode == "udid" else request.form.get("master_password", "").strip()
             result = sync_manager.run_sync(passphrase=pw)
             flash(result["message"], "success" if result["success"] else "error")
         return redirect(url_for("settings_sync"))

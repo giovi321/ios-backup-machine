@@ -22,6 +22,20 @@ def get_iphone_udid():
         pass
     return None
 
+def get_iphone_serial():
+    """Get the connected iPhone's serial number (used for credential encryption)."""
+    try:
+        r = subprocess.run(
+            ["ideviceinfo", "-k", "SerialNumber"],
+            capture_output=True, text=True, timeout=5
+        )
+        serial = r.stdout.strip()
+        if r.returncode == 0 and serial:
+            return serial
+    except Exception:
+        pass
+    return None
+
 def derive_key(passphrase):
     return hashlib.pbkdf2_hmac("sha256", passphrase.encode("utf-8"), SALT, 100000)
 
@@ -83,7 +97,8 @@ def resolve_passphrase(passphrase=None, config=None):
             config = {}
     mode = config.get("credential_encryption", {}).get("passphrase_mode", "udid")
     if mode == "udid":
-        return get_iphone_udid()
+        # Use iPhone serial number (not visible in web UI config)
+        return get_iphone_serial()
     return None
 
 def encrypt_wg_config(wg_config_dict, passphrase=None):
