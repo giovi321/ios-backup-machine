@@ -47,6 +47,12 @@ def get_usb_iphone_ip():
                     return ips[0]
     return None
 
+def get_wireguard_ip(iface="wg0"):
+    """Return the WireGuard interface IP, or None."""
+    ifaces = get_all_interfaces()
+    ips = ifaces.get(iface, [])
+    return ips[0] if ips else None
+
 def get_active_ip():
     """Return (ip, interface_type) for the first active network connection."""
     wifi = get_wifi_ip()
@@ -80,6 +86,10 @@ def get_bind_address(bind_interfaces):
                 return ip
         elif bi == "usb_iphone":
             ip = get_usb_iphone_ip()
+            if ip:
+                return ip
+        elif bi == "wireguard":
+            ip = get_wireguard_ip()
             if ip:
                 return ip
 

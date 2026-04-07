@@ -48,6 +48,10 @@
                     <input type="checkbox" name="bind_interfaces" value="usb_iphone" {% if 'usb_iphone' in cfg.webui.bind_interfaces %}checked{% endif %}>
                     USB iPhone hotspot
                 </label>
+                <label>
+                    <input type="checkbox" name="bind_interfaces" value="wireguard" {% if 'wireguard' in cfg.webui.bind_interfaces %}checked{% endif %}>
+                    WireGuard VPN
+                </label>
             </div>
         </div>
         <div class="form-group">
