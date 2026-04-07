@@ -162,7 +162,32 @@ temp = get_soc_temp()
 temp_str = f"Temp: {temp}C" if temp is not None else "Temp: n/a"
 free_pct = get_free_disk_pct()
 disk_str = f"SD free: {free_pct}%" if free_pct is not None else "SD free: n/a"
-backup_str = f"Last backup: {get_last_backup()}"
+backup_str = f"Last: {get_last_backup()}"
+
+# Backup result from status file
+def get_backup_result():
+    try:
+        import json
+        sf = "/var/log/iosbackupmachine/backup_status.json"
+        with open(sf, "r") as f:
+            data = json.load(f)
+        state = data.get("state", "")
+        if state == "complete":
+            return "OK"
+        elif state == "interrupted":
+            return "INTERRUPTED"
+        elif state == "error":
+            return "ERROR"
+        elif state == "backing_up":
+            return f"IN PROGRESS {data.get('percent', '')}%"
+        else:
+            return ""
+    except Exception:
+        return ""
+
+result = get_backup_result()
+if result:
+    backup_str += f" ({result})"
 
 # VPN status
 def get_vpn_status():

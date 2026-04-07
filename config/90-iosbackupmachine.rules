@@ -1,9 +1,9 @@
-# Match iPhones in normal mode (12a*) and recovery/DFU modes
-ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="05ac", ATTR{idProduct}=="12a8", TAG+="systemd", ENV{SYSTEMD_WANTS}="iosbackupmachine.service"
-ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="05ac", ATTR{idProduct}=="12a0", TAG+="systemd", ENV{SYSTEMD_WANTS}="iosbackupmachine.service"
-ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="05ac", ATTR{idProduct}=="12a9", TAG+="systemd", ENV{SYSTEMD_WANTS}="iosbackupmachine.service"
-ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="05ac", ATTR{idProduct}=="12ab", TAG+="systemd", ENV{SYSTEMD_WANTS}="iosbackupmachine.service"
+# Match iPhones in normal mode and recovery/DFU modes
+# reset-failed ensures the service can restart after a previous exit
+ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="05ac", ATTR{idProduct}=="12a8", RUN+="/bin/sh -c '/bin/systemctl reset-failed iosbackupmachine.service 2>/dev/null; /bin/systemctl --no-block start iosbackupmachine.service'"
+ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="05ac", ATTR{idProduct}=="12a0", RUN+="/bin/sh -c '/bin/systemctl reset-failed iosbackupmachine.service 2>/dev/null; /bin/systemctl --no-block start iosbackupmachine.service'"
+ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="05ac", ATTR{idProduct}=="12a9", RUN+="/bin/sh -c '/bin/systemctl reset-failed iosbackupmachine.service 2>/dev/null; /bin/systemctl --no-block start iosbackupmachine.service'"
+ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="05ac", ATTR{idProduct}=="12ab", RUN+="/bin/sh -c '/bin/systemctl reset-failed iosbackupmachine.service 2>/dev/null; /bin/systemctl --no-block start iosbackupmachine.service'"
 ACTION=="remove", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", \
   ENV{PRODUCT}=="5ac/*", \
-  RUN+="/usr/bin/logger -t UDEVTEST 'unplug rule fired'", \
   RUN+="/bin/systemctl --no-block start unplug-notify.service"
