@@ -291,6 +291,7 @@ PACKAGES=(
     libimobiledevice-utils
     usbmuxd
     wireguard-tools
+    iptables
     sshpass
     rsync
     netcat-traditional
