@@ -37,12 +37,16 @@ def start_wireguard(iface="wg0", passphrase=None):
         return False, f"Cannot write config to {conf_path}: {e}"
 
     try:
-        r = subprocess.run(["wg-quick", "up", iface], capture_output=True, text=True, timeout=15)
+        r = subprocess.run(["wg-quick", "up", iface], capture_output=True, text=True, timeout=30)
         if r.returncode == 0:
             return True, None
         else:
-            err = r.stderr.strip()[:200] if r.stderr else f"exit code {r.returncode}"
-            return False, f"wg-quick up failed: {err}"
+            # wg-quick prints commands to stderr; the actual error is usually the last few lines
+            output = (r.stderr or "") + (r.stdout or "")
+            # Extract only the last meaningful lines (skip the [#] command echo lines)
+            lines = [ln for ln in output.strip().splitlines() if not ln.startswith("[#]")]
+            err = "\n".join(lines[-5:]) if lines else output.strip()[-500:]
+            return False, f"wg-quick failed: {err}"
     except FileNotFoundError:
         return False, "wg-quick not found. Install wireguard-tools."
     except subprocess.TimeoutExpired:
