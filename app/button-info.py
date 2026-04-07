@@ -164,12 +164,24 @@ free_pct = get_free_disk_pct()
 disk_str = f"SD free: {free_pct}%" if free_pct is not None else "SD free: n/a"
 backup_str = f"Last backup: {get_last_backup()}"
 
+# VPN status
+def get_vpn_status():
+    try:
+        iface = "wg0"
+        r = subprocess.run(["ip", "link", "show", iface], capture_output=True, text=True, timeout=3)
+        return "VPN: connected" if r.returncode == 0 else "VPN: off"
+    except Exception:
+        return "VPN: off"
+
+vpn_str = get_vpn_status()
+
 # --- Layout: all lines centered ---
 info_lines = [
     (date_str, F),
     (time_str, F),
     ("", F_SM),        # spacer
     (f"IP: {ip_str}", F_SM),
+    (vpn_str, F_SM),
     (backup_str, F_SM),
     (disk_str, F_SM),
     (temp_str, F_SM),

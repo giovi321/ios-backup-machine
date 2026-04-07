@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# boot-message.py — Boot screen: power icon + "iOS Backup Machine" + owner info
+# boot-message.py — Boot screen: project icon + "iOS Backup Machine" + owner info
 import os, sys, time, yaml
 from PIL import Image, ImageDraw, ImageFont
 from waveshare_epd import epd2in13_V4, epdconfig
@@ -36,14 +36,45 @@ def text_wh(d, t, f):
     except AttributeError:
         return d.textsize(t, font=f)
 
-def draw_power_icon(drw, cx, cy, r=18, stem=10, width=2):
-    """Draw IEC 5009 power symbol: circle arc with gap at top + vertical stem."""
-    # Arc with gap at top (PIL: 0=3 o'clock, 90=6 o'clock, 270=12 o'clock)
-    # Gap from ~240 to ~300 degrees (upper portion)
-    bbox = (cx - r, cy - r, cx + r, cy + r)
-    drw.arc(bbox, start=-60, end=240, fill=0, width=width)
-    # Vertical stem through the gap
-    drw.line((cx, cy - r - 2, cx, cy - r + stem), fill=0, width=width)
+def draw_project_icon(drw, cx, cy, size=36):
+    """Draw a 1-bit version of the project icon: rounded rect with
+    alternating black/white stripes and a white downward arrow."""
+    half = size // 2
+    x0, y0 = cx - half, cy - half
+    x1, y1 = cx + half, cy + half
+    r = size // 8  # corner radius
+
+    # Outer rounded rectangle (black)
+    drw.rounded_rectangle((x0, y0, x1, y1), radius=r, fill=0)
+
+    # Horizontal stripes (alternating grey effect: every other stripe is white)
+    stripe_h = size // 6
+    for i in range(6):
+        sy = y0 + i * stripe_h
+        if i % 2 == 1:
+            # White stripe for contrast
+            drw.rectangle((x0 + 2, sy, x1 - 2, sy + stripe_h - 1), fill=255)
+
+    # Re-draw rounded rect outline to clean edges
+    drw.rounded_rectangle((x0, y0, x1, y1), radius=r, outline=0, width=2)
+
+    # White downward arrow centered
+    arrow_w = size // 3
+    arrow_top = cy - half // 2
+    arrow_bot = cy + half // 2
+    arrow_head = cy + half // 4
+    # Stem
+    drw.line((cx, arrow_top, cx, arrow_bot), fill=255, width=2)
+    # Arrowhead
+    drw.line((cx - arrow_w // 2, arrow_head, cx, arrow_bot), fill=255, width=2)
+    drw.line((cx + arrow_w // 2, arrow_head, cx, arrow_bot), fill=255, width=2)
+
+def draw_small_power_icon(drw, x, y, size=10):
+    """Small power-on indicator."""
+    cx, cy = x + size // 2, y + size // 2
+    r = size // 2
+    drw.arc((cx - r, cy - r, cx + r, cy + r), start=300, end=240, fill=0, width=1)
+    drw.line((cx, cy - r, cx, cy - 1), fill=0, width=1)
 
 # Init EPD
 try:
@@ -54,22 +85,22 @@ epd = epd2in13_V4.EPD()
 epd.init()
 epd.Clear(0xFF)
 
-# Physical buffer in portrait
-PW, PH = epd.width, epd.height  # 250 x 122
-
+PW, PH = epd.width, epd.height
 orient = str(CFG.get("orientation", "landscape_right")).lower()
 if orient in ("landscape_right", "landscape_left"):
-    LW, LH = PH, PW  # 122 x 250
+    LW, LH = PH, PW
 else:
     LW, LH = PW, PH
 
 img = Image.new("1", (LW, LH), 255)
 drw = ImageDraw.Draw(img)
 
-# Measure all elements
-ICON_R = 16
-ICON_STEM = 9
-icon_height = 2 * ICON_R + 4  # circle diameter + stem overshoot
+# Small power icon in bottom-left
+draw_small_power_icon(drw, 4, LH - 14, size=10)
+
+# Measure elements
+ICON_SIZE = 36
+icon_height = ICON_SIZE
 
 title_text = "iOS Backup Machine"
 title_w, title_h = text_wh(drw, title_text, F)
@@ -77,18 +108,17 @@ title_w, title_h = text_wh(drw, title_text, F)
 lines = [ln for ln in CFG["owner_lines"] if str(ln).strip()]
 line_heights = [text_wh(drw, ln, F_SM)[1] for ln in lines]
 
-gap_icon_title = 10
-gap_title_owner = 8
-line_spacing = 5
+gap_icon_title = 8
+gap_title_owner = 6
+line_spacing = 4
 
 total_h = (icon_height + gap_icon_title + title_h + gap_title_owner
            + sum(line_heights) + (len(lines) - 1) * line_spacing)
 
 y = (LH - total_h) // 2
 
-# Draw power icon
-icon_cy = y + 2 + ICON_R  # center of the circle
-draw_power_icon(drw, LW // 2, icon_cy, r=ICON_R, stem=ICON_STEM, width=2)
+# Draw project icon centered
+draw_project_icon(drw, LW // 2, y + ICON_SIZE // 2, size=ICON_SIZE)
 y += icon_height + gap_icon_title
 
 # Draw title
