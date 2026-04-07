@@ -75,6 +75,7 @@ def _apply_defaults(cfg):
         "mqtt": {"enabled": False, "broker": "", "port": 1883, "username": "", "password": "", "topic_prefix": "iosbackupmachine", "events": ["backup_complete", "backup_error"]},
     })
     cfg.setdefault("wireguard", {"enabled": False, "interface_name": "wg0"})
+    cfg.setdefault("credential_encryption", {"passphrase_mode": "udid"})
     cfg.setdefault("sync", {"enabled": False, "auto_sync": False, "allowed_network": "any"})
     cfg.setdefault("setup_completed", False)
 
@@ -550,34 +551,40 @@ def settings_wireguard():
             wg["enabled"] = request.form.get("wg_enabled") == "on"
             wg["interface_name"] = request.form.get("interface_name", "wg0")
             cfg["wireguard"] = wg
+            cred_enc = cfg.get("credential_encryption", {})
+            cred_enc["passphrase_mode"] = request.form.get("passphrase_mode", "udid")
+            cfg["credential_encryption"] = cred_enc
             save_config(cfg)
             flash("WireGuard settings saved.", "success")
         elif action == "upload_config":
             wg_conf = request.form.get("wg_config", "")
-            master_pw = request.form.get("master_password", "").strip()
+            mode = cfg.get("credential_encryption", {}).get("passphrase_mode", "udid")
+            pw = udid if mode == "udid" else request.form.get("master_password", "").strip()
             if not wg_conf.strip():
                 flash("Empty WireGuard config.", "error")
-            elif not master_pw:
-                flash("Master password is required to encrypt credentials.", "error")
+            elif not pw:
+                flash("Connect iPhone first." if mode == "udid" else "Password required.", "error")
+            elif wg_crypto.encrypt_wg_config({"wg_conf": wg_conf}, passphrase=pw):
+                flash("WireGuard config encrypted and saved.", "success")
             else:
-                if wg_crypto.encrypt_wg_config({"wg_conf": wg_conf}, passphrase=master_pw):
-                    flash("WireGuard config encrypted and saved.", "success")
-                else:
-                    flash("Failed to encrypt WireGuard config.", "error")
+                flash("Failed to encrypt WireGuard config.", "error")
         elif action == "start":
-            master_pw = request.form.get("master_password", "").strip()
-            if wg_manager.start_wireguard(iface, passphrase=master_pw):
+            mode = cfg.get("credential_encryption", {}).get("passphrase_mode", "udid")
+            pw = udid if mode == "udid" else request.form.get("master_password", "").strip()
+            if wg_manager.start_wireguard(iface, passphrase=pw):
                 flash(f"WireGuard interface {iface} started.", "success")
             else:
-                flash("Failed to start WireGuard. Check master password.", "error")
+                flash("Failed to start WireGuard.", "error")
         elif action == "stop":
             if wg_manager.stop_wireguard(iface):
                 flash(f"WireGuard interface {iface} stopped.", "success")
             else:
                 flash("Failed to stop WireGuard.", "error")
         return redirect(url_for("settings_wireguard"))
+    mode = cfg.get("credential_encryption", {}).get("passphrase_mode", "udid")
     return render_template("settings_wireguard.html",
-                           cfg=cfg, wg_status=wg_status, udid=udid, has_enc_file=has_enc_file)
+                           cfg=cfg, wg_status=wg_status, udid=udid,
+                           has_enc_file=has_enc_file, passphrase_mode=mode)
 
 # --- Remote Sync ---
 @app.route("/settings/sync", methods=["GET", "POST"])
@@ -599,7 +606,8 @@ def settings_sync():
             save_config(cfg)
             flash("Sync settings saved.", "success")
         elif action == "upload_credentials":
-            master_pw = request.form.get("master_password", "").strip()
+            mode = cfg.get("credential_encryption", {}).get("passphrase_mode", "udid")
+            pw = udid if mode == "udid" else request.form.get("master_password", "").strip()
             host = request.form.get("host", "").strip()
             port = request.form.get("port", "22").strip()
             username = request.form.get("username", "").strip()
@@ -607,8 +615,8 @@ def settings_sync():
             ssh_key = request.form.get("ssh_key", "")
             password = request.form.get("password", "")
             remote_path = request.form.get("remote_path", "").strip()
-            if not master_pw:
-                flash("Master password is required to encrypt credentials.", "error")
+            if not pw:
+                flash("Connect iPhone first." if mode == "udid" else "Password required.", "error")
             elif not host or not username or not remote_path:
                 flash("Host, username, and remote path are required.", "error")
             elif auth_method == "key" and not ssh_key.strip():
@@ -621,41 +629,30 @@ def settings_sync():
                 except ValueError:
                     port_int = 22
                 cred = {
-                    "host": host,
-                    "port": port_int,
-                    "username": username,
+                    "host": host, "port": port_int, "username": username,
                     "auth_method": auth_method,
                     "ssh_key": ssh_key if auth_method == "key" else "",
                     "password": password if auth_method == "password" else "",
                     "remote_path": remote_path,
                 }
-                if sync_crypto.encrypt_sync_config(cred, passphrase=master_pw):
+                if sync_crypto.encrypt_sync_config(cred, passphrase=pw):
                     flash("Sync credentials encrypted and saved.", "success")
                 else:
                     flash("Failed to encrypt sync credentials.", "error")
         elif action == "test_connection":
-            master_pw = request.form.get("master_password", "").strip()
-            if not master_pw:
-                flash("Master password is required.", "error")
-            else:
-                result = sync_manager.test_connection(passphrase=master_pw)
-                if result["success"]:
-                    flash(result["message"], "success")
-                else:
-                    flash(result["message"], "error")
+            mode = cfg.get("credential_encryption", {}).get("passphrase_mode", "udid")
+            pw = udid if mode == "udid" else request.form.get("master_password", "").strip()
+            result = sync_manager.test_connection(passphrase=pw)
+            flash(result["message"], "success" if result["success"] else "error")
         elif action == "run_sync":
-            master_pw = request.form.get("master_password", "").strip()
-            if not master_pw:
-                flash("Master password is required.", "error")
-            else:
-                result = sync_manager.run_sync(passphrase=master_pw)
-                if result["success"]:
-                    flash(result["message"], "success")
-                else:
-                    flash(result["message"], "error")
+            mode = cfg.get("credential_encryption", {}).get("passphrase_mode", "udid")
+            pw = udid if mode == "udid" else request.form.get("master_password", "").strip()
+            result = sync_manager.run_sync(passphrase=pw)
+            flash(result["message"], "success" if result["success"] else "error")
         return redirect(url_for("settings_sync"))
+    mode = cfg.get("credential_encryption", {}).get("passphrase_mode", "udid")
     return render_template("settings_sync.html",
-                           cfg=cfg, udid=udid, has_enc_file=has_enc_file)
+                           cfg=cfg, udid=udid, has_enc_file=has_enc_file, passphrase_mode=mode)
 
 # --- Web UI Interface Binding ---
 @app.route("/settings/webui", methods=["GET", "POST"])

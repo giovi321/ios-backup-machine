@@ -63,7 +63,7 @@ def _check_network_allowed():
     return True, ""
 
 
-def run_sync(passphrase=None, udid=None, backup_dir=None):
+def run_sync(passphrase=None, backup_dir=None):
     """
     Run rsync to sync backups to remote server.
     Returns dict: {success: bool, message: str, duration: float}
@@ -72,9 +72,9 @@ def run_sync(passphrase=None, udid=None, backup_dir=None):
     if not net_ok:
         return {"success": False, "message": net_reason, "duration": 0}
 
-    cfg = sync_crypto.decrypt_sync_config(passphrase=passphrase, udid=udid)
+    cfg = sync_crypto.decrypt_sync_config(passphrase=passphrase)
     if not cfg:
-        return {"success": False, "message": "Cannot decrypt sync credentials. Is iPhone connected?", "duration": 0}
+        return {"success": False, "message": "Cannot decrypt sync credentials.", "duration": 0}
 
     host = cfg.get("host", "")
     port = cfg.get("port", 22)
@@ -151,14 +151,14 @@ def run_sync(passphrase=None, udid=None, backup_dir=None):
                 pass
 
 
-def test_connection(passphrase=None, udid=None):
+def test_connection(passphrase=None):
     """
     Test SSH connection to the remote server.
     Returns dict: {success: bool, message: str}
     """
-    cfg = sync_crypto.decrypt_sync_config(passphrase=passphrase, udid=udid)
+    cfg = sync_crypto.decrypt_sync_config(passphrase=passphrase)
     if not cfg:
-        return {"success": False, "message": "Cannot decrypt sync credentials. Is iPhone connected?"}
+        return {"success": False, "message": "Cannot decrypt sync credentials."}
 
     host = cfg.get("host", "")
     port = cfg.get("port", 22)
