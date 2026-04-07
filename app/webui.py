@@ -25,7 +25,7 @@ import wg_manager
 import sync_crypto
 import sync_manager
 
-VERSION = "2.1"
+VERSION = "2.2"
 
 CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/iosbackupmachine/config.yaml")
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webui_static")
