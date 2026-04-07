@@ -2,17 +2,21 @@
 {% block title %}{{ filename }} - iOS Backup Machine{% endblock %}
 {% block content %}
 <h1>{{ filename }}</h1>
-<div style="display:flex; align-items:center; gap:16px; margin-bottom:24px;">
+<div style="display:flex; align-items:center; gap:16px; margin-bottom:24px; flex-wrap:wrap;">
     <a href="{{ url_for('logs') }}" style="color:var(--primary); text-decoration:none; font-size:14px;">← Back to logs</a>
     <form method="POST" action="{{ url_for('delete_log', filename=filename) }}" onsubmit="return confirm('Delete {{ filename }}?');" style="margin:0;">
         <button type="submit" class="btn btn-danger btn-sm">Delete this log</button>
     </form>
+    <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
+        <input type="checkbox" id="auto-refresh" style="width:16px;height:16px;accent-color:var(--primary);">
+        Auto-refresh & scroll
+    </label>
 </div>
 
 <div class="card">
-    <pre style="
-        background: #1a1a2e;
-        color: #e0e0e0;
+    <pre id="log-content" style="
+        background: #1a1a1a;
+        color: #d0d0d0;
         padding: 16px;
         border-radius: 6px;
         font-size: 12px;
@@ -24,4 +28,37 @@
         overflow-y: auto;
     ">{{ content }}</pre>
 </div>
+
+<script>
+(function() {
+    var logEl = document.getElementById('log-content');
+    var checkbox = document.getElementById('auto-refresh');
+    var timer = null;
+
+    function refreshLog() {
+        fetch(window.location.href)
+            .then(function(r) { return r.text(); })
+            .then(function(html) {
+                var parser = new DOMParser();
+                var doc = parser.parseFromString(html, 'text/html');
+                var newPre = doc.getElementById('log-content');
+                if (newPre && logEl) {
+                    logEl.textContent = newPre.textContent;
+                    logEl.scrollTop = logEl.scrollHeight;
+                }
+            })
+            .catch(function() {});
+    }
+
+    checkbox.addEventListener('change', function() {
+        if (this.checked) {
+            logEl.scrollTop = logEl.scrollHeight;
+            timer = setInterval(refreshLog, 3000);
+        } else {
+            if (timer) clearInterval(timer);
+            timer = null;
+        }
+    });
+})();
+</script>
 {% endblock %}

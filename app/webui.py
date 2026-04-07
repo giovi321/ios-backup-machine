@@ -454,8 +454,45 @@ def settings_datetime():
             cfg["ntp"] = ntp
             save_config(cfg)
             flash("NTP settings saved.", "success")
+        elif action == "set_timezone":
+            tz = request.form.get("timezone", "").strip()
+            if tz:
+                try:
+                    subprocess.run(["timedatectl", "set-timezone", tz],
+                                   capture_output=True, text=True, timeout=5, check=True)
+                    flash(f"Timezone set to {tz}.", "success")
+                except subprocess.CalledProcessError as e:
+                    flash(f"Invalid timezone: {tz}", "error")
+                except Exception as e:
+                    flash(f"Failed to set timezone: {e}", "error")
+        elif action == "sync_browser":
+            browser_time = request.form.get("browser_time", "").strip()
+            if browser_time:
+                try:
+                    subprocess.run(["date", "-s", browser_time],
+                                   capture_output=True, text=True, timeout=5)
+                    try:
+                        import socket as _sock
+                        s = _sock.create_connection(("127.0.0.1", 8423), timeout=5)
+                        s.sendall(b"rtc_pi2rtc\n")
+                        time.sleep(0.5)
+                        s.close()
+                    except Exception:
+                        pass
+                    flash("Clock synced with your browser.", "success")
+                except Exception as e:
+                    flash(f"Failed to sync: {e}", "error")
         return redirect(url_for("settings_datetime"))
-    return render_template("settings_datetime.html", cfg=cfg, current_time=current_time)
+    # Get current timezone
+    current_tz = ""
+    try:
+        r = subprocess.run(["timedatectl", "show", "--property=Timezone", "--value"],
+                           capture_output=True, text=True, timeout=5)
+        current_tz = r.stdout.strip()
+    except Exception:
+        pass
+    return render_template("settings_datetime.html", cfg=cfg, current_time=current_time,
+                           current_tz=current_tz)
 
 # --- WiFi ---
 @app.route("/settings/wifi", methods=["GET", "POST"])

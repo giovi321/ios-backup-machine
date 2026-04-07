@@ -2,14 +2,54 @@
 {% block title %}Date & Time - iOS Backup Machine{% endblock %}
 {% block content %}
 <h1>Date & Time</h1>
-<p class="subtitle">Set system clock manually or sync via NTP</p>
+<p class="subtitle">Set system clock, timezone, or sync via NTP</p>
 
 <div class="card">
     <h2>Current Time</h2>
-    <div class="info-item" style="background: var(--bg); display: inline-block;">
-        <div class="label">System Clock</div>
-        <div class="value" id="live-clock">--</div>
+    <div class="info-grid">
+        <div class="info-item">
+            <div class="label">System Clock</div>
+            <div class="value" id="live-clock">--</div>
+        </div>
+        <div class="info-item">
+            <div class="label">Timezone</div>
+            <div class="value">{{ current_tz or 'Unknown' }}</div>
+        </div>
     </div>
+</div>
+
+<div class="card">
+    <h2>Sync with Browser</h2>
+    <p style="font-size:13px; color:var(--text-muted); margin-bottom:12px;">
+        Set the device clock to match your computer's current time.
+    </p>
+    <form method="POST">
+        <input type="hidden" name="action" value="sync_browser">
+        <input type="hidden" id="browser_time" name="browser_time" value="">
+        <div class="btn-group">
+            <button type="submit" class="btn btn-primary" onclick="document.getElementById('browser_time').value=new Date().toISOString().replace('T',' ').substring(0,19);">
+                Sync Clock with Browser
+            </button>
+        </div>
+    </form>
+</div>
+
+<div class="card">
+    <h2>Timezone</h2>
+    <form method="POST">
+        <input type="hidden" name="action" value="set_timezone">
+        <div class="form-group">
+            <label for="timezone">Timezone</label>
+            <input type="text" id="timezone" name="timezone" value="{{ current_tz }}" placeholder="e.g. Europe/Rome, America/New_York, UTC">
+            <div class="hint">
+                Use IANA timezone names. Examples: Europe/London, America/Los_Angeles, Asia/Tokyo.
+                <a href="https://en.wikipedia.org/wiki/List_of_tz_database_time_zones" target="_blank" style="color:var(--primary);">Full list</a>
+            </div>
+        </div>
+        <div class="btn-group">
+            <button type="submit" class="btn btn-primary">Set Timezone</button>
+        </div>
+    </form>
 </div>
 
 <div class="card">
@@ -45,18 +85,19 @@
     </form>
     <form method="POST" style="margin-top: 12px;">
         <input type="hidden" name="action" value="ntp_sync">
-        <button type="submit" class="btn btn-secondary">Sync Now</button>
+        <button type="submit" class="btn btn-secondary">Sync Now via NTP</button>
     </form>
 </div>
 
 <script>
     function updateClock() {
-        const el = document.getElementById('live-clock');
+        var el = document.getElementById('live-clock');
         if (el) {
-            const now = new Date();
+            var now = new Date();
             el.textContent = now.toLocaleString('en-GB', {
                 year: 'numeric', month: 'short', day: '2-digit',
-                hour: '2-digit', minute: '2-digit', second: '2-digit'
+                hour: '2-digit', minute: '2-digit', second: '2-digit',
+                timeZoneName: 'short'
             });
         }
     }

@@ -54,8 +54,13 @@
         </thead>
         <tbody>
             {% for dev in devices %}
-            <tr style="border-bottom:1px solid var(--border);">
-                <td style="padding:8px 4px;">{{ dev.get('name', 'Unknown') }}</td>
+            <tr style="border-bottom:1px solid var(--border);{% if connected_udid and dev.get('udid') == connected_udid %} background:var(--success-bg);{% endif %}">
+                <td style="padding:8px 4px;">
+                    {{ dev.get('name', 'Unknown') }}
+                    {% if connected_udid and dev.get('udid') == connected_udid %}
+                    <span class="badge badge-on" style="margin-left:6px;"><span class="badge-dot"></span> Connected</span>
+                    {% endif %}
+                </td>
                 <td style="padding:8px 4px; font-family:monospace; font-size:12px; word-break:break-all;">{{ dev.get('udid', '') }}</td>
                 <td style="padding:8px 4px;">
                     <form method="POST" style="display:inline;">
