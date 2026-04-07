@@ -37,37 +37,26 @@ def text_wh(d, t, f):
         return d.textsize(t, font=f)
 
 def draw_project_icon(drw, cx, cy, size=36):
-    """Draw a 1-bit version of the project icon: rounded rect with
-    alternating black/white stripes and a white downward arrow."""
+    """Draw 1-bit project icon: rounded rect outline + black downward arrow."""
     half = size // 2
     x0, y0 = cx - half, cy - half
     x1, y1 = cx + half, cy + half
-    r = size // 8  # corner radius
+    r = size // 6
 
-    # Outer rounded rectangle (black)
-    drw.rounded_rectangle((x0, y0, x1, y1), radius=r, fill=0)
-
-    # Horizontal stripes (alternating grey effect: every other stripe is white)
-    stripe_h = size // 6
-    for i in range(6):
-        sy = y0 + i * stripe_h
-        if i % 2 == 1:
-            # White stripe for contrast
-            drw.rectangle((x0 + 2, sy, x1 - 2, sy + stripe_h - 1), fill=255)
-
-    # Re-draw rounded rect outline to clean edges
+    # Rounded rectangle outline
     drw.rounded_rectangle((x0, y0, x1, y1), radius=r, outline=0, width=2)
 
-    # White downward arrow centered
-    arrow_w = size // 3
-    arrow_top = cy - half // 2
-    arrow_bot = cy + half // 2
-    arrow_head = cy + half // 4
+    # Black downward arrow centered inside
+    arrow_w = size * 2 // 5
+    margin = size // 5
+    arrow_top = y0 + margin
+    arrow_bot = y1 - margin
+    arrow_head_y = cy + margin // 2
     # Stem
-    drw.line((cx, arrow_top, cx, arrow_bot), fill=255, width=2)
+    drw.line((cx, arrow_top, cx, arrow_bot), fill=0, width=2)
     # Arrowhead
-    drw.line((cx - arrow_w // 2, arrow_head, cx, arrow_bot), fill=255, width=2)
-    drw.line((cx + arrow_w // 2, arrow_head, cx, arrow_bot), fill=255, width=2)
+    drw.line((cx - arrow_w // 2, arrow_head_y, cx, arrow_bot), fill=0, width=2)
+    drw.line((cx + arrow_w // 2, arrow_head_y, cx, arrow_bot), fill=0, width=2)
 
 def draw_small_power_icon(drw, x, y, size=10):
     """Small power-on indicator."""
