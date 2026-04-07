@@ -12,13 +12,13 @@
             <div class="value" id="backup-state">
                 {% if backup_status %}
                     {% if backup_status.state == 'backing_up' %}
-                        <span class="badge badge-on"><span class="badge-dot"></span>Backing up</span>
+                        <span class="badge" style="background:var(--info-bg);color:var(--info);"><span class="badge-dot" style="background:var(--info);"></span>Backing up</span>
                     {% elif backup_status.state == 'complete' %}
-                        <span class="badge badge-on"><span class="badge-dot"></span>Complete</span>
+                        <span class="badge" style="background:var(--success-bg);color:var(--success);"><span class="badge-dot" style="background:var(--success);"></span>Complete</span>
                     {% elif backup_status.state == 'waiting' %}
                         <span class="badge badge-off"><span class="badge-dot"></span>Waiting for iPhone</span>
                     {% elif backup_status.state == 'connected' %}
-                        <span class="badge badge-on"><span class="badge-dot"></span>Device connected</span>
+                        <span class="badge" style="background:var(--info-bg);color:var(--info);"><span class="badge-dot" style="background:var(--info);"></span>Device connected</span>
                     {% elif backup_status.state == 'error' %}
                         <span class="badge" style="background:var(--error-bg);color:var(--error);"><span class="badge-dot" style="background:var(--error);"></span>Error</span>
                     {% elif backup_status.state == 'interrupted' %}
@@ -154,9 +154,9 @@
 
                 // Update state badge
                 if (data.state === 'backing_up') {
-                    stateEl.innerHTML = '<span class="badge badge-on"><span class="badge-dot"></span>Backing up</span>';
+                    stateEl.innerHTML = '<span class="badge" style="background:var(--info-bg);color:var(--info);"><span class="badge-dot" style="background:var(--info);"></span>Backing up</span>';
                 } else if (data.state === 'complete') {
-                    stateEl.innerHTML = '<span class="badge badge-on"><span class="badge-dot"></span>Complete</span>';
+                    stateEl.innerHTML = '<span class="badge" style="background:var(--success-bg);color:var(--success);"><span class="badge-dot" style="background:var(--success);"></span>Complete</span>';
                 } else if (data.state === 'error') {
                     stateEl.innerHTML = '<span class="badge" style="background:var(--error-bg);color:var(--error);"><span class="badge-dot" style="background:var(--error);"></span>Error</span>';
                 } else if (data.state === 'interrupted') {
@@ -164,7 +164,7 @@
                 } else if (data.state === 'waiting') {
                     stateEl.innerHTML = '<span class="badge badge-off"><span class="badge-dot"></span>Waiting for iPhone</span>';
                 } else if (data.state === 'connected') {
-                    stateEl.innerHTML = '<span class="badge badge-on"><span class="badge-dot"></span>Device connected</span>';
+                    stateEl.innerHTML = '<span class="badge" style="background:var(--info-bg);color:var(--info);"><span class="badge-dot" style="background:var(--info);"></span>Device connected</span>';
                 } else {
                     stateEl.innerHTML = '<span class="badge badge-off"><span class="badge-dot"></span>Idle</span>';
                 }
