@@ -58,6 +58,7 @@ SERVICES=(
     iosbackupmachine.service
     webui.service
     owner-message.service
+    shutdown-display.service
     ntp-sync.service
     rtc-sync.service
     last-backup.service

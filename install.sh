@@ -65,6 +65,7 @@ APP_FILES=(
 # Services
 ENABLE_SERVICES=(
     owner-message.service
+    shutdown-display.service
     webui.service
     ntp-sync.service
     rtc-sync.service
@@ -74,6 +75,7 @@ ALL_SERVICES=(
     iosbackupmachine.service
     webui.service
     owner-message.service
+    shutdown-display.service
     ntp-sync.service
     rtc-sync.service
     last-backup.service
