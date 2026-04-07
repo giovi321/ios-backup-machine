@@ -1,22 +1,13 @@
 [Unit]
 Description=Show owner info on e-ink before shutdown
-Conflicts=shutdown.target reboot.target halt.target poweroff.target
+DefaultDependencies=no
 Before=shutdown.target reboot.target halt.target poweroff.target
-After=multi-user.target sysinit.target
+After=local-fs.target
 
 [Service]
 Type=oneshot
-RemainAfterExit=yes
-TimeoutStopSec=30
-Environment="EPD_GPIO_CHIP=/dev/gpiochip3"
-Environment="EPD_PIN_DC=17"
-Environment="EPD_PIN_RST=1"
-Environment="EPD_PIN_BUSY=10"
-Environment="EPD_SPI_DEV=/dev/spidev3.0"
-Environment="EPD_SPI_HZ=2000000"
-Environment="IOSBACKUP_CONFIG=/root/iosbackupmachine/config.yaml"
-ExecStart=/bin/true
-ExecStop=/bin/sh -c 'pkill -f "python.*iosbackupmachine.py" 2>/dev/null; pkill -f "python.*button-info.py" 2>/dev/null; pkill -f "python.*boot-message.py" 2>/dev/null; sleep 1; /root/iosbackupmachine/bin/python3 /root/iosbackupmachine/owner-message.py'
+ExecStart=/bin/sh -c 'pkill -f "python.*iosbackupmachine.py" 2>/dev/null; pkill -f "python.*button-info.py" 2>/dev/null; pkill -f "python.*boot-message.py" 2>/dev/null; sleep 1; EPD_GPIO_CHIP=/dev/gpiochip3 EPD_PIN_DC=17 EPD_PIN_RST=1 EPD_PIN_BUSY=10 EPD_SPI_DEV=/dev/spidev3.0 EPD_SPI_HZ=2000000 IOSBACKUP_CONFIG=/root/iosbackupmachine/config.yaml /root/iosbackupmachine/bin/python3 /root/iosbackupmachine/owner-message.py'
+TimeoutStartSec=30
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=shutdown.target reboot.target halt.target poweroff.target

@@ -13,11 +13,8 @@ Environment="EPD_PIN_BUSY=10"
 Environment="EPD_SPI_DEV=/dev/spidev3.0"
 Environment="EPD_SPI_HZ=2000000"
 Environment="IOSBACKUP_CONFIG=/root/iosbackupmachine/config.yaml"
-# Small delay to ensure SPI/GPIO hardware is ready
-ExecStartPre=/bin/sleep 2
+ExecStartPre=/bin/sleep 3
 ExecStart=/root/iosbackupmachine/bin/python3 /root/iosbackupmachine/boot-message.py
-Restart=on-failure
-RestartSec=3
 
 [Install]
 WantedBy=multi-user.target
