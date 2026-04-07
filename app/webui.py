@@ -11,8 +11,9 @@ Provides a web interface to configure:
 - Web UI interface binding
 All configuration is saved directly to config.yaml.
 """
-import os, sys, time, subprocess, json, secrets, yaml, copy, hashlib, glob, plistlib
+import os, sys, time, subprocess, json, secrets, yaml, copy, hashlib, glob, plistlib, logging
 from functools import wraps
+from logging.handlers import RotatingFileHandler
 
 from flask import (
     Flask, render_template, request, redirect, url_for,
@@ -37,6 +38,18 @@ app = Flask(
     static_folder=STATIC_DIR,
     static_url_path="/static"
 )
+
+# --- Logging setup ---
+os.makedirs(LOG_DIR, exist_ok=True)
+_log_handler = RotatingFileHandler(
+    os.path.join(LOG_DIR, "webui.log"), maxBytes=2*1024*1024, backupCount=3
+)
+_log_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
+_log_handler.setLevel(logging.INFO)
+app.logger.addHandler(_log_handler)
+app.logger.setLevel(logging.INFO)
+# Suppress Flask's default request logging (too verbose)
+logging.getLogger("werkzeug").setLevel(logging.WARNING)
 
 @app.context_processor
 def inject_version():
@@ -134,7 +147,7 @@ def _ensure_secret_key():
         webui["secret_key"] = new_key
         cfg["webui"] = webui
         save_config(cfg)
-        print(f"[WEBUI] Auto-generated new secret key.")
+        app.logger.info("Auto-generated new secret key.")
         return new_key
     return current
 
@@ -546,7 +559,7 @@ def _apply_wifi(ssid, password):
         cmd += ["name", "iosbackup-wifi"]
         subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     except Exception as e:
-        print(f"[WEBUI] WiFi apply error: {e}")
+        app.logger.error(f"WiFi apply error: {e}")
 
 # --- Notifications ---
 @app.route("/settings/notifications", methods=["GET", "POST"])
@@ -1075,15 +1088,24 @@ def backups():
 @login_required
 def logs():
     log_files = []
+    current_backup_log = None
     if os.path.isdir(LOG_DIR):
         for f in sorted(glob.glob(os.path.join(LOG_DIR, "*.log")), reverse=True):
             stat = os.stat(f)
+            # Skip empty log files
+            if stat.st_size == 0:
+                continue
+            name = os.path.basename(f)
             log_files.append({
-                "name": os.path.basename(f),
+                "name": name,
                 "size": stat.st_size,
                 "mtime": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(stat.st_mtime)),
             })
-    return render_template("logs.html", log_files=log_files)
+            # Find the most recent backup log (for "View Live" link)
+            if name.startswith("backup-") and current_backup_log is None:
+                current_backup_log = name
+    return render_template("logs.html", log_files=log_files,
+                           current_backup_log=current_backup_log)
 
 @app.route("/logs/<filename>")
 @login_required
@@ -1417,7 +1439,7 @@ def main():
     port = webui_cfg.get("port", 8080)
     bind = netutil.get_bind_address(webui_cfg.get("bind_interfaces", ["all"]))
 
-    print(f"[WEBUI] Starting on {bind}:{port}")
+    app.logger.info(f"Starting on {bind}:{port}")
     app.run(host=bind, port=port, debug=False)
 
 if __name__ == "__main__":

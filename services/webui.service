@@ -8,8 +8,8 @@ User=root
 WorkingDirectory=/root/iosbackupmachine
 Environment=IOSBACKUP_CONFIG=/root/iosbackupmachine/config.yaml
 ExecStart=/root/iosbackupmachine/bin/python3 /root/iosbackupmachine/webui.py
-StandardOutput=append:/var/log/iosbackupmachine/webui.log
-StandardError=append:/var/log/iosbackupmachine/webui.log
+StandardOutput=journal
+StandardError=journal
 Restart=on-failure
 RestartSec=5
 

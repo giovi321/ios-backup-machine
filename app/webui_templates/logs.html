@@ -1,15 +1,23 @@
 {% extends "base.html" %}
 {% block title %}Logs - iOS Backup Machine{% endblock %}
 {% block content %}
-<h1>Backup Logs</h1>
-<p class="subtitle">View backup log files stored in /var/log/iosbackupmachine/.</p>
+<h1>Logs</h1>
+<p class="subtitle">Backup and system logs</p>
+
+{% if current_backup_log %}
+<div class="card">
+    <h2>Current Backup</h2>
+    <a href="{{ url_for('view_log', filename=current_backup_log) }}?live=1" class="btn btn-primary btn-sm">View Live Backup Log</a>
+    <span style="font-size:13px; color:var(--text-muted); margin-left:8px;">{{ current_backup_log }}</span>
+</div>
+{% endif %}
 
 {% if log_files %}
 <div class="card">
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:8px;">
         <h2 style="margin-bottom:0;">{{ log_files|length }} log file{{ 's' if log_files|length != 1 }}</h2>
         <form method="POST" action="{{ url_for('purge_logs') }}" onsubmit="return confirm('Delete ALL log files?');" style="margin:0;">
-            <button type="submit" class="btn btn-danger btn-sm">Purge All Logs</button>
+            <button type="submit" class="btn btn-danger btn-sm">Purge All</button>
         </form>
     </div>
     <table style="width:100%; border-collapse:collapse; font-size:14px;">

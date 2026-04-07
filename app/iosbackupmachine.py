@@ -474,17 +474,29 @@ def verify_backup_integrity(backup_dir, logf):
     except Exception as e:
         return False, str(e)
 
+def _is_progress_line(ln):
+    """Check if a line is a progress bar (e.g. '[====] 42% Finished')."""
+    return bool(re.match(r'\s*\[=*\s*\]\s*\d+%', ln))
+
 def tee_and_parse(proc, logf, on_line):
+    cur_line = ""
     while True:
         ch = proc.stdout.read(1)
         if ch == "" or ch is None:
             break
         sys.stdout.write(ch); sys.stdout.flush()
-        if logf: logf.write(ch)
         if ch in ["\n", "\r"]:
+            # Only log non-progress lines (progress bars are noise)
+            if cur_line and logf and not _is_progress_line(cur_line):
+                logf.write(cur_line + "\n")
             on_line("__LINE_BREAK__")
+            cur_line = ""
         else:
+            cur_line += ch
             on_line(ch)
+    # Flush remaining
+    if cur_line and logf and not _is_progress_line(cur_line):
+        logf.write(cur_line + "\n")
 
 def get_disk_usage_pct(device_path: str):
     try:

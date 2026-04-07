@@ -3,13 +3,13 @@
 {% block content %}
 <h1>{{ filename }}</h1>
 <div style="display:flex; align-items:center; gap:16px; margin-bottom:24px; flex-wrap:wrap;">
-    <a href="{{ url_for('logs') }}" style="color:var(--primary); text-decoration:none; font-size:14px;">← Back to logs</a>
+    <a href="{{ url_for('logs') }}" style="color:var(--primary); text-decoration:none; font-size:14px;">&larr; Back to logs</a>
     <form method="POST" action="{{ url_for('delete_log', filename=filename) }}" onsubmit="return confirm('Delete {{ filename }}?');" style="margin:0;">
-        <button type="submit" class="btn btn-danger btn-sm">Delete this log</button>
+        <button type="submit" class="btn btn-danger btn-sm">Delete</button>
     </form>
     <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
         <input type="checkbox" id="auto-refresh" style="width:16px;height:16px;accent-color:var(--primary);">
-        Auto-refresh & scroll
+        Live tail (auto-refresh)
     </label>
 </div>
 
@@ -35,8 +35,18 @@
     var checkbox = document.getElementById('auto-refresh');
     var timer = null;
 
+    // Auto-scroll to bottom on load
+    logEl.scrollTop = logEl.scrollHeight;
+
+    // Enable live mode if ?live=1 in URL
+    if (window.location.search.indexOf('live=1') !== -1) {
+        checkbox.checked = true;
+        startLive();
+    }
+
     function refreshLog() {
-        fetch(window.location.href)
+        var url = window.location.pathname;
+        fetch(url)
             .then(function(r) { return r.text(); })
             .then(function(html) {
                 var parser = new DOMParser();
@@ -50,13 +60,21 @@
             .catch(function() {});
     }
 
+    function startLive() {
+        logEl.scrollTop = logEl.scrollHeight;
+        timer = setInterval(refreshLog, 2000);
+    }
+
+    function stopLive() {
+        if (timer) clearInterval(timer);
+        timer = null;
+    }
+
     checkbox.addEventListener('change', function() {
         if (this.checked) {
-            logEl.scrollTop = logEl.scrollHeight;
-            timer = setInterval(refreshLog, 3000);
+            startLive();
         } else {
-            if (timer) clearInterval(timer);
-            timer = null;
+            stopLive();
         }
     });
 })();
