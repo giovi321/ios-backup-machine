@@ -34,7 +34,7 @@ if [ ! -d "${REPO_DIR}/.git" ]; then
 fi
 
 # Show current and available versions
-CURRENT_VERSION=$(grep -oP 'VERSION\s*=\s*"\K[^"]+' "${REPO_DIR}/webui.py" 2>/dev/null || echo "unknown")
+CURRENT_VERSION=$(sed -n 's/^VERSION *= *"\([^"]*\)".*/\1/p' "${REPO_DIR}/app/webui.py" 2>/dev/null || echo "unknown")
 echo -e "  Current version: ${CURRENT_VERSION}"
 
 # Pull latest code
@@ -61,7 +61,7 @@ git pull --quiet origin main || {
     exit 1
 }
 
-NEW_VERSION=$(grep -oP 'VERSION\s*=\s*"\K[^"]+' "${REPO_DIR}/webui.py" 2>/dev/null || echo "unknown")
+NEW_VERSION=$(sed -n 's/^VERSION *= *"\([^"]*\)".*/\1/p' "${REPO_DIR}/app/webui.py" 2>/dev/null || echo "unknown")
 echo -e "  ${GREEN}✓ Updated to ${NEW_VERSION}${NC}"
 
 # Show changelog (commits since last installed version)

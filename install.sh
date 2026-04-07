@@ -35,7 +35,7 @@ BACKUP_ARCHIVE_DIR="/root/iosbackupmachine-backups"
 REQUIRED_OVERLAYS="rk3568-spi3-m1-cs0-spidev rk3568-i2c3-m0"
 
 # Get version from repo
-REPO_VERSION=$(grep -oP 'VERSION\s*=\s*"\K[^"]+' "${REPO_DIR}/app/webui.py" 2>/dev/null || echo "unknown")
+REPO_VERSION=$(sed -n 's/^VERSION *= *"\([^"]*\)".*/\1/p' "${REPO_DIR}/app/webui.py" 2>/dev/null || echo "unknown")
 
 # Files to copy (repo_path:install_name)
 APP_FILES=(

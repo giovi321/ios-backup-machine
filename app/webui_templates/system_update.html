@@ -60,8 +60,7 @@
         </form>
         <form method="POST" style="display:inline;" onsubmit="return confirm('This will stop all services, update the software, and restart. The web UI will be briefly unavailable. Continue?');">
             <input type="hidden" name="action" value="update">
-            <button type="submit" class="btn btn-primary" id="update-btn"
-                {% if not remote_version or remote_version == installed_version %}disabled{% endif %}>
+            <button type="submit" class="btn btn-primary" id="update-btn">
                 Install Update
             </button>
         </form>

@@ -1088,7 +1088,7 @@ def system_update():
                                capture_output=True, timeout=30)
                 # Get remote version from webui.py on origin/main
                 r = subprocess.run(
-                    ["git", "-C", REPO_DIR, "show", "origin/main:webui.py"],
+                    ["git", "-C", REPO_DIR, "show", "origin/main:app/webui.py"],
                     capture_output=True, text=True, timeout=10
                 )
                 import re as _re
@@ -1113,26 +1113,27 @@ def system_update():
                 flash(f"Failed to check for updates: {e}", "error")
 
         elif action == "update":
-            # Run update.sh in background and capture output
+            # Run update.sh in background — the web UI will be restarted
+            # by the installer, so we can't wait for it to finish.
             update_script = os.path.join(REPO_DIR, "update.sh")
             if not os.path.isfile(update_script):
                 flash("update.sh not found in repo directory.", "error")
             else:
                 try:
-                    r = subprocess.run(
-                        ["bash", update_script],
-                        capture_output=True, text=True, timeout=300,
-                        env={**os.environ, "DEBIAN_FRONTEND": "noninteractive"}
-                    )
-                    update_log = r.stdout + r.stderr
-                    if r.returncode == 0:
-                        flash("Update completed successfully. The page will reload.", "success")
-                    else:
-                        flash(f"Update finished with errors (exit code {r.returncode}).", "error")
-                except subprocess.TimeoutExpired:
-                    flash("Update timed out after 5 minutes.", "error")
+                    log_file = "/var/log/iosbackupmachine/update.log"
+                    os.makedirs("/var/log/iosbackupmachine", exist_ok=True)
+                    with open(log_file, "w") as lf:
+                        subprocess.Popen(
+                            ["bash", update_script],
+                            stdout=lf, stderr=lf,
+                            env={**os.environ, "DEBIAN_FRONTEND": "noninteractive",
+                                 "IOSBACKUP_SKIP_VERSION_CHECK": "1"},
+                            start_new_session=True
+                        )
+                    flash("Update started in background. The web UI will restart shortly. "
+                          "Refresh the page in about 60 seconds.", "success")
                 except Exception as e:
-                    flash(f"Update failed: {e}", "error")
+                    flash(f"Failed to start update: {e}", "error")
 
         return render_template("system_update.html",
                                installed_version=installed_version,
