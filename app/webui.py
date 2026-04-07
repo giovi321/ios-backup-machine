@@ -1347,12 +1347,13 @@ def api_stop_backup():
                        capture_output=True, timeout=10)
         subprocess.run(["pkill", "-f", "idevicebackup2"],
                        capture_output=True, timeout=5)
-        # Update status to interrupted
+        # Update status to interrupted (stopped via web UI)
         status_file = os.path.join(LOG_DIR, "backup_status.json")
         try:
             os.makedirs(LOG_DIR, exist_ok=True)
             with open(status_file, "w") as f:
-                json.dump({"state": "interrupted", "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S")}, f)
+                json.dump({"state": "interrupted", "reason": "Stopped from web UI",
+                           "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S")}, f)
         except Exception:
             pass
         # Show interrupted screen on e-ink (release GPIO first, then draw)
@@ -1371,6 +1372,24 @@ def api_stop_backup():
         flash("Backup stopped.", "success")
     except Exception as e:
         flash(f"Error: {e}", "error")
+    return redirect(url_for("index"))
+
+@app.route("/api/encryption-key")
+@login_required
+@app.route("/api/reboot", methods=["POST"])
+@login_required
+def api_reboot():
+    """Reboot the device."""
+    flash("Rebooting... Refresh the page in about a minute.", "success")
+    subprocess.Popen(["shutdown", "-r", "+0"], start_new_session=True)
+    return redirect(url_for("index"))
+
+@app.route("/api/shutdown", methods=["POST"])
+@login_required
+def api_shutdown():
+    """Shut down the device."""
+    flash("Shutting down...", "success")
+    subprocess.Popen(["shutdown", "-h", "+0"], start_new_session=True)
     return redirect(url_for("index"))
 
 @app.route("/api/encryption-key")

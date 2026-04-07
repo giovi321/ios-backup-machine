@@ -44,7 +44,7 @@
                 {% elif backup_status and backup_status.state == 'error' %}
                 <small style="color:var(--error);">{{ backup_status.get('message', '') }}</small>
                 {% elif backup_status and backup_status.state == 'interrupted' %}
-                <small style="color:var(--warning);">Backup was interrupted (iPhone unplugged)</small>
+                <small style="color:var(--warning);">{{ backup_status.get('reason', 'Backup was interrupted') }}</small>
                 {% else %}
                 <small style="color:var(--text-muted);">--</small>
                 {% endif %}
@@ -161,6 +161,18 @@
     </div>
 </div>
 
+<div class="card" style="margin-top: 24px;">
+    <h2>System</h2>
+    <div class="btn-group">
+        <form method="POST" action="{{ url_for('api_reboot') }}" style="display:inline;" onsubmit="return confirm('Reboot the device? The web UI will be unavailable for about a minute.')">
+            <button type="submit" class="btn btn-secondary">Reboot</button>
+        </form>
+        <form method="POST" action="{{ url_for('api_shutdown') }}" style="display:inline;" onsubmit="return confirm('Shut down the device? You will need physical access to turn it back on.')">
+            <button type="submit" class="btn btn-secondary" style="background:var(--error-bg);color:var(--error);">Shut Down</button>
+        </form>
+    </div>
+</div>
+
 <script>
     function updateClock() {
         var el = document.getElementById('sys-time');
@@ -215,7 +227,8 @@
                     } else if (data.state === 'error') {
                         progEl.innerHTML = '<small style="color:var(--error);">' + (data.message || 'Unknown error') + '</small>';
                     } else if (data.state === 'interrupted') {
-                        progEl.innerHTML = '<small style="color:var(--warning);">Backup was interrupted (iPhone unplugged)</small>';
+                        var reason = data.reason || 'Backup was interrupted';
+                        progEl.innerHTML = '<small style="color:var(--warning);">' + reason + '</small>';
                     } else {
                         progEl.innerHTML = '<small style="color:var(--text-muted);">--</small>';
                     }

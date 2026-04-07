@@ -60,7 +60,7 @@ PY
 
 if [ "$BACKUP_WAS_ACTIVE" = true ]; then
   # Update status file to interrupted
-  "$PY" -c "import json; json.dump({'state':'interrupted','timestamp':'$(date -Iseconds)'}, open('$STATUS_FILE','w'))" 2>/dev/null || true
+  "$PY" -c "import json; json.dump({'state':'interrupted','reason':'iPhone unplugged','timestamp':'$(date -Iseconds)'}, open('$STATUS_FILE','w'))" 2>/dev/null || true
   # Show interrupted screen
   if ! "$PY" "$NOTIFY"; then
     echo "$(date '+%F %T') [unplug-notify] notifier failed" >>"$LOG"

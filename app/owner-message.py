@@ -81,7 +81,8 @@ if out.size != (PW, PH):
     out = out.resize((PW, PH))
 
 epd.display(epd.getbuffer(out))
-time.sleep(2)
+# Wait for e-paper full refresh to complete (critical during shutdown)
+time.sleep(5)
 epd.sleep()
 epdconfig.module_exit()
 sys.exit(0)
