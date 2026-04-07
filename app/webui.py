@@ -1374,8 +1374,6 @@ def api_stop_backup():
         flash(f"Error: {e}", "error")
     return redirect(url_for("index"))
 
-@app.route("/api/encryption-key")
-@login_required
 @app.route("/api/reboot", methods=["POST"])
 @login_required
 def api_reboot():
