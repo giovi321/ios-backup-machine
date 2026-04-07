@@ -654,8 +654,7 @@ def _pisugar_button_listener(panel, ui):
     while True:
         try:
             s = socket.create_connection(("127.0.0.1", 8423), timeout=5)
-            s.sendall(b"get button_press single
-")
+            s.sendall(b"get button_press single\n")
             time.sleep(0.3)
             resp = s.recv(256).decode(errors="replace").strip()
             s.close()
