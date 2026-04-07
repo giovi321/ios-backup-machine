@@ -980,6 +980,20 @@ def backups():
                     snapshot_state = st.get("SnapshotState", "")
                 except Exception:
                     pass
+            # Determine human-readable status
+            if has_manifest and snapshot_state != "uploading":
+                status = "complete"
+                status_label = "Complete"
+            elif snapshot_state == "uploading":
+                status = "backing_up"
+                status_label = "Backing up"
+            elif has_manifest:
+                status = "complete"
+                status_label = "Complete"
+            else:
+                status = "interrupted"
+                status_label = "Interrupted"
+
             backup_list.append({
                 "folder": entry,
                 "device_name": info.get("display_name") or info.get("device_name") or entry,
@@ -991,12 +1005,14 @@ def backups():
                 "sort_ts": info.get("last_backup_ts") or folder_mtime_ts,
                 "size": _human_size(size_bytes),
                 "size_bytes": size_bytes,
-                "status": "complete" if (has_manifest and snapshot_state != "uploading") else "incomplete",
-                "snapshot_state": snapshot_state,
+                "status": status,
+                "status_label": status_label,
             })
     # Sort newest first
     backup_list.sort(key=lambda b: b["sort_ts"], reverse=True)
-    return render_template("backups.html", cfg=cfg, backups=backup_list, backup_dir=backup_dir)
+    sync_enabled = cfg.get("sync", {}).get("enabled", False)
+    return render_template("backups.html", cfg=cfg, backups=backup_list,
+                           backup_dir=backup_dir, sync_enabled=sync_enabled)
 
 # --- Log Viewer ---
 @app.route("/logs")
