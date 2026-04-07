@@ -567,9 +567,11 @@ def run_backup(panel, logf, ui):
                     last_pct = pct
                     last_ui = time.time()
 
-            if re.search(r"\berror\b", ln, re.I):
-                code = extract_error_code(ln)
-                msg = resolve_error_message(code) if code is not None else "Unknown error. Check logs."
+            # Only treat as error if we can extract a known error code.
+            # Avoids false positives from lines that mention "error" in passing.
+            code = extract_error_code(ln)
+            if code is not None:
+                msg = resolve_error_message(code)
                 error_and_wait(msg, code, ln[-80:])
             return
         else:

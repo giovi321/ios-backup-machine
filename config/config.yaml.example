@@ -15,7 +15,7 @@ error_codes:
   "103": "Backup directory is wrong"
   "105": "Insufficient free disk space on backup drive"
   "106": "No space left for the backup"
-  "208": "Wrong iPhone password"
+  "208": "Unlock iPhone and try again"
   "-4":  "iPhone disconnected during backup"
 
 # --- Authentication ---
