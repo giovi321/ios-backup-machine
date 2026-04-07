@@ -259,7 +259,7 @@ class Panel:
                 drw.text((4, y0 + i*14), ln[:44], font=F_SM, fill=0)
 
         if animate and not center_block and show_header:
-            base_y = LH - 16; base_x = LW - 50; sz, gap = 6, 6
+            base_y = LH - 11; base_x = LW - 50; sz, gap = 6, 6
             for i in range(4):
                 x0 = base_x + i*(sz+gap)
                 if self.anim % 4 == i: drw.rectangle((x0, base_y, x0+sz, base_y+sz), fill=0)

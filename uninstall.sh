@@ -32,6 +32,7 @@ APP_FILES=(
     unplug-notify.sh
     shutdown.sh
     display-shutdown.sh
+    long-press-backup.sh
     ntp-sync.py
     webui.py
     netutil.py
