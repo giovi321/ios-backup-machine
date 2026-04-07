@@ -1,12 +1,13 @@
 [Unit]
 Description=Show owner info on e-ink before shutdown
-DefaultDependencies=no
+Conflicts=shutdown.target reboot.target halt.target poweroff.target
 Before=shutdown.target reboot.target halt.target poweroff.target
-After=multi-user.target
+After=multi-user.target sysinit.target
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
+TimeoutStopSec=30
 Environment="EPD_GPIO_CHIP=/dev/gpiochip3"
 Environment="EPD_PIN_DC=17"
 Environment="EPD_PIN_RST=1"
@@ -15,7 +16,7 @@ Environment="EPD_SPI_DEV=/dev/spidev3.0"
 Environment="EPD_SPI_HZ=2000000"
 Environment="IOSBACKUP_CONFIG=/root/iosbackupmachine/config.yaml"
 ExecStart=/bin/true
-ExecStop=/root/iosbackupmachine/bin/python3 /root/iosbackupmachine/owner-message.py
+ExecStop=/bin/sh -c 'pkill -f "python.*iosbackupmachine.py" 2>/dev/null; pkill -f "python.*button-info.py" 2>/dev/null; pkill -f "python.*boot-message.py" 2>/dev/null; sleep 1; /root/iosbackupmachine/bin/python3 /root/iosbackupmachine/owner-message.py'
 
 [Install]
 WantedBy=multi-user.target
