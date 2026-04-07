@@ -967,7 +967,7 @@ def backups():
             except OSError:
                 folder_mtime = ""
                 folder_mtime_ts = 0
-            size_bytes = _dir_size(entry_path)
+            # Size calculated asynchronously via /api/backup-sizes
             # Check for Manifest.plist (indicates a completed backup)
             has_manifest = os.path.exists(os.path.join(entry_path, "Manifest.plist"))
             # Check for Status.plist snapshot state
@@ -1001,10 +1001,9 @@ def backups():
                 "ios_version": info.get("product_version", ""),
                 "serial": info.get("serial_number", ""),
                 "udid": info.get("udid", entry),
+                "size": "...",
                 "last_backup": info.get("last_backup") or folder_mtime,
                 "sort_ts": info.get("last_backup_ts") or folder_mtime_ts,
-                "size": _human_size(size_bytes),
-                "size_bytes": size_bytes,
                 "status": status,
                 "status_label": status_label,
             })
@@ -1220,6 +1219,20 @@ def api_backup_status():
     """API endpoint for live backup status polling."""
     status = _read_backup_status()
     return jsonify(status or {"state": "idle"})
+
+@app.route("/api/backup-sizes")
+@login_required
+def api_backup_sizes():
+    """Calculate backup folder sizes (slow — called via AJAX after page load)."""
+    cfg = load_config()
+    backup_dir = cfg.get("backup_dir", "/media/iosbackup/")
+    sizes = {}
+    if os.path.isdir(backup_dir):
+        for entry in os.listdir(backup_dir):
+            entry_path = os.path.join(backup_dir, entry)
+            if os.path.isdir(entry_path) and os.path.exists(os.path.join(entry_path, "Info.plist")):
+                sizes[entry] = _human_size(_dir_size(entry_path))
+    return jsonify(sizes)
 
 @app.route("/api/start-backup", methods=["POST"])
 @login_required
