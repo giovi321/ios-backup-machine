@@ -232,13 +232,15 @@ if out.size != (PW, PH):
     out = out.resize((PW, PH))
 epd.display(epd.getbuffer(out))
 
-# Hold 30 seconds
-time.sleep(30)
+# Release display immediately so shutdown can use it
 try:
     epd.sleep()
 except Exception:
     pass
 epdconfig.module_exit()
+
+# Wait 30 seconds (display retains the image, hardware is free)
+time.sleep(30)
 
 # Chain to boot screen
 script_dir = os.path.dirname(os.path.abspath(__file__))

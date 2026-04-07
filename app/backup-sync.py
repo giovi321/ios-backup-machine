@@ -115,13 +115,15 @@ else:
         (msg, F_SM),
     ])
 
-# Hold 5 seconds
-time.sleep(5)
+# Release display immediately so shutdown can use it
 try:
     epd.sleep()
 except Exception:
     pass
 epdconfig.module_exit()
+
+# Wait 5 seconds (display retains the image)
+time.sleep(5)
 
 # Chain to boot screen
 script_dir = os.path.dirname(os.path.abspath(__file__))
