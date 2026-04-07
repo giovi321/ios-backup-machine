@@ -55,4 +55,21 @@
         <button type="submit" class="btn btn-primary">Save Settings</button>
     </div>
 </form>
+
+<div class="card" style="margin-top:24px;">
+    <h2>Configuration Backup</h2>
+    <div class="btn-group">
+        <a href="{{ url_for('api_export_config') }}" class="btn btn-secondary">Export Config</a>
+    </div>
+    <form method="POST" action="{{ url_for('api_import_config') }}" enctype="multipart/form-data" style="margin-top:12px;">
+        <div class="form-group">
+            <label for="config_file">Import Config</label>
+            <input type="file" id="config_file" name="config_file" accept=".yaml,.yml" style="font-size:13px;">
+            <div class="hint">Upload a previously exported config.yaml to restore settings.</div>
+        </div>
+        <div class="btn-group">
+            <button type="submit" class="btn btn-secondary" onclick="return confirm('This will replace your current config. Continue?')">Import Config</button>
+        </div>
+    </form>
+</div>
 {% endblock %}

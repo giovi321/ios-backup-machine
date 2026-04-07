@@ -421,6 +421,59 @@ def check_backup_mount(panel, logf):
         panel.sleep()
         sys.exit(2)
 
+def check_disk_space(logf, ui):
+    """Check disk space on root and backup drive before starting."""
+    warnings = []
+    # Check root filesystem
+    try:
+        st = os.statvfs("/")
+        root_free_mb = (st.f_bavail * st.f_frsize) // (1024 * 1024)
+        if root_free_mb < 500:
+            warnings.append(f"Root disk low: {root_free_mb}MB free")
+    except Exception:
+        pass
+    # Check backup drive
+    try:
+        bd = CFG.get("backup_dir", "/media/iosbackup/")
+        st = os.statvfs(bd)
+        backup_free_gb = (st.f_bavail * st.f_frsize) / (1024 ** 3)
+        if backup_free_gb < 1:
+            warnings.append(f"Backup drive low: {backup_free_gb:.1f}GB free")
+    except Exception:
+        pass
+    if warnings:
+        msg = "\n".join(warnings)
+        if logf: logf.write(f"[WARN] Disk space: {msg}\n")
+        ui.set(subtitle=f"Warning:\n{msg}\nProceeding...", percent=None, animate=False, show_header=True)
+        time.sleep(4)
+    return len(warnings) == 0
+
+def verify_backup_integrity(backup_dir, logf):
+    """Check backup completed with valid Manifest.plist."""
+    try:
+        # Find the most recently modified backup folder
+        entries = []
+        for e in os.scandir(backup_dir):
+            if e.is_dir(follow_symlinks=True):
+                try:
+                    entries.append((e.stat().st_mtime, e.path))
+                except Exception:
+                    pass
+        if not entries:
+            return False, "No backup folders found"
+        entries.sort(reverse=True)
+        latest = entries[0][1]
+        manifest = os.path.join(latest, "Manifest.plist")
+        if not os.path.exists(manifest):
+            return False, "Manifest.plist missing"
+        # Check it's parseable
+        import plistlib
+        with open(manifest, "rb") as f:
+            plistlib.load(f)
+        return True, "OK"
+    except Exception as e:
+        return False, str(e)
+
 def tee_and_parse(proc, logf, on_line):
     while True:
         ch = proc.stdout.read(1)
@@ -489,8 +542,9 @@ def _check_encryption(logf, ui):
             if logf: logf.write(f"[ENC] Could not check encryption status: {e}\n")
             return None
 
-def run_backup(panel, logf, ui):
+def run_backup(panel, logf, ui, _retry=0):
     check_backup_mount(panel, logf)
+    check_disk_space(logf, ui)
     _check_encryption(logf, ui)
     cmd = ["idevicebackup2", "backup", CFG["backup_dir"]]
     print(f"[CMD] {' '.join(cmd)}", flush=True)
@@ -590,6 +644,11 @@ def run_backup(panel, logf, ui):
     proc.wait(); rc = proc.returncode
     ts_end = datetime.now().strftime("%H:%M / %d %b %Y")
     if rc == 0:
+        # Verify backup integrity
+        ok, integrity_msg = verify_backup_integrity(CFG["backup_dir"], logf)
+        if not ok:
+            if logf: logf.write(f"[WARN] Backup integrity check: {integrity_msg}\n")
+
         usage = get_disk_usage_pct(CFG["disk_device"])
         usage_str = f"{usage}%" if usage is not None else "n/a"
         owner = CFG["owner_lines"]
@@ -600,10 +659,14 @@ def run_backup(panel, logf, ui):
             f"{owner[0]}\n{owner[1]}\n{owner[2]}\n{owner[3]}"
         )
         ui.stop()
-        write_status("complete", usage=usage_str, completed_at=ts_end)
+        write_status("complete", usage=usage_str, completed_at=ts_end, verified=ok)
         panel.draw("", percent=None, animate=False, center_block=center, show_header=False)
         if logf: logf.write(f"[OK] completed at {ts_end} usage={usage_str}\n")
-        send_notification("backup_complete", {"usage": usage_str, "timestamp": ts_end})
+        send_notification("backup_complete", {
+            "usage": usage_str, "timestamp": ts_end,
+            "device": CFG.get("owner_lines", [""])[0],
+            "verified": ok,
+        })
         time.sleep(2)
 
         # Auto-sync to remote server if enabled
@@ -623,6 +686,12 @@ def run_backup(panel, logf, ui):
 
         return 0
     else:
+        # Retry once on failure
+        if _retry == 0:
+            if logf: logf.write("[RETRY] Backup failed, retrying once...\n")
+            ui.set(subtitle="Backup failed.\nRetrying...", percent=None, animate=True, show_header=True)
+            time.sleep(3)
+            return run_backup(panel, logf, ui, _retry=1)
         send_notification("backup_error", {"error": "Unknown error, rc!=0"})
         error_and_wait("Unknown error.\nCheck logs.", None, "rc!=0")
 

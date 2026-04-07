@@ -372,6 +372,25 @@ def _read_backup_status():
         pass
     return None
 
+def _get_storage_info():
+    """Get storage info for backup drive and root."""
+    info = {}
+    for name, path in [("root", "/"), ("backup", load_config().get("backup_dir", "/media/iosbackup/"))]:
+        try:
+            st = os.statvfs(path)
+            total = st.f_blocks * st.f_frsize
+            free = st.f_bavail * st.f_frsize
+            used = total - free
+            info[name] = {
+                "total": _human_size(total),
+                "used": _human_size(used),
+                "free": _human_size(free),
+                "percent": round(used / total * 100, 1) if total > 0 else 0,
+            }
+        except Exception:
+            info[name] = None
+    return info
+
 @app.route("/")
 @login_required
 def index():
@@ -379,8 +398,9 @@ def index():
     ip, iface_type = netutil.get_active_ip()
     wg_status = wg_manager.get_wireguard_status(cfg.get("wireguard", {}).get("interface_name", "wg0"))
     backup_status = _read_backup_status()
+    storage = _get_storage_info()
     return render_template("index.html", cfg=cfg, ip=ip, iface_type=iface_type,
-                           wg_status=wg_status, backup_status=backup_status)
+                           wg_status=wg_status, backup_status=backup_status, storage=storage)
 
 @app.route("/favicon.ico")
 def favicon():
@@ -1270,6 +1290,36 @@ def api_backup_sizes():
             if os.path.isdir(entry_path) and os.path.exists(os.path.join(entry_path, "Info.plist")):
                 sizes[entry] = _human_size(_dir_size(entry_path))
     return jsonify(sizes)
+
+@app.route("/api/export-config")
+@login_required
+def api_export_config():
+    """Download config.yaml as a file."""
+    from flask import send_file
+    return send_file(CONFIG_PATH, as_attachment=True, download_name="config.yaml",
+                     mimetype="text/yaml")
+
+@app.route("/api/import-config", methods=["POST"])
+@login_required
+def api_import_config():
+    """Upload and replace config.yaml."""
+    f = request.files.get("config_file")
+    if not f:
+        flash("No file uploaded.", "error")
+        return redirect(url_for("settings_general"))
+    try:
+        content = f.read().decode("utf-8")
+        # Validate it's valid YAML
+        cfg = yaml.safe_load(content)
+        if not isinstance(cfg, dict):
+            flash("Invalid config file (not a YAML dict).", "error")
+            return redirect(url_for("settings_general"))
+        with open(CONFIG_PATH, "w") as out:
+            out.write(content)
+        flash("Config imported. Restart services to apply.", "success")
+    except Exception as e:
+        flash(f"Import failed: {e}", "error")
+    return redirect(url_for("settings_general"))
 
 @app.route("/api/start-backup", methods=["POST"])
 @login_required

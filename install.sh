@@ -530,6 +530,12 @@ fi
 mkdir -p "${LOG_DIR}"
 info "Backup directory ready: ${BACKUP_DIR}"
 
+# Install logrotate config
+if [ -f "${REPO_DIR}/config/logrotate-iosbackupmachine" ]; then
+    cp "${REPO_DIR}/config/logrotate-iosbackupmachine" /etc/logrotate.d/iosbackupmachine
+    info "Installed logrotate config"
+fi
+
 # ---------------------------------------------------------------------------
 # Step: Install and configure PiSugar UPS
 # ---------------------------------------------------------------------------

@@ -106,6 +106,38 @@
     </div>
 </div>
 
+{% if storage %}
+<div class="card" style="margin-top:20px;">
+    <h2>Storage</h2>
+    <div class="info-grid">
+        {% if storage.backup %}
+        <div class="info-item">
+            <div class="label">Backup Drive</div>
+            <div class="value" style="font-size:14px;">
+                {{ storage.backup.used }} / {{ storage.backup.total }}
+                <div style="background:#e8eaed;border-radius:4px;height:8px;width:100%;margin-top:6px;">
+                    <div style="background:{% if storage.backup.percent > 90 %}var(--error){% elif storage.backup.percent > 75 %}var(--warning){% else %}var(--success){% endif %};border-radius:4px;height:8px;width:{{ storage.backup.percent }}%;"></div>
+                </div>
+                <small style="color:var(--text-muted);">{{ storage.backup.free }} free ({{ storage.backup.percent }}% used)</small>
+            </div>
+        </div>
+        {% endif %}
+        {% if storage.root %}
+        <div class="info-item">
+            <div class="label">System Disk</div>
+            <div class="value" style="font-size:14px;">
+                {{ storage.root.used }} / {{ storage.root.total }}
+                <div style="background:#e8eaed;border-radius:4px;height:8px;width:100%;margin-top:6px;">
+                    <div style="background:{% if storage.root.percent > 90 %}var(--error){% elif storage.root.percent > 75 %}var(--warning){% else %}var(--success){% endif %};border-radius:4px;height:8px;width:{{ storage.root.percent }}%;"></div>
+                </div>
+                <small style="color:var(--text-muted);">{{ storage.root.free }} free ({{ storage.root.percent }}% used)</small>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
 <div class="card" style="margin-top: 24px;">
     <h2>Backup Control</h2>
     <div class="btn-group">

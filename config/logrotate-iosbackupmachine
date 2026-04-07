@@ -1,0 +1,10 @@
+/var/log/iosbackupmachine/*.log {
+    weekly
+    rotate 4
+    compress
+    delaycompress
+    missingok
+    notifempty
+    maxsize 10M
+    create 0644 root root
+}
