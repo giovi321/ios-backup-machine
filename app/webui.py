@@ -814,33 +814,37 @@ def settings_encryption():
     # Check current encryption status on device
     enc_status = None
     if connected_udid:
-        # Try ideviceinfo first (most reliable)
+        # Try ideviceinfo with backup domain (where WillEncrypt lives)
         try:
             r = subprocess.run(
-                ["ideviceinfo", "-k", "WillEncrypt"],
+                ["ideviceinfo", "--domain", "com.apple.mobile.backup", "-k", "WillEncrypt"],
                 capture_output=True, text=True, timeout=10
             )
             val = r.stdout.strip().lower()
-            if val == "true" or val == "1":
-                enc_status = "enabled"
-            elif val == "false" or val == "0":
-                enc_status = "disabled"
+            if r.returncode == 0 and val:
+                if val in ("true", "1"):
+                    enc_status = "enabled"
+                elif val in ("false", "0"):
+                    enc_status = "disabled"
         except Exception:
             pass
-        # Fallback to idevicebackup2 if ideviceinfo didn't work
+        # Fallback: run idevicebackup2 and parse output
         if enc_status is None:
             try:
                 r = subprocess.run(
-                    ["idevicebackup2", "encryption", "status", cfg.get("backup_dir", "/media/iosbackup/")],
-                    capture_output=True, text=True, timeout=10
+                    ["idevicebackup2", "backup", "--dry-run", cfg.get("backup_dir", "/media/iosbackup/")],
+                    capture_output=True, text=True, timeout=15
                 )
                 out = (r.stdout + r.stderr).lower()
-                if "enabled" in out or "will be encrypted" in out:
+                if "will be encrypted" in out or "backup encryption is currently enabled" in out:
                     enc_status = "enabled"
-                elif "disabled" in out or "not encrypted" in out:
+                elif "will not be encrypted" in out or "backup encryption is currently disabled" in out:
                     enc_status = "disabled"
             except Exception:
                 pass
+        # Last fallback: check if encryption was ever confirmed during a backup
+        if enc_status is None and cfg.get("backup_encryption", {}).get("encryption_confirmed"):
+            enc_status = "enabled"
 
     if request.method == "POST":
         action = request.form.get("action", "")

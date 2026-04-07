@@ -2,7 +2,7 @@
 {% block title %}WireGuard - iOS Backup Machine{% endblock %}
 {% block content %}
 <h1>WireGuard VPN</h1>
-<p class="subtitle">Configure WireGuard client. Config is encrypted using your iPhone's UUID.</p>
+<p class="subtitle">Configure WireGuard client.</p>
 
 <div class="card">
     <h2>Status</h2>
@@ -18,10 +18,10 @@
             </div>
         </div>
         <div class="info-item">
-            <div class="label">iPhone Connected</div>
+            <div class="label">iPhone</div>
             <div class="value">
                 {% if udid %}
-                    <span class="badge badge-on"><span class="badge-dot"></span>{{ udid[:12] }}...</span>
+                    <span class="badge badge-on"><span class="badge-dot"></span>Connected</span>
                 {% else %}
                     <span class="badge badge-off"><span class="badge-dot"></span>Not connected</span>
                 {% endif %}
@@ -34,6 +34,16 @@
                     <span class="badge badge-on"><span class="badge-dot"></span>Present</span>
                 {% else %}
                     <span class="badge badge-off"><span class="badge-dot"></span>Not found</span>
+                {% endif %}
+            </div>
+        </div>
+        <div class="info-item">
+            <div class="label">Encryption Mode</div>
+            <div class="value">
+                {% if passphrase_mode == 'udid' %}
+                    <span class="badge badge-on"><span class="badge-dot"></span>iPhone serial (auto)</span>
+                {% else %}
+                    <span class="badge badge-off"><span class="badge-dot"></span>Custom password</span>
                 {% endif %}
             </div>
         </div>
@@ -55,6 +65,17 @@
             <label for="interface_name">Interface Name</label>
             <input type="text" id="interface_name" name="interface_name" value="{{ cfg.wireguard.interface_name }}">
         </div>
+        <div class="form-group">
+            <label for="passphrase_mode">Encryption Passphrase</label>
+            <select id="passphrase_mode" name="passphrase_mode">
+                <option value="udid" {% if passphrase_mode == 'udid' %}selected{% endif %}>iPhone serial number (automatic when connected)</option>
+                <option value="custom" {% if passphrase_mode == 'custom' %}selected{% endif %}>Custom password (manual entry)</option>
+            </select>
+            <div class="hint">
+                <strong>iPhone serial</strong>: auto-decrypt when iPhone is plugged in.<br>
+                <strong>Custom password</strong>: manual entry required each time.
+            </div>
+        </div>
         <div class="btn-group">
             <button type="submit" class="btn btn-primary">Save Settings</button>
         </div>
@@ -64,7 +85,11 @@
 <div class="card">
     <h2>Upload WireGuard Configuration</h2>
     <p style="font-size:13px; color:var(--text-muted); margin-bottom:12px;">
-        Paste your WireGuard client config below. It will be encrypted using your master password.
+        {% if passphrase_mode == 'udid' %}
+        Config will be encrypted using the connected iPhone's serial number.
+        {% else %}
+        Config will be encrypted using your custom password.
+        {% endif %}
     </p>
     <form method="POST">
         <input type="hidden" name="action" value="upload_config">
@@ -80,13 +105,18 @@ PublicKey = ...
 Endpoint = vpn.example.com:51820
 AllowedIPs = 0.0.0.0/0"></textarea>
         </div>
+        {% if passphrase_mode == 'custom' %}
         <div class="form-group">
-            <label for="master_password_upload">Master Password</label>
-            <input type="password" id="master_password_upload" name="master_password" placeholder="Used to encrypt the config" required>
-            <div class="hint">Choose a strong password. You will need it to start WireGuard.</div>
+            <label for="master_password_upload">Password</label>
+            <input type="password" id="master_password_upload" name="master_password" required>
         </div>
+        {% endif %}
         <div class="btn-group">
+            {% if passphrase_mode == 'udid' %}
+            <button type="submit" class="btn btn-primary" {% if not udid %}disabled title="Connect iPhone first"{% endif %}>Encrypt & Save</button>
+            {% else %}
             <button type="submit" class="btn btn-primary">Encrypt & Save</button>
+            {% endif %}
         </div>
     </form>
 </div>
@@ -95,12 +125,21 @@ AllowedIPs = 0.0.0.0/0"></textarea>
     <h2>Control</h2>
     <form method="POST">
         <input type="hidden" name="action" value="start">
+        {% if passphrase_mode == 'custom' %}
         <div class="form-group">
-            <label for="master_password_start">Master Password</label>
-            <input type="password" id="master_password_start" name="master_password" placeholder="Required to decrypt config">
+            <label for="master_password_start">Password</label>
+            <input type="password" id="master_password_start" name="master_password">
         </div>
+        {% endif %}
         <div class="btn-group">
+            {% if passphrase_mode == 'udid' %}
+            <button type="submit" class="btn btn-success btn-sm" {% if not has_enc_file or not udid %}disabled{% endif %}>Start WireGuard</button>
+            {% if not udid and has_enc_file %}
+            <span style="font-size:12px;color:var(--text-muted);margin-left:8px;">Connect iPhone to start</span>
+            {% endif %}
+            {% else %}
             <button type="submit" class="btn btn-success btn-sm" {% if not has_enc_file %}disabled{% endif %}>Start WireGuard</button>
+            {% endif %}
         </div>
     </form>
     <form method="POST" style="margin-top:8px;">
