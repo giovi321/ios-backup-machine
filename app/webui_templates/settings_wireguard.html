@@ -61,6 +61,10 @@
             <input type="checkbox" id="wg_enabled" name="wg_enabled" {% if cfg.wireguard.enabled %}checked{% endif %}>
             <label for="wg_enabled">Enable WireGuard</label>
         </div>
+        <div class="form-check">
+            <input type="checkbox" id="auto_connect" name="auto_connect" {% if cfg.wireguard.get('auto_connect') %}checked{% endif %}>
+            <label for="auto_connect">Auto-connect when iPhone is plugged in</label>
+        </div>
         <div class="form-group">
             <label for="interface_name">Interface Name</label>
             <input type="text" id="interface_name" name="interface_name" value="{{ cfg.wireguard.interface_name }}">

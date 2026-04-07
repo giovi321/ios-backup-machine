@@ -708,6 +708,21 @@ def main():
     # Try NTP sync in background
     _try_ntp_sync()
 
+    # Auto-connect WireGuard if enabled (iPhone is connected at this point)
+    try:
+        wg_cfg = CFG.get("wireguard", {})
+        if wg_cfg.get("enabled") and wg_cfg.get("auto_connect"):
+            import wg_manager as _wg
+            iface = wg_cfg.get("interface_name", "wg0")
+            if not _wg.is_interface_up(iface):
+                ok, err = _wg.start_wireguard(iface)
+                if ok:
+                    if logf: logf.write(f"[WG] Auto-connected {iface}\n")
+                else:
+                    if logf: logf.write(f"[WG] Auto-connect failed: {err}\n")
+    except Exception as e:
+        if logf: logf.write(f"[WG] Auto-connect error: {e}\n")
+
     p = Panel()
     p.prepare_partial()  # enable partial for text screens
 

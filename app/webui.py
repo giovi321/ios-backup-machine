@@ -74,7 +74,7 @@ def _apply_defaults(cfg):
         "webhook": {"enabled": False, "url": "", "events": ["backup_complete", "backup_error"]},
         "mqtt": {"enabled": False, "broker": "", "port": 1883, "username": "", "password": "", "topic_prefix": "iosbackupmachine", "events": ["backup_complete", "backup_error"]},
     })
-    cfg.setdefault("wireguard", {"enabled": False, "interface_name": "wg0"})
+    cfg.setdefault("wireguard", {"enabled": False, "auto_connect": False, "interface_name": "wg0"})
     cfg.setdefault("credential_encryption", {"passphrase_mode": "udid"})
     cfg.setdefault("sync", {"enabled": False, "auto_sync": False, "allowed_network": "any"})
     cfg.setdefault("setup_completed", False)
@@ -549,6 +549,7 @@ def settings_wireguard():
         action = request.form.get("action", "")
         if action == "save_settings":
             wg["enabled"] = request.form.get("wg_enabled") == "on"
+            wg["auto_connect"] = request.form.get("auto_connect") == "on"
             wg["interface_name"] = request.form.get("interface_name", "wg0")
             cfg["wireguard"] = wg
             cred_enc = cfg.get("credential_encryption", {})
