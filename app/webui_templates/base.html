@@ -208,26 +208,31 @@
         .info-item { padding: 16px; background: var(--bg); border-radius: var(--radius); }
         .info-item .label { font-size: 12px; color: var(--text-muted); margin-bottom: 4px; }
         .info-item .value { font-size: 16px; font-weight: 600; }
-        /* Mobile hamburger */
-        .hamburger {
+        /* Mobile top bar */
+        .mobile-topbar {
             display: none;
             position: fixed;
-            top: 12px; left: 12px;
-            z-index: 200;
+            top: 0; left: 0; right: 0;
+            z-index: 150;
             background: var(--sidebar-bg);
             color: #fff;
-            border: none;
-            border-radius: 6px;
-            padding: 8px 10px;
-            font-size: 20px;
-            cursor: pointer;
+            height: 48px;
+            align-items: center;
+            padding: 0 12px;
+            gap: 10px;
+        }
+        .mobile-topbar button {
+            background: none; border: none; color: #fff;
+            font-size: 22px; cursor: pointer; padding: 4px 8px;
             line-height: 1;
         }
+        .mobile-topbar img { width: 28px; height: 28px; border-radius: 4px; }
+        .mobile-topbar span { font-size: 14px; font-weight: 600; }
         @media (max-width: 768px) {
             .sidebar { transform: translateX(-100%); transition: transform 0.2s; }
             .sidebar.open { transform: translateX(0); }
-            .main { margin-left: 0; padding: 16px; padding-top: 56px; }
-            .hamburger { display: block; }
+            .main { margin-left: 0; padding: 16px; padding-top: 60px; }
+            .mobile-topbar { display: flex; }
         }
         /* Checkbox group */
         .checkbox-group { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -244,7 +249,11 @@
     </style>
 </head>
 <body>
-    <button class="hamburger" onclick="document.querySelector('.sidebar').classList.toggle('open')">&#9776;</button>
+    <div class="mobile-topbar">
+        <button onclick="document.querySelector('.sidebar').classList.toggle('open')">&#9776;</button>
+        <img src="{{ url_for('static', filename='icon.svg') }}" alt="Logo">
+        <span>iOS Backup Machine</span>
+    </div>
     <aside class="sidebar" onclick="if(window.innerWidth<=768)this.classList.remove('open')">
         <div class="sidebar-brand">
             <img src="{{ url_for('static', filename='icon.svg') }}" alt="Logo">
