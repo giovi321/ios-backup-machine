@@ -1341,12 +1341,33 @@ def api_start_backup():
 @app.route("/api/stop-backup", methods=["POST"])
 @login_required
 def api_stop_backup():
-    """Stop the backup service and kill any running idevicebackup2."""
+    """Stop the backup service, show interrupted screen on e-ink."""
     try:
         subprocess.run(["systemctl", "stop", "iosbackupmachine.service"],
                        capture_output=True, timeout=10)
         subprocess.run(["pkill", "-f", "idevicebackup2"],
                        capture_output=True, timeout=5)
+        # Update status to interrupted
+        status_file = os.path.join(LOG_DIR, "backup_status.json")
+        try:
+            os.makedirs(LOG_DIR, exist_ok=True)
+            with open(status_file, "w") as f:
+                json.dump({"state": "interrupted", "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S")}, f)
+        except Exception:
+            pass
+        # Show interrupted screen on e-ink (release GPIO first, then draw)
+        try:
+            subprocess.Popen(
+                ["/root/iosbackupmachine/bin/python3", "/root/iosbackupmachine/unplug-notify.py"],
+                env={**os.environ,
+                     "EPD_GPIO_CHIP": "/dev/gpiochip3", "EPD_PIN_DC": "17",
+                     "EPD_PIN_RST": "1", "EPD_PIN_BUSY": "10",
+                     "EPD_SPI_DEV": "/dev/spidev3.0", "EPD_SPI_HZ": "2000000",
+                     "IOSBACKUP_CONFIG": CONFIG_PATH},
+                start_new_session=True
+            )
+        except Exception:
+            pass
         flash("Backup stopped.", "success")
     except Exception as e:
         flash(f"Error: {e}", "error")
