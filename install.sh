@@ -58,6 +58,7 @@ APP_FILES=(
     "scripts/iosbackupmachine_launcher.sh:iosbackupmachine_launcher.sh"
     "scripts/unplug-notify.sh:unplug-notify.sh"
     "scripts/shutdown.sh:shutdown.sh"
+    "scripts/display-shutdown.sh:display-shutdown.sh"
     "assets/UbuntuMono-Regular.ttf:UbuntuMono-Regular.ttf"
     "requirements.txt:requirements.txt"
 )
@@ -446,6 +447,7 @@ done
 chmod +x "${INSTALL_DIR}/iosbackupmachine_launcher.sh" 2>/dev/null || true
 chmod +x "${INSTALL_DIR}/unplug-notify.sh" 2>/dev/null || true
 chmod +x "${INSTALL_DIR}/shutdown.sh" 2>/dev/null || true
+chmod +x "${INSTALL_DIR}/display-shutdown.sh" 2>/dev/null || true
 
 info "Application files installed to ${INSTALL_DIR}"
 
