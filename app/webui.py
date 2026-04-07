@@ -571,10 +571,11 @@ def settings_wireguard():
         elif action == "start":
             mode = cfg.get("credential_encryption", {}).get("passphrase_mode", "udid")
             pw = wg_crypto.get_iphone_serial() if mode == "udid" else request.form.get("master_password", "").strip()
-            if wg_manager.start_wireguard(iface, passphrase=pw):
+            ok, err = wg_manager.start_wireguard(iface, passphrase=pw)
+            if ok:
                 flash(f"WireGuard interface {iface} started.", "success")
             else:
-                flash("Failed to start WireGuard.", "error")
+                flash(f"Failed to start WireGuard: {err}", "error")
         elif action == "stop":
             if wg_manager.stop_wireguard(iface):
                 flash(f"WireGuard interface {iface} stopped.", "success")

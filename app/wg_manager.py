@@ -10,25 +10,45 @@ def is_interface_up(iface="wg0"):
         return False
 
 def start_wireguard(iface="wg0", passphrase=None):
+    """Decrypt WireGuard config and bring up the interface.
+    Returns (success: bool, error: str or None)."""
     cfg = wg_crypto.decrypt_wg_config(passphrase=passphrase)
     if not cfg:
-        return False
+        serial = wg_crypto.get_iphone_serial()
+        udid = wg_crypto.get_iphone_udid()
+        if not udid:
+            return False, "Cannot decrypt: no iPhone connected."
+        elif not serial:
+            return False, "iPhone connected but cannot read serial number. Unlock the iPhone and tap Trust."
+        else:
+            return False, "Decryption failed. Was the config encrypted with a different iPhone or passphrase?"
+
     wg_conf = cfg.get("wg_conf", "")
     if not wg_conf:
-        return False
+        return False, "Encrypted config is empty (no wg_conf key)."
+
     conf_path = f"/etc/wireguard/{iface}.conf"
     try:
         os.makedirs("/etc/wireguard", exist_ok=True)
         with open(conf_path, "w") as f:
             f.write(wg_conf)
         os.chmod(conf_path, 0o600)
-    except Exception:
-        return False
+    except Exception as e:
+        return False, f"Cannot write config to {conf_path}: {e}"
+
     try:
         r = subprocess.run(["wg-quick", "up", iface], capture_output=True, text=True, timeout=15)
-        return r.returncode == 0
-    except Exception:
-        return False
+        if r.returncode == 0:
+            return True, None
+        else:
+            err = r.stderr.strip()[:200] if r.stderr else f"exit code {r.returncode}"
+            return False, f"wg-quick up failed: {err}"
+    except FileNotFoundError:
+        return False, "wg-quick not found. Install wireguard-tools."
+    except subprocess.TimeoutExpired:
+        return False, "wg-quick timed out after 15s."
+    except Exception as e:
+        return False, f"Unexpected error: {e}"
 
 def stop_wireguard(iface="wg0"):
     try:
