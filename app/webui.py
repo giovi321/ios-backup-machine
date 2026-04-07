@@ -39,6 +39,12 @@ app = Flask(
     static_url_path="/static"
 )
 
+@app.context_processor
+def inject_version():
+    return {"app_version": VERSION}
+
+LOG_DIR = "/var/log/iosbackupmachine"
+
 # --- Logging setup ---
 os.makedirs(LOG_DIR, exist_ok=True)
 _log_handler = RotatingFileHandler(
@@ -48,14 +54,7 @@ _log_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(messa
 _log_handler.setLevel(logging.INFO)
 app.logger.addHandler(_log_handler)
 app.logger.setLevel(logging.INFO)
-# Suppress Flask's default request logging (too verbose)
 logging.getLogger("werkzeug").setLevel(logging.WARNING)
-
-@app.context_processor
-def inject_version():
-    return {"app_version": VERSION}
-
-LOG_DIR = "/var/log/iosbackupmachine"
 
 # ---------------------------------------------------------------------------
 # Config helpers
