@@ -1,0 +1,12 @@
+[Unit]
+Description=Auto-connect WireGuard at boot
+After=network-online.target pisugar-server.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/root/iosbackupmachine/wg-autoconnect.sh boot
+WorkingDirectory=/root/iosbackupmachine
+
+[Install]
+WantedBy=multi-user.target

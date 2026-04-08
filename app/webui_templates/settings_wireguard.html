@@ -63,7 +63,26 @@
         </div>
         <div class="form-check">
             <input type="checkbox" id="auto_connect" name="auto_connect" {% if cfg.wireguard.get('auto_connect') %}checked{% endif %}>
-            <label for="auto_connect">Auto-connect when iPhone is plugged in</label>
+            <label for="auto_connect">Auto-connect WireGuard</label>
+        </div>
+        <div class="form-group">
+            <label>Auto-connect when</label>
+            <div class="checkbox-group">
+                {% set triggers = cfg.wireguard.get('auto_connect_on', ['iphone']) %}
+                <label>
+                    <input type="checkbox" name="auto_connect_on" value="iphone" {% if 'iphone' in triggers %}checked{% endif %}>
+                    iPhone plugged in
+                </label>
+                <label>
+                    <input type="checkbox" name="auto_connect_on" value="wifi" {% if 'wifi' in triggers %}checked{% endif %}>
+                    WiFi available
+                </label>
+                <label>
+                    <input type="checkbox" name="auto_connect_on" value="boot" {% if 'boot' in triggers %}checked{% endif %}>
+                    On boot
+                </label>
+            </div>
+            <div class="hint">Select when WireGuard should auto-connect. Multiple options can be combined.</div>
         </div>
         <div class="form-group">
             <label for="interface_name">Interface Name</label>

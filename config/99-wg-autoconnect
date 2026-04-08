@@ -1,0 +1,10 @@
+#!/bin/bash
+# NetworkManager dispatcher: auto-connect WireGuard when WiFi comes up
+# Installed to /etc/NetworkManager/dispatcher.d/
+
+IFACE="$1"
+ACTION="$2"
+
+if [ "$ACTION" = "up" ] && echo "$IFACE" | grep -q "^wlan"; then
+    /root/iosbackupmachine/wg-autoconnect.sh wifi &
+fi

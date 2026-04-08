@@ -33,6 +33,7 @@ APP_FILES=(
     shutdown.sh
     display-shutdown.sh
     long-press-backup.sh
+    wg-autoconnect.sh
     ntp-sync.py
     webui.py
     netutil.py
@@ -67,6 +68,7 @@ SERVICES=(
     unplug-notify.service
     button-info.service
     backup-sync.service
+    wg-autoconnect.service
 )
 
 UDEV_RULES=(

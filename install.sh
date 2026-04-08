@@ -60,6 +60,7 @@ APP_FILES=(
     "scripts/shutdown.sh:shutdown.sh"
     "scripts/display-shutdown.sh:display-shutdown.sh"
     "scripts/long-press-backup.sh:long-press-backup.sh"
+    "scripts/wg-autoconnect.sh:wg-autoconnect.sh"
     "assets/UbuntuMono-Regular.ttf:UbuntuMono-Regular.ttf"
     "requirements.txt:requirements.txt"
 )
@@ -71,6 +72,7 @@ ENABLE_SERVICES=(
     webui.service
     ntp-sync.service
     rtc-sync.service
+    wg-autoconnect.service
 )
 
 ALL_SERVICES=(
@@ -84,6 +86,7 @@ ALL_SERVICES=(
     unplug-notify.service
     button-info.service
     backup-sync.service
+    wg-autoconnect.service
 )
 
 # ---------------------------------------------------------------------------
@@ -332,7 +335,7 @@ step "Install Waveshare e-Paper driver"
 if [ -d "${EPAPER_DIR}" ]; then
     info "e-Paper repository already exists at ${EPAPER_DIR}"
 else
-    git clone --quiet "${EPAPER_REPO}" "${EPAPER_DIR}"
+    git clone --quiet --depth 1 "${EPAPER_REPO}" "${EPAPER_DIR}"
     info "Cloned e-Paper repository"
 fi
 
@@ -450,6 +453,7 @@ chmod +x "${INSTALL_DIR}/unplug-notify.sh" 2>/dev/null || true
 chmod +x "${INSTALL_DIR}/shutdown.sh" 2>/dev/null || true
 chmod +x "${INSTALL_DIR}/display-shutdown.sh" 2>/dev/null || true
 chmod +x "${INSTALL_DIR}/long-press-backup.sh" 2>/dev/null || true
+chmod +x "${INSTALL_DIR}/wg-autoconnect.sh" 2>/dev/null || true
 
 info "Application files installed to ${INSTALL_DIR}"
 
@@ -536,6 +540,13 @@ info "Backup directory ready: ${BACKUP_DIR}"
 if [ -f "${REPO_DIR}/config/logrotate-iosbackupmachine" ]; then
     cp "${REPO_DIR}/config/logrotate-iosbackupmachine" /etc/logrotate.d/iosbackupmachine
     info "Installed logrotate config"
+fi
+
+# Install NetworkManager dispatcher for WireGuard WiFi auto-connect
+if [ -d /etc/NetworkManager/dispatcher.d ] && [ -f "${REPO_DIR}/config/99-wg-autoconnect" ]; then
+    cp "${REPO_DIR}/config/99-wg-autoconnect" /etc/NetworkManager/dispatcher.d/99-wg-autoconnect
+    chmod +x /etc/NetworkManager/dispatcher.d/99-wg-autoconnect
+    info "Installed NetworkManager dispatcher for WireGuard auto-connect"
 fi
 
 # ---------------------------------------------------------------------------
