@@ -20,9 +20,9 @@
 **Offline, portable and automatic iPhone backup system** running entirely on a **Radxa Zero 3W** (an upgraded Raspberry Pi Zero W).  
 When you plug in your iPhone, the system automatically runs an encrypted `idevicebackup2` backup to local storage, shows progress and messages on an e-ink display, and logs all activity locally — **no iCloud, no iTunes, you own your data.**
 
-![Normal_operation](https://github.com/user-attachments/assets/a126f7bf-9173-4a85-b462-f8181bd77aae)
+![Normal_operation](./assets/Normal_operation.git)
 
-![Image2](https://github.com/user-attachments/assets/d473ad1f-d80a-4214-8b85-8363d4b1f9a8)
+![Image2](./assets/Image2.jpg)
 
 # Check out apple-juicer: an iOS backup explorer
 <img width="100" height="100" alt="apple-juicer logo" src="https://github.com/user-attachments/assets/e564146f-3fa4-40df-9acc-c3a2de363b29" />
@@ -31,8 +31,6 @@ If you want to inspect the backups created by this device, use **Apple Juicer**,
 
 - Repository: https://github.com/giovi321/apple-juicer
 - Documentation: https://giovi321.github.io/apple-juicer/
-
-
 
 
 ## Objective
@@ -52,8 +50,7 @@ All backups stay local on the microSD card and can be restored anytime using too
 - **WireGuard VPN**: built-in client with encrypted config.
 - **Credential encryption**: WireGuard and sync credentials are encrypted with AES-256-GCM. Choose between iPhone UDID (auto-decrypt when connected) or a custom password.
 - **Network-aware sync**: restrict remote sync to WiFi only, a specific SSID, or iPhone USB tethering.
-- **Power-on indicator**: visible on every e-ink screen.
-
+- 
 ## How it works
 
 ### Normal operation
@@ -296,8 +293,7 @@ The update process:
 - Runs the installer with a post-install health check
 - Restarts services
 
----
-
+If you prefer, you can install manually.
 <details>
 <summary><strong>Manual installation (step-by-step reference)</strong></summary>
 
@@ -386,11 +382,6 @@ systemctl enable rtc-sync.service
 5. The first backup runs (this takes a long time depending on device storage). All subsequent backups are incremental and much faster.
 6. **If the first backup is interrupted**: encryption (if enabled) remains active on the iPhone. The next backup attempt will proceed normally — no data is lost.
 
-**Manual alternative** (without the web UI):
-```bash
-idevicebackup2 encryption on <your-password> /media/iosbackup
-idevicebackup2 backup --full /media/iosbackup
-```
 
 ## Restoring a backup
 To restore a backup simply plug your iOS device in a computer, plug the microSD card in the same computer and run:
