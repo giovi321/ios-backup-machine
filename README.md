@@ -20,7 +20,7 @@
 **Offline, portable and automatic iPhone backup system** running entirely on a **Radxa Zero 3W** (an upgraded Raspberry Pi Zero W).  
 When you plug in your iPhone, the system automatically runs an encrypted `idevicebackup2` backup to local storage, shows progress and messages on an e-ink display, and logs all activity locally — **no iCloud, no iTunes, you own your data.**
 
-![Normal_operation](./assets/images/Normal_operation.git)
+![Normal_operation](./assets/images/Normal_operation.gif)
 
 ![Image2](./assets/images/Image2.jpg)
 
