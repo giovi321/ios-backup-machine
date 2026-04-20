@@ -29,10 +29,10 @@
         <div class="form-group">
             <label for="orientation">Screen Orientation</label>
             <select id="orientation" name="orientation">
+                <option value="landscape_left" {% if cfg.orientation != 'landscape_right' %}selected{% endif %}>Landscape Left</option>
                 <option value="landscape_right" {% if cfg.orientation == 'landscape_right' %}selected{% endif %}>Landscape Right</option>
-                <option value="landscape_left" {% if cfg.orientation == 'landscape_left' %}selected{% endif %}>Landscape Left</option>
-                <option value="portrait" {% if cfg.orientation == 'portrait' %}selected{% endif %}>Portrait</option>
             </select>
+            <div class="hint">Requires reboot to take effect</div>
         </div>
         <div class="form-group">
             <label for="font_path">Font Path</label>
