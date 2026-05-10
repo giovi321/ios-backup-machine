@@ -577,6 +577,8 @@ def run_backup(panel, logf, ui, _retry=0):
         # Enhance disk space errors with more context
         if code in (105, 106):
             user_msg = "Not enough disk space.\nCheck root filesystem (df -h)."
+        elif code == 102:
+            user_msg = "iPhone is out of space.\nFree space on iPhone\nand retry."
         # Truncate long messages for the small display
         lines = user_msg.split("\n")
         truncated = []

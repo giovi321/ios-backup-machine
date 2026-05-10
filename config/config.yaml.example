@@ -12,6 +12,7 @@ owner_lines:
   - "Reward if found €€€"
 error_codes:
   "100": "Snapshot failure at path"
+  "102": "iPhone out of space. Free space on iPhone and retry."
   "103": "Backup directory is wrong"
   "105": "Insufficient free disk space on backup drive"
   "106": "No space left for the backup"
