@@ -5,7 +5,7 @@ sync_manager.py - Remote backup sync via rsync over SSH.
 Supports SSH key and password authentication.
 Credentials are decrypted from the encrypted sync config store.
 """
-import os, sys, subprocess, tempfile, time, yaml
+import os, sys, re, subprocess, tempfile, time, yaml
 
 import sync_crypto
 
@@ -63,18 +63,16 @@ def _check_network_allowed():
     return True, ""
 
 
-def run_sync(passphrase=None, backup_dir=None):
-    """
-    Run rsync to sync backups to remote server.
-    Returns dict: {success: bool, message: str, duration: float}
-    """
+def _prepare_sync(passphrase=None, backup_dir=None, progress=False):
+    """Shared setup for run_sync and run_sync_with_progress.
+    Returns (cmd, key_file, error_dict) — error_dict is set on failure."""
     net_ok, net_reason = _check_network_allowed()
     if not net_ok:
-        return {"success": False, "message": net_reason, "duration": 0}
+        return None, None, {"success": False, "message": net_reason, "duration": 0}
 
     cfg = sync_crypto.decrypt_sync_config(passphrase=passphrase)
     if not cfg:
-        return {"success": False, "message": "Cannot decrypt sync credentials.", "duration": 0}
+        return None, None, {"success": False, "message": "Cannot decrypt sync credentials.", "duration": 0}
 
     host = cfg.get("host", "")
     port = cfg.get("port", 22)
@@ -85,58 +83,68 @@ def run_sync(passphrase=None, backup_dir=None):
     remote_path = cfg.get("remote_path", "")
 
     if not host or not username or not remote_path:
-        return {"success": False, "message": "Incomplete sync configuration (host/user/path).", "duration": 0}
+        return None, None, {"success": False, "message": "Incomplete sync configuration (host/user/path).", "duration": 0}
 
     if backup_dir is None:
         backup_dir = _load_backup_dir()
-
-    # Ensure trailing slash for rsync
     if not backup_dir.endswith("/"):
         backup_dir += "/"
 
     ssh_opts = f"ssh -p {port} -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15"
     key_file = None
+
+    rsync_flags = ["-az", "--delete"]
+    if progress:
+        rsync_flags.append("--info=progress2")
+
+    if auth_method == "key" and ssh_key:
+        fd, key_file = tempfile.mkstemp(prefix="sync_key_", suffix=".pem")
+        with os.fdopen(fd, "w") as f:
+            clean_key = ssh_key.replace("\r\n", "\n").replace("\r", "\n")
+            f.write(clean_key)
+            if not clean_key.endswith("\n"):
+                f.write("\n")
+        os.chmod(key_file, 0o600)
+        ssh_opts += f" -i {key_file}"
+        cmd = ["rsync"] + rsync_flags + ["-e", ssh_opts, backup_dir, f"{username}@{host}:{remote_path}/"]
+    elif auth_method == "password" and password:
+        cmd = ["sshpass", "-p", password, "rsync"] + rsync_flags + ["-e", ssh_opts, backup_dir, f"{username}@{host}:{remote_path}/"]
+    else:
+        return None, None, {"success": False, "message": "No SSH key or password configured.", "duration": 0}
+
+    return cmd, key_file, None
+
+
+def _cleanup_key(key_file):
+    if key_file and os.path.exists(key_file):
+        try:
+            os.remove(key_file)
+        except Exception:
+            pass
+
+
+_PROGRESS_RE = re.compile(r"(\d+)%")
+
+
+def run_sync(passphrase=None, backup_dir=None):
+    """
+    Run rsync to sync backups to remote server (blocking, no progress).
+    Returns dict: {success: bool, message: str, duration: float}
+    """
+    cmd, key_file, err = _prepare_sync(passphrase=passphrase, backup_dir=backup_dir)
+    if err:
+        return err
+
     start = time.time()
-
     try:
-        if auth_method == "key" and ssh_key:
-            # Write temp key file
-            fd, key_file = tempfile.mkstemp(prefix="sync_key_", suffix=".pem")
-            with os.fdopen(fd, "w") as f:
-                clean_key = ssh_key.replace("\r\n", "\n").replace("\r", "\n")
-                f.write(clean_key)
-                if not clean_key.endswith("\n"):
-                    f.write("\n")
-            os.chmod(key_file, 0o600)
-
-            ssh_opts += f" -i {key_file}"
-            cmd = [
-                "rsync", "-az", "--delete",
-                "-e", ssh_opts,
-                backup_dir,
-                f"{username}@{host}:{remote_path}/"
-            ]
-        elif auth_method == "password" and password:
-            cmd = [
-                "sshpass", "-p", password,
-                "rsync", "-az", "--delete",
-                "-e", ssh_opts,
-                backup_dir,
-                f"{username}@{host}:{remote_path}/"
-            ]
-        else:
-            return {"success": False, "message": "No SSH key or password configured.", "duration": 0}
-
-        print(f"[SYNC] Running: rsync to {username}@{host}:{remote_path}/", flush=True)
+        print(f"[SYNC] Running: {' '.join(cmd[:4])}...", flush=True)
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
         duration = time.time() - start
-
         if r.returncode == 0:
             return {"success": True, "message": f"Sync complete ({duration:.0f}s).", "duration": duration}
         else:
-            err = r.stderr.strip()[:200] if r.stderr else f"rsync exit code {r.returncode}"
-            return {"success": False, "message": f"rsync failed: {err}", "duration": duration}
-
+            err_msg = r.stderr.strip()[:200] if r.stderr else f"rsync exit code {r.returncode}"
+            return {"success": False, "message": f"rsync failed: {err_msg}", "duration": duration}
     except subprocess.TimeoutExpired:
         return {"success": False, "message": "Sync timed out (1h limit).", "duration": time.time() - start}
     except FileNotFoundError as e:
@@ -145,11 +153,57 @@ def run_sync(passphrase=None, backup_dir=None):
     except Exception as e:
         return {"success": False, "message": f"Sync error: {e}", "duration": time.time() - start}
     finally:
-        if key_file and os.path.exists(key_file):
-            try:
-                os.remove(key_file)
-            except Exception:
-                pass
+        _cleanup_key(key_file)
+
+
+def run_sync_with_progress(passphrase=None, backup_dir=None, on_progress=None):
+    """
+    Run rsync with real-time progress reporting.
+    on_progress(percent: int, elapsed: float) is called as progress updates arrive.
+    Returns dict: {success: bool, message: str, duration: float}
+    """
+    cmd, key_file, err = _prepare_sync(passphrase=passphrase, backup_dir=backup_dir, progress=True)
+    if err:
+        return err
+
+    start = time.time()
+    try:
+        print(f"[SYNC] Running (progress): {' '.join(cmd[:4])}...", flush=True)
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+        last_pct = -1
+        while True:
+            chunk = proc.stdout.read(256)
+            if not chunk:
+                break
+            m = _PROGRESS_RE.search(chunk)
+            if m and on_progress:
+                pct = int(m.group(1))
+                if pct != last_pct:
+                    last_pct = pct
+                    on_progress(pct, time.time() - start)
+
+        proc.wait(timeout=3600)
+        duration = time.time() - start
+
+        if proc.returncode == 0:
+            if on_progress:
+                on_progress(100, duration)
+            return {"success": True, "message": f"Sync complete ({duration:.0f}s).", "duration": duration}
+        else:
+            stderr = proc.stderr.read() if proc.stderr else ""
+            err_msg = stderr.strip()[:200] if stderr else f"rsync exit code {proc.returncode}"
+            return {"success": False, "message": f"rsync failed: {err_msg}", "duration": duration}
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        return {"success": False, "message": "Sync timed out (1h limit).", "duration": time.time() - start}
+    except FileNotFoundError as e:
+        tool = "sshpass" if "sshpass" in str(e) else "rsync"
+        return {"success": False, "message": f"{tool} not found. Install it.", "duration": 0}
+    except Exception as e:
+        return {"success": False, "message": f"Sync error: {e}", "duration": time.time() - start}
+    finally:
+        _cleanup_key(key_file)
 
 
 def test_connection(passphrase=None):
@@ -210,8 +264,4 @@ def test_connection(passphrase=None):
     except Exception as e:
         return {"success": False, "message": f"Error: {e}"}
     finally:
-        if key_file and os.path.exists(key_file):
-            try:
-                os.remove(key_file)
-            except Exception:
-                pass
+        _cleanup_key(key_file)

@@ -687,16 +687,35 @@ def run_backup(panel, logf, ui, _retry=0):
         sync_cfg = CFG.get("sync", {})
         if sync_cfg.get("enabled") and sync_cfg.get("auto_sync") and _sync_manager:
             if logf: logf.write("[SYNC] Auto-sync triggered after successful backup.\n")
+            write_status("syncing", percent=0)
+            send_notification("sync_start")
+            ui.start()
+            ui.set(subtitle="Syncing to server...", percent=0, animate=True, show_header=True)
+            def _sync_progress(pct, elapsed):
+                ui.set(subtitle=f"Syncing... {pct}%", percent=pct, animate=True, show_header=True)
+                write_status("syncing", percent=pct)
+                if logf: logf.write(f"[SYNC] {pct}% ({elapsed:.0f}s)\n")
             try:
-                result = _sync_manager.run_sync(backup_dir=CFG.get("backup_dir"))
+                result = _sync_manager.run_sync_with_progress(
+                    backup_dir=CFG.get("backup_dir"), on_progress=_sync_progress)
+                ui.stop()
                 if result["success"]:
                     if logf: logf.write(f"[SYNC] {result['message']}\n")
+                    write_status("sync_complete", message=result["message"])
+                    panel.draw("", percent=None, animate=False,
+                               center_block=f"Sync complete.\n{result['message']}", show_header=True)
                     send_notification("sync_complete", {"message": result["message"]})
                 else:
                     if logf: logf.write(f"[SYNC] Failed: {result['message']}\n")
+                    write_status("sync_error", message=result["message"])
+                    panel.draw("", percent=None, animate=False,
+                               center_block=f"Sync failed.\n{result['message'][:60]}", show_header=True)
                     send_notification("sync_error", {"error": result["message"]})
+                time.sleep(5)
             except Exception as e:
+                ui.stop()
                 if logf: logf.write(f"[SYNC] Error: {e}\n")
+                write_status("sync_error", message=str(e))
 
         return 0
     else:

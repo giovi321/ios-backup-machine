@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-# backup-sync.py — Double-tap: sync backups to remote server, show result on e-paper
-import os, sys, time, subprocess, yaml
+# backup-sync.py — Double-tap / long-press: sync backups to remote server
+import os, sys, time, json, subprocess, yaml
+from datetime import datetime
 from PIL import Image, ImageDraw, ImageFont
 from waveshare_epd import epd2in13_V4, epdconfig
 
 import sync_manager
 
 CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/iosbackupmachine/config.yaml")
+LOG_DIR = "/var/log/iosbackupmachine"
+STATUS_FILE = os.path.join(LOG_DIR, "backup_status.json")
 
 def load_config(path):
     try:
@@ -18,6 +21,15 @@ def load_config(path):
     cfg.setdefault("env", {})
     cfg.setdefault("sync", {"enabled": False})
     return cfg
+
+def write_status(state, **extra):
+    try:
+        os.makedirs(LOG_DIR, exist_ok=True)
+        data = {"state": state, "timestamp": datetime.now().isoformat(), **extra}
+        with open(STATUS_FILE, "w") as f:
+            json.dump(data, f)
+    except Exception:
+        pass
 
 CFG = load_config(CONFIG_PATH)
 for k, v in CFG.get("env", {}).items():
@@ -42,7 +54,6 @@ def text_wh(d, t, f):
     except AttributeError:
         return d.textsize(t, font=f)
 
-# Guard: skip if backup is running
 def backup_running():
     try:
         out = subprocess.run(
@@ -72,18 +83,29 @@ epd.Clear(0xFF)
 PW, PH = epd.width, epd.height
 LW, LH = (PH, PW) if ORIENT in ("landscape_right", "landscape_left") else (PW, PH)
 
-def show_message(lines_with_fonts):
-    """Draw centered lines on display."""
+BAR_H = 8
+BAR_MARGIN = 16
+
+def show_message(lines_with_fonts, percent=None):
     img = Image.new("1", (LW, LH), 255)
     drw = ImageDraw.Draw(img)
     spacing = 6
     heights = [text_wh(drw, ln, f)[1] for ln, f in lines_with_fonts]
     total_h = sum(heights) + spacing * (len(lines_with_fonts) - 1)
+    if percent is not None:
+        total_h += BAR_H + spacing
     y = (LH - total_h) // 2
     for ln, f in lines_with_fonts:
         tw, th = text_wh(drw, ln, f)
         drw.text(((LW - tw) // 2, y), ln, font=f, fill=0)
         y += th + spacing
+    if percent is not None:
+        bar_x = BAR_MARGIN
+        bar_w = LW - 2 * BAR_MARGIN
+        drw.rectangle([bar_x, y, bar_x + bar_w, y + BAR_H], outline=0)
+        fill_w = int(bar_w * min(percent, 100) / 100)
+        if fill_w > 0:
+            drw.rectangle([bar_x, y, bar_x + fill_w, y + BAR_H], fill=0)
     out = img.rotate(90, expand=True) if ORIENT == "landscape_right" else (
           img.rotate(270, expand=True) if ORIENT == "landscape_left" else img)
     if out.size != (PW, PH):
@@ -91,29 +113,38 @@ def show_message(lines_with_fonts):
     epd.display(epd.getbuffer(out))
 
 # Show syncing message
-show_message([
-    ("Syncing to server...", F),
-    ("Please wait.", F_SM),
-])
+show_message([("Syncing to server...", F), ("Starting...", F_SM)], percent=0)
+write_status("syncing", percent=0)
 
-# Run sync
-result = sync_manager.run_sync()
+try:
+    from notifications import send_notification
+except ImportError:
+    def send_notification(*a, **kw): pass
 
-# Show result
+send_notification("sync_start")
+
+last_display_update = [0]
+
+def on_progress(pct, elapsed):
+    write_status("syncing", percent=pct)
+    now = time.time()
+    if now - last_display_update[0] >= 2 or pct >= 100:
+        last_display_update[0] = now
+        show_message([("Syncing to server...", F), (f"{pct}%", F_SM)], percent=pct)
+
+result = sync_manager.run_sync_with_progress(on_progress=on_progress)
+
 if result["success"]:
-    show_message([
-        ("Sync complete", F),
-        (result["message"], F_SM),
-    ])
+    write_status("sync_complete", message=result["message"])
+    show_message([("Sync complete", F), (result["message"], F_SM)], percent=100)
+    send_notification("sync_complete", {"message": result["message"]})
 else:
     msg = result["message"]
-    # Truncate long error messages for the small display
     if len(msg) > 40:
         msg = msg[:37] + "..."
-    show_message([
-        ("Sync failed", F),
-        (msg, F_SM),
-    ])
+    write_status("sync_error", message=result["message"])
+    show_message([("Sync failed", F), (msg, F_SM)])
+    send_notification("sync_error", {"error": result["message"]})
 
 # Release display immediately so shutdown can use it
 try:
@@ -122,7 +153,6 @@ except Exception:
     pass
 epdconfig.module_exit()
 
-# Wait 5 seconds (display retains the image)
 time.sleep(5)
 
 # Chain to boot screen
