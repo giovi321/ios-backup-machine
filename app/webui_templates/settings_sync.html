@@ -148,6 +148,9 @@
         {% endif %}
         <div class="btn-group">
             <button type="submit" class="btn btn-primary" {% if passphrase_mode == 'udid' and not udid %}onclick="return showToast('Connect iPhone first to encrypt credentials.')"{% endif %}>Encrypt & Save</button>
+            {% if has_enc_file %}
+            <button type="button" class="btn btn-secondary" id="btn_decrypt" {% if passphrase_mode == 'udid' and not udid %}onclick="return showToast('Connect iPhone first to decrypt credentials.')"{% else %}onclick="decryptCredentials()"{% endif %}>Decrypt</button>
+            {% endif %}
         </div>
     </form>
 </div>
@@ -189,6 +192,32 @@ function toggleAuthFields() {
     var method = document.getElementById('auth_method').value;
     document.getElementById('key_field').style.display = method === 'key' ? '' : 'none';
     document.getElementById('password_field').style.display = method === 'password' ? '' : 'none';
+}
+function decryptCredentials() {
+    var btn = document.getElementById('btn_decrypt');
+    btn.disabled = true;
+    btn.textContent = 'Decrypting...';
+    fetch('{{ url_for("api_sync_decrypt") }}', {method: 'POST'})
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (d.error) { showToast(d.error); return; }
+            document.getElementById('sync_host').value = d.host || '';
+            document.getElementById('sync_port').value = d.port || 22;
+            document.getElementById('sync_username').value = d.username || '';
+            document.getElementById('sync_remote_path').value = d.remote_path || '';
+            var sel = document.getElementById('auth_method');
+            sel.value = d.auth_method || 'key';
+            toggleAuthFields();
+            if (d.has_key) {
+                document.getElementById('sync_ssh_key').placeholder = 'Key is configured. Leave empty to keep it.';
+            }
+            if (d.has_password) {
+                document.getElementById('sync_password').placeholder = 'Password is configured. Leave empty to keep it.';
+            }
+            showToast('Credentials decrypted.', 2000);
+        })
+        .catch(function() { showToast('Failed to decrypt credentials.'); })
+        .finally(function() { btn.disabled = false; btn.textContent = 'Decrypt'; });
 }
 </script>
 {% endblock %}

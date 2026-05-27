@@ -4,7 +4,7 @@
 <h1>Notifications</h1>
 <p class="subtitle">Configure webhook and MQTT notifications for backup events</p>
 
-{% set all_events = ["backup_start", "backup_complete", "backup_error", "device_connected", "device_disconnected"] %}
+{% set all_events = ["backup_start", "backup_complete", "backup_error", "sync_complete", "sync_error", "device_connected", "device_disconnected"] %}
 
 <form method="POST">
     <div class="card">
@@ -78,8 +78,19 @@
 
 <div class="card" style="margin-top: 8px;">
     <h2>Test</h2>
-    <form method="POST" action="{{ url_for('test_notification') }}">
-        <button type="submit" class="btn btn-secondary">Send Test Notification</button>
-    </form>
+    <div class="btn-group">
+        <form method="POST" action="{{ url_for('test_notification') }}" style="display:inline;">
+            <input type="hidden" name="channel" value="webhook">
+            <button type="submit" class="btn btn-secondary btn-sm">Test Webhook</button>
+        </form>
+        <form method="POST" action="{{ url_for('test_notification') }}" style="display:inline;">
+            <input type="hidden" name="channel" value="mqtt">
+            <button type="submit" class="btn btn-secondary btn-sm">Test MQTT</button>
+        </form>
+        <form method="POST" action="{{ url_for('test_notification') }}" style="display:inline;">
+            <input type="hidden" name="channel" value="all">
+            <button type="submit" class="btn btn-secondary btn-sm">Test All</button>
+        </form>
+    </div>
 </div>
 {% endblock %}

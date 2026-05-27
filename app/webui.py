@@ -26,7 +26,7 @@ import wg_manager
 import sync_crypto
 import sync_manager
 
-VERSION = "2.6"
+VERSION = "2.7"
 
 CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/iosbackupmachine/config.yaml")
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webui_static")
@@ -597,10 +597,43 @@ def settings_notifications():
 @app.route("/settings/notifications/test", methods=["POST"])
 @login_required
 def test_notification():
-    """Send a test notification."""
-    from notifications import send_notification
-    send_notification("test", {"message": "Test notification from iOS Backup Machine"})
-    flash("Test notification sent.", "success")
+    """Send a test notification via a specific channel or both."""
+    from notifications import send_notification, _send_webhook, _send_mqtt
+    channel = request.form.get("channel", "all")
+    cfg = load_config()
+    ncfg = cfg.get("notifications", {})
+    payload = {
+        "event": "test",
+        "timestamp": __import__("time").strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "source": "iosbackupmachine",
+        "message": "Test notification from iOS Backup Machine",
+    }
+    if channel == "webhook":
+        wh = ncfg.get("webhook", {})
+        if wh.get("url"):
+            result = _send_webhook(wh["url"], payload)
+            if result and 200 <= result < 300:
+                flash("Webhook test sent successfully.", "success")
+            else:
+                flash(f"Webhook test failed (status: {result}).", "error")
+        else:
+            flash("No webhook URL configured.", "error")
+    elif channel == "mqtt":
+        mq = ncfg.get("mqtt", {})
+        if mq.get("broker"):
+            topic = f"{mq.get('topic_prefix', 'iosbackupmachine')}/test"
+            ok = _send_mqtt(mq["broker"], mq.get("port", 1883),
+                            mq.get("username", ""), mq.get("password", ""),
+                            topic, payload)
+            if ok:
+                flash("MQTT test sent successfully.", "success")
+            else:
+                flash("MQTT test failed. Check broker settings.", "error")
+        else:
+            flash("No MQTT broker configured.", "error")
+    else:
+        send_notification("test", {"message": "Test notification from iOS Backup Machine"})
+        flash("Test notification sent to all enabled channels.", "success")
     return redirect(url_for("settings_notifications"))
 
 # --- WireGuard ---
@@ -756,6 +789,28 @@ def settings_sync():
     return render_template("settings_sync.html",
                            cfg=cfg, udid=udid, has_enc_file=has_enc_file,
                            passphrase_mode=mode, saved_cred=saved_cred)
+
+@app.route("/api/sync/decrypt", methods=["POST"])
+@login_required
+def api_sync_decrypt():
+    """Return full decrypted sync credentials as JSON (excluding sensitive fields in the key)."""
+    cfg = load_config()
+    mode = cfg.get("credential_encryption", {}).get("passphrase_mode", "udid")
+    pw = wg_crypto.get_iphone_serial() if mode == "udid" else None
+    if not pw:
+        return jsonify({"error": "iPhone not connected"}), 400
+    dec = sync_crypto.decrypt_sync_config(passphrase=pw)
+    if not dec:
+        return jsonify({"error": "Cannot decrypt credentials"}), 400
+    return jsonify({
+        "host": dec.get("host", ""),
+        "port": dec.get("port", 22),
+        "username": dec.get("username", ""),
+        "auth_method": dec.get("auth_method", "key"),
+        "remote_path": dec.get("remote_path", ""),
+        "has_key": bool(dec.get("ssh_key", "").strip()),
+        "has_password": bool(dec.get("password", "")),
+    })
 
 # --- Web UI Interface Binding ---
 @app.route("/settings/webui", methods=["GET", "POST"])
