@@ -453,15 +453,18 @@ WireGuard and remote sync credentials are encrypted using AES-256-GCM with a key
 
 Sync backups to a remote server via **rsync over SSH**. Supports SSH key and password authentication.
 
-- **Manual sync**: double-tap the PiSugar button
+- **Manual sync**: double-tap or long-press the PiSugar button
 - **Auto-sync**: optionally trigger after each successful backup
 - **Network restrictions**: limit sync to WiFi only, a specific SSID, or iPhone USB tethering
+- **Progress**: real-time progress bar on e-paper display and web dashboard
 - Configure via web UI under **Remote Sync**
+
+**Remote server requirement**: `rsync` must be installed on the receiving server (`sudo apt install rsync`).
 
 ## Notifications
 
-Backup events can be sent via **webhook** (JSON POST) and/or **MQTT**.  
-Supported events: `backup_start`, `backup_complete`, `backup_error`, `device_connected`, `device_disconnected`, `device_rejected`.
+Backup and sync events can be sent via **webhook** (JSON POST) and/or **MQTT**.  
+Supported events: `backup_start`, `backup_complete`, `backup_error`, `sync_start`, `sync_complete`, `sync_error`, `device_connected`, `device_disconnected`, `device_rejected`.
 
 Configure via the web UI or directly in `config.yaml`.
 
