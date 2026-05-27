@@ -26,7 +26,7 @@ import wg_manager
 import sync_crypto
 import sync_manager
 
-VERSION = "2.3"
+VERSION = "2.4"
 
 CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/iosbackupmachine/config.yaml")
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webui_static")
@@ -684,7 +684,7 @@ def settings_sync():
             port = request.form.get("port", "22").strip()
             username = request.form.get("username", "").strip()
             auth_method = request.form.get("auth_method", "key")
-            ssh_key = request.form.get("ssh_key", "")
+            ssh_key = request.form.get("ssh_key", "").replace("\r\n", "\n").replace("\r", "\n")
             password = request.form.get("password", "")
             remote_path = request.form.get("remote_path", "").strip()
             if not pw:

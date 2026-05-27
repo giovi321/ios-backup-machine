@@ -103,8 +103,9 @@ def run_sync(passphrase=None, backup_dir=None):
             # Write temp key file
             fd, key_file = tempfile.mkstemp(prefix="sync_key_", suffix=".pem")
             with os.fdopen(fd, "w") as f:
-                f.write(ssh_key)
-                if not ssh_key.endswith("\n"):
+                clean_key = ssh_key.replace("\r\n", "\n").replace("\r", "\n")
+                f.write(clean_key)
+                if not clean_key.endswith("\n"):
                     f.write("\n")
             os.chmod(key_file, 0o600)
 
@@ -182,8 +183,9 @@ def test_connection(passphrase=None):
         if auth_method == "key" and ssh_key:
             fd, key_file = tempfile.mkstemp(prefix="sync_test_", suffix=".pem")
             with os.fdopen(fd, "w") as f:
-                f.write(ssh_key)
-                if not ssh_key.endswith("\n"):
+                clean_key = ssh_key.replace("\r\n", "\n").replace("\r", "\n")
+                f.write(clean_key)
+                if not clean_key.endswith("\n"):
                     f.write("\n")
             os.chmod(key_file, 0o600)
             ssh_base += ["-i", key_file]
