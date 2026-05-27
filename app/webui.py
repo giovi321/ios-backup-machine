@@ -11,7 +11,7 @@ Provides a web interface to configure:
 - Web UI interface binding
 All configuration is saved directly to config.yaml.
 """
-import os, sys, time, subprocess, json, secrets, yaml, copy, hashlib, glob, plistlib, logging, threading
+import os, sys, time, subprocess, json, secrets, yaml, copy, hashlib, glob, plistlib, logging
 from functools import wraps
 from logging.handlers import RotatingFileHandler
 
@@ -26,7 +26,7 @@ import wg_manager
 import sync_crypto
 import sync_manager
 
-VERSION = "3.0"
+VERSION = "3.1"
 
 CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/iosbackupmachine/config.yaml")
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webui_static")
@@ -384,16 +384,6 @@ def _read_backup_status():
         pass
     return None
 
-def _write_sync_status(state, **extra):
-    status_file = os.path.join(LOG_DIR, "backup_status.json")
-    try:
-        os.makedirs(LOG_DIR, exist_ok=True)
-        from datetime import datetime
-        data = {"state": state, "timestamp": datetime.now().isoformat(), **extra}
-        with open(status_file, "w") as f:
-            json.dump(data, f)
-    except Exception:
-        pass
 
 def _get_storage_info():
     """Get storage info for backup drive and root."""
@@ -775,29 +765,13 @@ def settings_sync():
             result = sync_manager.test_connection(passphrase=pw)
             flash(result["message"], "success" if result["success"] else "error")
         elif action == "run_sync":
-            mode = cfg.get("credential_encryption", {}).get("passphrase_mode", "udid")
-            pw = wg_crypto.get_iphone_serial() if mode == "udid" else request.form.get("master_password", "").strip()
-            if not pw:
-                flash("Connect iPhone first." if mode == "udid" else "Password required.", "error")
-            else:
-                def _bg_sync(passphrase, backup_dir):
-                    from notifications import send_notification
-                    _write_sync_status("syncing", percent=0)
-                    send_notification("sync_start")
-                    def _on_progress(pct, elapsed):
-                        _write_sync_status("syncing", percent=pct)
-                    result = sync_manager.run_sync_with_progress(
-                        passphrase=passphrase, backup_dir=backup_dir, on_progress=_on_progress)
-                    if result["success"]:
-                        _write_sync_status("sync_complete", message=result["message"])
-                        send_notification("sync_complete", {"message": result["message"]})
-                    else:
-                        _write_sync_status("sync_error", message=result["message"])
-                        send_notification("sync_error", {"error": result["message"]})
-                threading.Thread(
-                    target=_bg_sync, args=(pw, cfg.get("backup_dir")), daemon=True
-                ).start()
-                flash("Sync started. Check the dashboard for progress.", "success")
+            sync_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "backup-sync.py")
+            subprocess.Popen(
+                [sys.executable, sync_script],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                env={**os.environ, "IOSBACKUP_CONFIG": CONFIG_PATH},
+            )
+            flash("Sync started. Check the dashboard for progress.", "success")
         return redirect(url_for("settings_sync"))
     mode = cfg.get("credential_encryption", {}).get("passphrase_mode", "udid")
     saved_cred = None

@@ -112,6 +112,13 @@ def show_message(lines_with_fonts, percent=None):
         out = out.resize((PW, PH))
     epd.display(epd.getbuffer(out))
 
+# Open log file
+os.makedirs(LOG_DIR, exist_ok=True)
+ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+logpath = os.path.join(LOG_DIR, f"sync-{ts}.log")
+logf = open(logpath, "a", buffering=1)
+logf.write(f"[{ts}] sync started\n")
+
 # Show syncing message
 show_message([("Syncing to server...", F), ("Starting...", F_SM)], percent=0)
 write_status("syncing", percent=0)
@@ -127,6 +134,7 @@ last_display_update = [0]
 
 def on_progress(pct, elapsed):
     write_status("syncing", percent=pct)
+    logf.write(f"[SYNC] {pct}% ({elapsed:.0f}s)\n")
     now = time.time()
     if now - last_display_update[0] >= 2 or pct >= 100:
         last_display_update[0] = now
@@ -135,16 +143,20 @@ def on_progress(pct, elapsed):
 result = sync_manager.run_sync_with_progress(on_progress=on_progress)
 
 if result["success"]:
+    logf.write(f"[OK] {result['message']}\n")
     write_status("sync_complete", message=result["message"])
     show_message([("Sync complete", F), (result["message"], F_SM)], percent=100)
     send_notification("sync_complete", {"message": result["message"]})
 else:
     msg = result["message"]
+    logf.write(f"[ERROR] {msg}\n")
     if len(msg) > 40:
         msg = msg[:37] + "..."
     write_status("sync_error", message=result["message"])
     show_message([("Sync failed", F), (msg, F_SM)])
     send_notification("sync_error", {"error": result["message"]})
+
+logf.close()
 
 # Release display immediately so shutdown can use it
 try:
