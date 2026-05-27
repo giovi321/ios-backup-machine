@@ -26,7 +26,7 @@ import wg_manager
 import sync_crypto
 import sync_manager
 
-VERSION = "2.5"
+VERSION = "2.6"
 
 CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/iosbackupmachine/config.yaml")
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webui_static")
@@ -691,20 +691,34 @@ def settings_sync():
                 flash("Connect iPhone first." if mode == "udid" else "Password required.", "error")
             elif not host or not username or not remote_path:
                 flash("Host, username, and remote path are required.", "error")
-            elif auth_method == "key" and not ssh_key.strip():
-                flash("SSH private key is required for key authentication.", "error")
-            elif auth_method == "password" and not password:
-                flash("Password is required for password authentication.", "error")
             else:
                 try:
                     port_int = int(port)
                 except ValueError:
                     port_int = 22
+                existing_key = ""
+                existing_pw = ""
+                if not ssh_key.strip() or not password:
+                    try:
+                        prev = sync_crypto.decrypt_sync_config(passphrase=pw)
+                        if prev:
+                            existing_key = prev.get("ssh_key", "")
+                            existing_pw = prev.get("password", "")
+                    except Exception:
+                        pass
+                final_key = ssh_key if ssh_key.strip() else existing_key
+                final_pw = password if password else existing_pw
+                if auth_method == "key" and not final_key.strip():
+                    flash("SSH private key is required for key authentication.", "error")
+                    return redirect(url_for("settings_sync"))
+                elif auth_method == "password" and not final_pw:
+                    flash("Password is required for password authentication.", "error")
+                    return redirect(url_for("settings_sync"))
                 cred = {
                     "host": host, "port": port_int, "username": username,
                     "auth_method": auth_method,
-                    "ssh_key": ssh_key if auth_method == "key" else "",
-                    "password": password if auth_method == "password" else "",
+                    "ssh_key": final_key if auth_method == "key" else "",
+                    "password": final_pw if auth_method == "password" else "",
                     "remote_path": remote_path,
                 }
                 if sync_crypto.encrypt_sync_config(cred, passphrase=pw):
@@ -723,8 +737,25 @@ def settings_sync():
             flash(result["message"], "success" if result["success"] else "error")
         return redirect(url_for("settings_sync"))
     mode = cfg.get("credential_encryption", {}).get("passphrase_mode", "udid")
+    saved_cred = None
+    if has_enc_file:
+        try:
+            pw = wg_crypto.get_iphone_serial() if mode == "udid" else None
+            if pw:
+                dec = sync_crypto.decrypt_sync_config(passphrase=pw)
+                if dec:
+                    saved_cred = {
+                        "host": dec.get("host", ""),
+                        "port": dec.get("port", 22),
+                        "username": dec.get("username", ""),
+                        "auth_method": dec.get("auth_method", "key"),
+                        "remote_path": dec.get("remote_path", ""),
+                    }
+        except Exception:
+            pass
     return render_template("settings_sync.html",
-                           cfg=cfg, udid=udid, has_enc_file=has_enc_file, passphrase_mode=mode)
+                           cfg=cfg, udid=udid, has_enc_file=has_enc_file,
+                           passphrase_mode=mode, saved_cred=saved_cred)
 
 # --- Web UI Interface Binding ---
 @app.route("/settings/webui", methods=["GET", "POST"])

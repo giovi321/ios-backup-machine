@@ -90,46 +90,55 @@
 
 <div class="card">
     <h2>SSH Credentials</h2>
+    {% if has_enc_file and not saved_cred %}
+    <div class="info-grid" style="margin-bottom:12px;">
+        <div class="info-item" style="grid-column:1/-1;">
+            <div class="label">Configured</div>
+            <div class="value"><span class="badge badge-on"><span class="badge-dot"></span>Yes (connect iPhone to view or edit)</span></div>
+        </div>
+    </div>
+    {% endif %}
     <p style="font-size:13px; color:var(--text-muted); margin-bottom:12px;">
         {% if passphrase_mode == 'udid' %}
-        Credentials will be encrypted using the connected iPhone's serial number.
+        Credentials are encrypted using the connected iPhone's serial number.
         {% else %}
-        Credentials will be encrypted using your custom password.
+        Credentials are encrypted using your custom password.
         {% endif %}
+        {% if saved_cred %}To keep the current SSH key, leave the key field empty.{% endif %}
     </p>
     <form method="POST">
         <input type="hidden" name="action" value="upload_credentials">
         <div class="form-group">
             <label for="sync_host">Host</label>
-            <input type="text" id="sync_host" name="host" placeholder="server.example.com">
+            <input type="text" id="sync_host" name="host" placeholder="server.example.com" value="{{ saved_cred.host if saved_cred else '' }}">
         </div>
         <div class="form-group">
             <label for="sync_port">Port</label>
-            <input type="number" id="sync_port" name="port" value="22" min="1" max="65535">
+            <input type="number" id="sync_port" name="port" value="{{ saved_cred.port if saved_cred else 22 }}" min="1" max="65535">
         </div>
         <div class="form-group">
             <label for="sync_username">Username</label>
-            <input type="text" id="sync_username" name="username" placeholder="backup">
+            <input type="text" id="sync_username" name="username" placeholder="backup" value="{{ saved_cred.username if saved_cred else '' }}">
         </div>
         <div class="form-group">
             <label for="auth_method">Authentication Method</label>
             <select id="auth_method" name="auth_method" onchange="toggleAuthFields()">
-                <option value="key">SSH Private Key</option>
-                <option value="password">Password</option>
+                <option value="key" {% if saved_cred and saved_cred.auth_method == 'key' %}selected{% endif %}>SSH Private Key</option>
+                <option value="password" {% if saved_cred and saved_cred.auth_method == 'password' %}selected{% endif %}>Password</option>
             </select>
         </div>
-        <div class="form-group" id="key_field">
+        <div class="form-group" id="key_field" style="display:{% if saved_cred and saved_cred.auth_method == 'password' %}none{% else %}block{% endif %};">
             <label for="sync_ssh_key">SSH Private Key</label>
-            <textarea id="sync_ssh_key" name="ssh_key" rows="8" placeholder="Paste your SSH private key here"></textarea>
+            <textarea id="sync_ssh_key" name="ssh_key" rows="8" placeholder="{% if saved_cred %}Leave empty to keep current key{% else %}Paste your SSH private key here{% endif %}"></textarea>
         </div>
-        <div class="form-group" id="password_field" style="display:none;">
+        <div class="form-group" id="password_field" style="display:{% if saved_cred and saved_cred.auth_method == 'password' %}block{% else %}none{% endif %};">
             <label for="sync_password">Password</label>
-            <input type="password" id="sync_password" name="password" placeholder="SSH password">
+            <input type="password" id="sync_password" name="password" placeholder="{% if saved_cred %}Leave empty to keep current password{% else %}SSH password{% endif %}">
             <div class="hint">Requires sshpass installed on the device.</div>
         </div>
         <div class="form-group">
             <label for="sync_remote_path">Remote Path</label>
-            <input type="text" id="sync_remote_path" name="remote_path" placeholder="/backups/ios">
+            <input type="text" id="sync_remote_path" name="remote_path" placeholder="/backups/ios" value="{{ saved_cred.remote_path if saved_cred else '' }}">
         </div>
         {% if passphrase_mode == 'custom' %}
         <div class="form-group">
