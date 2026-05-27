@@ -180,6 +180,15 @@
         .flash-success { background: var(--success-bg); color: var(--success); }
         .flash-error { background: var(--error-bg); color: var(--error); }
         .flash-warning { background: var(--warning-bg); color: var(--warning); }
+        /* Toast */
+        .toast {
+            position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+            background: var(--warning-bg); color: var(--warning); border: 1px solid var(--warning);
+            padding: 10px 20px; border-radius: var(--radius); font-size: 14px;
+            z-index: 9999; opacity: 0; transition: opacity .2s;
+            pointer-events: none; max-width: 90%;
+        }
+        .toast.show { opacity: 1; }
         /* Status badges */
         .badge {
             display: inline-flex;
@@ -345,5 +354,16 @@
             <a href="https://github.com/giovi321/apple-juicer" target="_blank" style="color:#9aa0a6; text-decoration:none;">Apple Juicer</a>
         </div>
     </div>
+    <div id="toast" class="toast"></div>
+    <script>
+    function showToast(msg, ms) {
+        var t = document.getElementById('toast');
+        t.textContent = msg;
+        t.classList.add('show');
+        clearTimeout(t._tid);
+        t._tid = setTimeout(function() { t.classList.remove('show'); }, ms || 3000);
+        return false;
+    }
+    </script>
 </body>
 </html>

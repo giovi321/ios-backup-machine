@@ -135,11 +135,7 @@ AllowedIPs = 0.0.0.0/0"></textarea>
         </div>
         {% endif %}
         <div class="btn-group">
-            {% if passphrase_mode == 'udid' %}
-            <button type="submit" class="btn btn-primary" {% if not udid %}disabled title="Connect iPhone first"{% endif %}>Encrypt & Save</button>
-            {% else %}
-            <button type="submit" class="btn btn-primary">Encrypt & Save</button>
-            {% endif %}
+            <button type="submit" class="btn btn-primary" {% if passphrase_mode == 'udid' and not udid %}onclick="return showToast('Connect iPhone first to encrypt credentials.')"{% endif %}>Encrypt & Save</button>
         </div>
     </form>
 </div>
@@ -155,14 +151,7 @@ AllowedIPs = 0.0.0.0/0"></textarea>
         </div>
         {% endif %}
         <div class="btn-group">
-            {% if passphrase_mode == 'udid' %}
-            <button type="submit" class="btn btn-success btn-sm" {% if not has_enc_file or not udid %}disabled{% endif %}>Start WireGuard</button>
-            {% if not udid and has_enc_file %}
-            <span style="font-size:12px;color:var(--text-muted);margin-left:8px;">Connect iPhone to start</span>
-            {% endif %}
-            {% else %}
-            <button type="submit" class="btn btn-success btn-sm" {% if not has_enc_file %}disabled{% endif %}>Start WireGuard</button>
-            {% endif %}
+            <button type="submit" class="btn btn-success btn-sm" {% if not has_enc_file %}disabled{% elif passphrase_mode == 'udid' and not udid %}onclick="return showToast('Connect iPhone first to decrypt credentials.')"{% endif %}>Start WireGuard</button>
         </div>
     </form>
     <form method="POST" style="margin-top:8px;">

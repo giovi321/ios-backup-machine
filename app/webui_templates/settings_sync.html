@@ -138,11 +138,7 @@
         </div>
         {% endif %}
         <div class="btn-group">
-            {% if passphrase_mode == 'udid' %}
-            <button type="submit" class="btn btn-primary" {% if not udid %}disabled title="Connect iPhone first"{% endif %}>Encrypt & Save</button>
-            {% else %}
-            <button type="submit" class="btn btn-primary">Encrypt & Save</button>
-            {% endif %}
+            <button type="submit" class="btn btn-primary" {% if passphrase_mode == 'udid' and not udid %}onclick="return showToast('Connect iPhone first to encrypt credentials.')"{% endif %}>Encrypt & Save</button>
         </div>
     </form>
 </div>
@@ -169,16 +165,13 @@
     <div class="btn-group">
         <form method="POST" style="display:inline;">
             <input type="hidden" name="action" value="test_connection">
-            <button type="submit" class="btn btn-secondary btn-sm" {% if not has_enc_file or not udid %}disabled{% endif %}>Test Connection</button>
+            <button type="submit" class="btn btn-secondary btn-sm" {% if not has_enc_file %}disabled{% elif not udid %}onclick="return showToast('Connect iPhone first to decrypt credentials.')"{% endif %}>Test Connection</button>
         </form>
         <form method="POST" style="display:inline;">
             <input type="hidden" name="action" value="run_sync">
-            <button type="submit" class="btn btn-success btn-sm" {% if not has_enc_file or not cfg.sync.enabled or not udid %}disabled{% endif %}>Sync Now</button>
+            <button type="submit" class="btn btn-success btn-sm" {% if not has_enc_file or not cfg.sync.enabled %}disabled{% elif not udid %}onclick="return showToast('Connect iPhone first to decrypt credentials.')"{% endif %}>Sync Now</button>
         </form>
     </div>
-    {% if not udid and has_enc_file %}
-    <p class="hint" style="margin-top:8px;">Connect iPhone to decrypt credentials.</p>
-    {% endif %}
     {% endif %}
 </div>
 
