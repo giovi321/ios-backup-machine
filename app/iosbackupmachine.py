@@ -792,7 +792,7 @@ def main():
     # Try NTP sync in background
     _try_ntp_sync()
 
-    # Auto-connect WireGuard if enabled (iPhone is connected at this point)
+    # Auto-connect WireGuard if enabled
     try:
         wg_cfg = CFG.get("wireguard", {})
         if wg_cfg.get("enabled") and wg_cfg.get("auto_connect"):
@@ -801,6 +801,11 @@ def main():
             if _wg.is_interface_up(iface):
                 if logf: logf.write(f"[WG] {iface} already up, skipping\n")
             else:
+                from netutil import have_connectivity
+                for _attempt in range(15):
+                    if have_connectivity(timeout=2):
+                        break
+                    time.sleep(1)
                 ok, err = _wg.start_wireguard(iface)
                 if ok:
                     if logf: logf.write(f"[WG] Auto-connected {iface}\n")
