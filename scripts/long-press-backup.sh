@@ -13,8 +13,8 @@ if [ -f /tmp/iosbackupmachine-install.lock ]; then
     exit 0
 fi
 
-# Check 2: Is backup running?
-if pgrep -f "python.*iosbackupmachine\.py" >/dev/null 2>&1; then
+# Check 2: Is a backup actively running?
+if pgrep -f "idevicebackup2" >/dev/null 2>&1; then
     log "Backup running, ignoring long press."
     exit 0
 fi

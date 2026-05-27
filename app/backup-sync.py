@@ -57,7 +57,7 @@ def text_wh(d, t, f):
 def backup_running():
     try:
         out = subprocess.run(
-            ["pgrep", "-f", "python.*iosbackupmachine\\.py"],
+            ["pgrep", "-f", "idevicebackup2"],
             capture_output=True, text=True)
         return out.returncode == 0
     except Exception:
