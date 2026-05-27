@@ -93,7 +93,7 @@ def _prepare_sync(passphrase=None, backup_dir=None, progress=False):
     ssh_opts = f"ssh -p {port} -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15"
     key_file = None
 
-    rsync_flags = ["-az", "--delete"]
+    rsync_flags = ["-az", "--delete", "--rsync-path=/usr/bin/rsync"]
     if progress:
         rsync_flags.append("--info=progress2")
 
@@ -106,9 +106,9 @@ def _prepare_sync(passphrase=None, backup_dir=None, progress=False):
                 f.write("\n")
         os.chmod(key_file, 0o600)
         ssh_opts += f" -i {key_file}"
-        cmd = ["rsync"] + rsync_flags + ["-e", ssh_opts, backup_dir, f"{username}@{host}:{remote_path}/"]
+        cmd = ["/usr/bin/rsync"] + rsync_flags + ["-e", ssh_opts, backup_dir, f"{username}@{host}:{remote_path}/"]
     elif auth_method == "password" and password:
-        cmd = ["sshpass", "-p", password, "rsync"] + rsync_flags + ["-e", ssh_opts, backup_dir, f"{username}@{host}:{remote_path}/"]
+        cmd = ["sshpass", "-p", password, "/usr/bin/rsync"] + rsync_flags + ["-e", ssh_opts, backup_dir, f"{username}@{host}:{remote_path}/"]
     else:
         return None, None, {"success": False, "message": "No SSH key or password configured.", "duration": 0}
 
@@ -148,7 +148,7 @@ def run_sync(passphrase=None, backup_dir=None):
     except subprocess.TimeoutExpired:
         return {"success": False, "message": "Sync timed out (1h limit).", "duration": time.time() - start}
     except FileNotFoundError as e:
-        tool = "sshpass" if "sshpass" in str(e) else "rsync"
+        tool = "sshpass" if "sshpass" in str(e) else "/usr/bin/rsync"
         return {"success": False, "message": f"{tool} not found. Install it.", "duration": 0}
     except Exception as e:
         return {"success": False, "message": f"Sync error: {e}", "duration": time.time() - start}
@@ -198,7 +198,7 @@ def run_sync_with_progress(passphrase=None, backup_dir=None, on_progress=None):
         proc.kill()
         return {"success": False, "message": "Sync timed out (1h limit).", "duration": time.time() - start}
     except FileNotFoundError as e:
-        tool = "sshpass" if "sshpass" in str(e) else "rsync"
+        tool = "sshpass" if "sshpass" in str(e) else "/usr/bin/rsync"
         return {"success": False, "message": f"{tool} not found. Install it.", "duration": 0}
     except Exception as e:
         return {"success": False, "message": f"Sync error: {e}", "duration": time.time() - start}
