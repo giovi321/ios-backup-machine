@@ -96,6 +96,7 @@ def _prepare_sync(passphrase=None, backup_dir=None, progress=False):
     rsync_flags = ["-az", "--delete", "--rsync-path=/usr/bin/rsync"]
     if progress:
         rsync_flags.append("--info=progress2")
+        rsync_flags.append("--no-inc-recursive")
 
     if auth_method == "key" and ssh_key:
         fd, key_file = tempfile.mkstemp(prefix="sync_key_", suffix=".pem")
@@ -123,7 +124,7 @@ def _cleanup_key(key_file):
             pass
 
 
-_PROGRESS_RE = re.compile(r"(\d+)%")
+_PROGRESS_RE = re.compile(r"([\d,]+)\s+(\d+)%\s+([\d.]+[kKMGT]?B/s)")
 
 
 def run_sync(passphrase=None, backup_dir=None):
@@ -172,23 +173,44 @@ def run_sync_with_progress(passphrase=None, backup_dir=None, on_progress=None):
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
         last_pct = -1
+        last_bytes = 0
+        last_total = 0
+        last_speed = ""
         while True:
             chunk = proc.stdout.read(256)
             if not chunk:
                 break
             m = _PROGRESS_RE.search(chunk)
             if m and on_progress:
-                pct = int(m.group(1))
+                bytes_transferred = int(m.group(1).replace(",", ""))
+                pct = int(m.group(2))
+                speed = m.group(3)
+                total = int(bytes_transferred * 100 / pct) if pct > 0 else 0
                 if pct != last_pct:
                     last_pct = pct
-                    on_progress(pct, time.time() - start)
+                    last_bytes = bytes_transferred
+                    last_total = total
+                    last_speed = speed
+                    on_progress({
+                        "pct": pct,
+                        "elapsed": time.time() - start,
+                        "bytes": bytes_transferred,
+                        "total": total,
+                        "speed": speed,
+                    })
 
         proc.wait(timeout=3600)
         duration = time.time() - start
 
         if proc.returncode == 0:
             if on_progress:
-                on_progress(100, duration)
+                on_progress({
+                    "pct": 100,
+                    "elapsed": duration,
+                    "bytes": last_total or last_bytes,
+                    "total": last_total or last_bytes,
+                    "speed": last_speed,
+                })
             return {"success": True, "message": f"Sync complete ({duration:.0f}s).", "duration": duration}
         else:
             stderr = proc.stderr.read() if proc.stderr else ""

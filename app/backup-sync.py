@@ -54,6 +54,13 @@ def text_wh(d, t, f):
     except AttributeError:
         return d.textsize(t, font=f)
 
+def fmt_bytes(n):
+    n = float(n)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if n < 1024 or unit == "TB":
+            return f"{int(n)} B" if unit == "B" else f"{n:.1f} {unit}"
+        n /= 1024
+
 def backup_running():
     try:
         out = subprocess.run(
@@ -120,7 +127,7 @@ logf = open(logpath, "a", buffering=1)
 logf.write(f"[{ts}] sync started\n")
 
 # Show syncing message
-show_message([("Syncing to server...", F), ("Starting...", F_SM)], percent=0)
+show_message([("Syncing to remote server...", F), ("Preparing...", F_SM)], percent=0)
 write_status("syncing", percent=0)
 
 try:
@@ -132,13 +139,19 @@ send_notification("sync_start")
 
 last_display_update = [0]
 
-def on_progress(pct, elapsed):
+def on_progress(info):
+    pct = info["pct"]
+    elapsed = info["elapsed"]
     write_status("syncing", percent=pct)
     logf.write(f"[SYNC] {pct}% ({elapsed:.0f}s)\n")
     now = time.time()
     if now - last_display_update[0] >= 2 or pct >= 100:
         last_display_update[0] = now
-        show_message([("Syncing to server...", F), (f"{pct}%", F_SM)], percent=pct)
+        if info.get("total"):
+            sub = f"{fmt_bytes(info['bytes'])} / {fmt_bytes(info['total'])} | {info['speed']}"
+        else:
+            sub = f"{fmt_bytes(info['bytes'])} | {info['speed']}"
+        show_message([("Syncing to remote server...", F), (sub, F_SM)], percent=pct)
 
 result = sync_manager.run_sync_with_progress(on_progress=on_progress)
 

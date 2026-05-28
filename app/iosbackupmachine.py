@@ -334,6 +334,13 @@ class Animator:
 
 def ensure_dir(p): os.makedirs(p, exist_ok=True)
 
+def fmt_bytes(n):
+    n = float(n)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if n < 1024 or unit == "TB":
+            return f"{int(n)} B" if unit == "B" else f"{n:.1f} {unit}"
+        n /= 1024
+
 def write_status(state, **extra):
     """Write backup status JSON for the web UI dashboard."""
     try:
@@ -690,9 +697,15 @@ def run_backup(panel, logf, ui, _retry=0):
             write_status("syncing", percent=0)
             send_notification("sync_start")
             ui.start()
-            ui.set(subtitle="Syncing to server...", percent=0, animate=True, show_header=True)
-            def _sync_progress(pct, elapsed):
-                ui.set(subtitle=f"Syncing... {pct}%", percent=pct, animate=True, show_header=True)
+            ui.set(subtitle="Syncing to remote server...", percent=0, animate=True, show_header=True)
+            def _sync_progress(info):
+                pct = info["pct"]
+                elapsed = info["elapsed"]
+                if info.get("total"):
+                    sub = f"{fmt_bytes(info['bytes'])} / {fmt_bytes(info['total'])} | {info['speed']}"
+                else:
+                    sub = f"{fmt_bytes(info['bytes'])} | {info['speed']}"
+                ui.set(subtitle=sub, percent=pct, animate=True, show_header=True)
                 write_status("syncing", percent=pct)
                 if logf: logf.write(f"[SYNC] {pct}% ({elapsed:.0f}s)\n")
             try:
