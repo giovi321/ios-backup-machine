@@ -69,7 +69,7 @@ All backups stay local on the microSD card and can be restored anytime using too
 
 ### Interactive functions
 - **Single-tap** PiSugar button: shows date, time, IP address, last backup time, disk free %, and SoC temperature for 30 seconds, then returns to boot screen.
-- **Double-tap** PiSugar button: triggers remote sync to configured server (rsync over SSH). Shows sync progress on e-ink display.
+- **Double-tap** or **long-press** PiSugar button: triggers remote sync to configured server (rsync over SSH). The e-ink display shows transferred / total size, current speed, and a progress bar.
 - **Boot screen**: power icon + "iOS Backup Machine" title + owner info.
 - **Power-off screen**: owner info only (persists on e-paper after shutdown).
 
@@ -453,10 +453,10 @@ WireGuard and remote sync credentials are encrypted using AES-256-GCM with a key
 
 Sync backups to a remote server via **rsync over SSH**. Supports SSH key and password authentication.
 
-- **Manual sync**: double-tap or long-press the PiSugar button
+- **Manual sync**: double-tap or long-press the PiSugar button, or click **Sync Now** in the web UI
 - **Auto-sync**: optionally trigger after each successful backup
 - **Network restrictions**: limit sync to WiFi only, a specific SSID, or iPhone USB tethering
-- **Progress**: real-time progress bar on e-paper display and web dashboard
+- **Progress**: the e-paper display shows transferred / total size and current speed alongside a progress bar; the web dashboard mirrors the percentage
 - Configure via web UI under **Remote Sync**
 
 **Remote server requirement**: `rsync` must be installed on the receiving server (`sudo apt install rsync`).
