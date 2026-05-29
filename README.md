@@ -488,24 +488,36 @@ Restrict which iPhones can trigger a backup:
 
 When the filter is disabled (default), any iPhone triggers a backup.
 
-## Feature checklist
-- [x] Add partial refresh of the display (only when showing the backup progress percentage)
-- [x] NTP time sync (WiFi or USB iPhone hotspot)
-- [x] Power-on icon on every screen
-- [x] IP address display on button press (idle only)
-- [x] Web UI for all settings
-- [x] Notifications via webhook/MQTT
-- [x] WireGuard VPN client
-- [x] Web UI interface binding selection
-- [x] All config in YAML file
-- [x] Encrypted WireGuard settings (iPhone UUID as key)
-- [x] Filter iOS devices connected (UDID allow-list with auto-detect)
-- [x] Web UI password authentication
-- [x] Auto-backup toggle (enable/disable from web UI)
-- [x] Log viewer in web UI
-- [x] Guided first-start setup wizard
-- [x] Auto-generated session secret key
-- [x] Backup encryption management (set, change, auto-enable via web UI)
+## To-do
+
+Things I want to get to. PRs welcome.
+
+### Architecture
+- **Single e-paper owner.** Right now every screen (boot, idle, button-info, backup, sync, unplug, owner) is its own systemd unit or subprocess that opens the EPD on its own. That's why we keep hitting SPI bus conflicts and "screen not updating" bugs. Replace it with one long-running display service that owns the EPD and renders frames from a status file or a small socket protocol. Everything else just writes state.
+- **Atomic config writes.** `config.yaml` is rewritten in place. A power loss mid-save can leave it empty. Use tmp + rename like the status file already does.
+- **Config schema + migrations.** Drop the ad-hoc `setdefault` chains in favour of a versioned schema and a single migration step on update.
+
+### Reliability
+- **Health endpoint.** `/api/health` returning service states, last backup, last sync, disk free, battery, network. Easy hook for external monitoring.
+- **Resumable rsync across reboots.** Today a reboot mid-sync starts the next run from zero. Use `--partial-dir` and a stable temp location so the next sync picks up where it stopped.
+- **Power-aware sync.** Don't start (or auto-abort) a sync when the UPS reports under N% battery. Same idea as the existing backup-stops-at-30% guard.
+- **Tests.** At minimum: unit tests for `sync_manager` progress parsing, `sync_crypto` round-trip, and `wg_crypto` UDID derivation. CI on push.
+
+### Features
+- **Multiple sync destinations.** Today there's exactly one remote. Allow a list and let the user pick which one runs on auto-sync vs. manual.
+- **Local backup encryption at rest.** iOS encrypts the backup payload, but Manifest and metadata are still readable on the microSD. Optional LUKS or encfs over the backup directory.
+- **Backup retention policy.** Auto-prune oldest backups by count or age once the disk crosses a threshold.
+- **Per-device names in the UI.** Show the iPhone's marketing name ("John's iPhone 15") instead of the UDID everywhere, decrypted from the device on first contact.
+
+### UX
+- **Dark mode** for the web UI.
+- **Mobile layout.** Most cards work on a phone but the log viewer and settings forms could use a pass.
+- **Live sync log on the dashboard.** Last 5–10 lines under the Remote Sync card instead of having to open `/logs`.
+- **First-start wizard pass.** Sync credentials aren't part of the wizard — add them.
+
+### Docs
+- Photo walkthrough of the hardware assembly (case, HAT alignment, PiSugar wiring).
+- Troubleshooting section for the things I keep answering in issues (SSH key with Windows line endings, missing rsync on the remote, EPD stuck after power loss).
 
 ## License
 MIT License  
