@@ -82,7 +82,9 @@
         <div class="info-item">
             <div class="label">State</div>
             <div class="value" id="sync-state">
-                {% if backup_status and backup_status.state == 'syncing' %}
+                {% if backup_status and backup_status.state == 'syncing' and backup_status.stalled %}
+                    <span class="badge" style="background:var(--warning-bg);color:var(--warning);"><span class="badge-dot" style="background:var(--warning);"></span>Stalled</span>
+                {% elif backup_status and backup_status.state == 'syncing' %}
                     <span class="badge" style="background:var(--info-bg);color:var(--info);"><span class="badge-dot" style="background:var(--info);"></span>Syncing</span>
                 {% elif backup_status and backup_status.state == 'sync_complete' %}
                     <span class="badge" style="background:var(--success-bg);color:var(--success);"><span class="badge-dot" style="background:var(--success);"></span>Complete</span>
@@ -98,9 +100,13 @@
             <div class="value" id="sync-progress">
                 {% if backup_status and backup_status.state == 'syncing' and backup_status.percent is not none %}
                 <div style="background:#e8eaed;border-radius:4px;height:12px;width:100%;margin-top:4px;">
-                    <div style="background:var(--primary);border-radius:4px;height:12px;width:{{ backup_status.percent }}%;transition:width 0.5s;"></div>
+                    <div style="background:{% if backup_status.stalled %}var(--warning){% else %}var(--primary){% endif %};border-radius:4px;height:12px;width:{{ backup_status.percent }}%;transition:width 0.5s;"></div>
                 </div>
+                {% if backup_status.stalled %}
+                <small style="color:var(--warning);"><strong>STALLED</strong> · no progress for {{ backup_status.stalled_seconds or 0 }}s (last {{ backup_status.percent }}%)</small>
+                {% else %}
                 <small style="color:var(--text-muted);">{{ backup_status.percent }}%{% if backup_status.bytes and backup_status.total %} &middot; {{ (backup_status.bytes / 1024 / 1024)|round(1) }} MB / {{ (backup_status.total / 1024 / 1024)|round(1) }} MB{% endif %}{% if backup_status.speed %} &middot; {{ backup_status.speed }}{% endif %}</small>
+                {% endif %}
                 {% elif backup_status and backup_status.state == 'sync_complete' %}
                 <small style="color:var(--text-muted);">{{ backup_status.get('message', 'Done') }}</small>
                 {% elif backup_status and backup_status.state == 'sync_error' %}
@@ -290,24 +296,31 @@
                     }
                 }
 
-                // Sync state
+                // Sync state — show Stalled badge when rsync stops producing output
                 if (sState) {
-                    if (data.state === 'syncing') sState.innerHTML = makeBadge('var(--info-bg)', 'var(--info)', 'Syncing');
+                    if (data.state === 'syncing' && data.stalled) sState.innerHTML = makeBadge('var(--warning-bg)', 'var(--warning)', 'Stalled');
+                    else if (data.state === 'syncing') sState.innerHTML = makeBadge('var(--info-bg)', 'var(--info)', 'Syncing');
                     else if (data.state === 'sync_complete') sState.innerHTML = makeBadge('var(--success-bg)', 'var(--success)', 'Complete');
                     else if (data.state === 'sync_error') sState.innerHTML = makeBadge('var(--error-bg)', 'var(--error)', 'Error');
                     else if (data.state !== 'syncing') sState.innerHTML = '<span class="badge badge-off"><span class="badge-dot"></span>Idle</span>';
                 }
 
-                // Sync progress with size/speed
+                // Sync progress with size/speed (or stall warning)
                 if (sProg) {
                     if (data.state === 'syncing' && data.percent != null) {
-                        var det = data.percent + '%';
-                        if (data.bytes && data.total) {
-                            var mb = function(n) { return (n / 1024 / 1024).toFixed(1) + ' MB'; };
-                            det += ' · ' + mb(data.bytes) + ' / ' + mb(data.total);
+                        if (data.stalled) {
+                            var stallBar = '<div style="background:#e8eaed;border-radius:4px;height:12px;width:100%;margin-top:4px;">' +
+                                '<div style="background:var(--warning);border-radius:4px;height:12px;width:' + data.percent + '%;"></div></div>';
+                            sProg.innerHTML = stallBar + '<small style="color:var(--warning);"><strong>STALLED</strong> · no progress for ' + (data.stalled_seconds || 0) + 's (last ' + data.percent + '%)</small>';
+                        } else {
+                            var det = data.percent + '%';
+                            if (data.bytes && data.total) {
+                                var mb = function(n) { return (n / 1024 / 1024).toFixed(1) + ' MB'; };
+                                det += ' · ' + mb(data.bytes) + ' / ' + mb(data.total);
+                            }
+                            if (data.speed) det += ' · ' + data.speed;
+                            sProg.innerHTML = makeBar(data.percent) + '<small style="color:var(--text-muted);">' + det + '</small>';
                         }
-                        if (data.speed) det += ' · ' + data.speed;
-                        sProg.innerHTML = makeBar(data.percent) + '<small style="color:var(--text-muted);">' + det + '</small>';
                     } else if (data.state === 'sync_complete') {
                         sProg.innerHTML = '<small style="color:var(--text-muted);">' + (data.message || 'Done') + '</small>';
                     } else if (data.state === 'sync_error') {

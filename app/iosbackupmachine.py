@@ -860,8 +860,7 @@ def main():
     btn_thread.start()
 
     _last_reject_udid = None
-    _last_sync_render = None      # tracks (state, percent, bytes) of last sync UI we drew
-    _sync_result_until = 0        # epoch deadline to keep sync_complete/sync_error on screen
+    _last_sync_render = None      # tracks (state, percent, bytes, stalled_seconds) of last sync UI
     try:
         write_status("waiting")
         ui.set(subtitle="Waiting for iPhone...", percent=None, animate=True, show_header=True)
@@ -879,35 +878,36 @@ def main():
                 b = _st.get("bytes", 0) or 0
                 tot = _st.get("total", 0) or 0
                 spd = _st.get("speed", "") or ""
-                if b and tot:
+                stalled = bool(_st.get("stalled", False))
+                stalled_sec = int(_st.get("stalled_seconds", 0))
+                if stalled:
+                    sub = f"Sync STALLED\nNo progress for {stalled_sec}s ({pct}%)"
+                elif b and tot:
                     sub = f"Syncing to remote server...\n{fmt_bytes(b)} / {fmt_bytes(tot)} | {spd}"
                 else:
                     sub = "Syncing to remote server...\nPreparing..."
-                key = ("syncing", pct, b)
+                key = ("syncing", pct, b, stalled, stalled_sec // 5)  # refresh every ~5s while stalled
                 if key != _last_sync_render:
                     _last_sync_render = key
                     ui.set(subtitle=sub, percent=pct, animate=True, show_header=True)
                 time.sleep(0.5)
                 continue
             elif _state in ("sync_complete", "sync_error"):
-                if _last_sync_render is not None and _last_sync_render[0] != _state:
+                # Persist sync result on the e-ink until another event changes state
+                # (new sync, backup start, device rejected, shutdown). Fall through
+                # to device handling so an iPhone plug-in can still trigger a backup —
+                # _auto_notified is set so the "auto-backup disabled" message won't
+                # redraw over the result.
+                if _last_sync_render is None or _last_sync_render[0] != _state:
                     msg = (_st.get("message", "") or "")[:60]
                     if _state == "sync_complete":
                         ui.set(subtitle=f"Sync complete\n{msg}", percent=None, animate=False, show_header=True)
                     else:
                         ui.set(subtitle=f"Sync failed\n{msg}", percent=None, animate=False, show_header=True)
-                    _last_sync_render = (_state, None, None)
-                    _sync_result_until = time.time() + 5
-                    # Allow auto-backup-disabled message (or similar) to re-show after sync
-                    if hasattr(main, '_auto_notified'):
-                        delattr(main, '_auto_notified')
-                if time.time() < _sync_result_until:
-                    time.sleep(0.5)
-                    continue
-                # Result has been shown long enough — fall through to normal device handling
-                _last_sync_render = None
+                    _last_sync_render = (_state, None, None, False, 0)
+                    main._auto_notified = True
             elif _last_sync_render is not None:
-                # Sync just finished and status was reset to something else; clear marker
+                # Sync state was cleared externally; reset marker so future sync UI redraws
                 _last_sync_render = None
 
             allowed, udid, reason = device_allowed()

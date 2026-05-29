@@ -5,7 +5,7 @@ sync_manager.py - Remote backup sync via rsync over SSH.
 Supports SSH key and password authentication.
 Credentials are decrypted from the encrypted sync config store.
 """
-import os, sys, re, subprocess, tempfile, time, yaml
+import os, sys, re, select, subprocess, tempfile, time, yaml
 
 import sync_crypto
 
@@ -90,7 +90,10 @@ def _prepare_sync(passphrase=None, backup_dir=None, progress=False):
     if not backup_dir.endswith("/"):
         backup_dir += "/"
 
-    ssh_opts = f"ssh -p {port} -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15"
+    # ServerAliveInterval/CountMax detects dead connections in ~90s instead of
+    # waiting for the TCP-level keepalive (default 2h).
+    ssh_opts = (f"ssh -p {port} -o StrictHostKeyChecking=accept-new "
+                f"-o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=3")
     key_file = None
 
     rsync_flags = ["-az", "--delete", "--rsync-path=/usr/bin/rsync"]
@@ -168,7 +171,15 @@ def run_sync_with_progress(passphrase=None, backup_dir=None, on_progress=None, l
     if err:
         return err
 
+    # Stall watchdog: if rsync produces no output for STALL_WARN_SEC, the dashboard
+    # and e-ink display surface a "stalled" warning. After STALL_KILL_SEC the
+    # process is killed and sync is reported as failed.
+    STALL_WARN_SEC = 30
+    STALL_KILL_SEC = 600  # 10 min — covers slow remote scans / fsync of huge files
+
     start = time.time()
+    proc = None
+    killed_for_stall = False
     try:
         print(f"[SYNC] Running (progress): {' '.join(cmd[:4])}...", flush=True)
         if log_file:
@@ -176,45 +187,119 @@ def run_sync_with_progress(passphrase=None, backup_dir=None, on_progress=None, l
                 log_file.write(f"[CMD] {' '.join(cmd)}\n")
             except Exception:
                 pass
-        # Merge stderr into stdout so a single reader sees both progress and errors,
-        # and so log_file captures everything in correct order.
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        # Merge stderr into stdout so a single reader sees both progress and errors.
+        # Binary mode + raw fd lets us use select() reliably for stall detection.
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                bufsize=0)
+        fd = proc.stdout.fileno()
 
         last_pct = -1
         last_bytes = 0
         last_total = 0
         last_speed = ""
+        last_data_time = time.time()
+        stall_warned = False
+
         while True:
-            chunk = proc.stdout.read(256)
-            if not chunk:
-                break
-            if log_file:
+            if proc.poll() is not None:
+                # Drain anything still buffered
                 try:
-                    log_file.write(chunk)
+                    rest = proc.stdout.read()
                 except Exception:
-                    pass
-            m = _PROGRESS_RE.search(chunk)
-            if m and on_progress:
-                bytes_transferred = int(m.group(1).replace(",", ""))
-                pct = int(m.group(2))
-                speed = m.group(3)
-                total = int(bytes_transferred * 100 / pct) if pct > 0 else 0
-                if pct != last_pct:
-                    last_pct = pct
-                    last_bytes = bytes_transferred
-                    last_total = total
-                    last_speed = speed
+                    rest = b""
+                if rest and log_file:
+                    try:
+                        log_file.write(rest.decode("utf-8", errors="replace"))
+                    except Exception:
+                        pass
+                break
+
+            r, _, _ = select.select([fd], [], [], 2.0)
+            if r:
+                try:
+                    chunk_bytes = os.read(fd, 1024)
+                except OSError:
+                    break
+                if not chunk_bytes:
+                    break
+                chunk = chunk_bytes.decode("utf-8", errors="replace")
+                last_data_time = time.time()
+                if stall_warned:
+                    stall_warned = False
+                    if log_file:
+                        log_file.write("[INFO] resumed receiving data from rsync\n")
+                if log_file:
+                    try:
+                        log_file.write(chunk)
+                    except Exception:
+                        pass
+                m = _PROGRESS_RE.search(chunk)
+                if m and on_progress:
+                    bytes_transferred = int(m.group(1).replace(",", ""))
+                    pct = int(m.group(2))
+                    speed = m.group(3)
+                    total = int(bytes_transferred * 100 / pct) if pct > 0 else 0
+                    if pct != last_pct or bytes_transferred != last_bytes:
+                        last_pct = pct
+                        last_bytes = bytes_transferred
+                        last_total = total
+                        last_speed = speed
+                        on_progress({
+                            "pct": pct,
+                            "elapsed": time.time() - start,
+                            "bytes": bytes_transferred,
+                            "total": total,
+                            "speed": speed,
+                            "stalled": False,
+                        })
+            else:
+                idle = time.time() - last_data_time
+                if idle >= STALL_KILL_SEC:
+                    killed_for_stall = True
+                    if log_file:
+                        log_file.write(f"[STALL] no output for {int(idle)}s — killing rsync\n")
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+                    try:
+                        proc.wait(timeout=5)
+                    except Exception:
+                        pass
+                    break
+                elif idle >= STALL_WARN_SEC and not stall_warned:
+                    stall_warned = True
+                    if log_file:
+                        log_file.write(f"[STALL] no output for {int(idle)}s\n")
+                    if on_progress:
+                        on_progress({
+                            "pct": last_pct if last_pct >= 0 else 0,
+                            "elapsed": time.time() - start,
+                            "bytes": last_bytes,
+                            "total": last_total,
+                            "speed": last_speed,
+                            "stalled": True,
+                            "stalled_seconds": int(idle),
+                        })
+                elif stall_warned and on_progress:
+                    # Refresh stall_seconds every couple of seconds so the UI counts up
                     on_progress({
-                        "pct": pct,
+                        "pct": last_pct if last_pct >= 0 else 0,
                         "elapsed": time.time() - start,
-                        "bytes": bytes_transferred,
-                        "total": total,
-                        "speed": speed,
+                        "bytes": last_bytes,
+                        "total": last_total,
+                        "speed": last_speed,
+                        "stalled": True,
+                        "stalled_seconds": int(idle),
                     })
 
-        proc.wait(timeout=3600)
         duration = time.time() - start
 
+        if killed_for_stall:
+            mins = STALL_KILL_SEC // 60
+            return {"success": False,
+                    "message": f"Sync stalled — no progress for {mins} min. Aborted.",
+                    "duration": duration}
         if proc.returncode == 0:
             if on_progress:
                 on_progress({
@@ -223,6 +308,7 @@ def run_sync_with_progress(passphrase=None, backup_dir=None, on_progress=None, l
                     "bytes": last_total or last_bytes,
                     "total": last_total or last_bytes,
                     "speed": last_speed,
+                    "stalled": False,
                 })
             return {"success": True, "message": f"Sync complete ({duration:.0f}s).", "duration": duration}
         else:

@@ -142,8 +142,13 @@ def on_progress(info):
         bytes=info.get("bytes", 0),
         total=info.get("total", 0),
         speed=info.get("speed", ""),
+        stalled=bool(info.get("stalled", False)),
+        stalled_seconds=int(info.get("stalled_seconds", 0)),
     )
-    logf.write(f"[SYNC] {pct}% ({elapsed:.0f}s)\n")
+    if info.get("stalled"):
+        logf.write(f"[STALL] no progress for {info.get('stalled_seconds', 0)}s (last {pct}%)\n")
+    else:
+        logf.write(f"[SYNC] {pct}% ({elapsed:.0f}s)\n")
 
 
 try:
