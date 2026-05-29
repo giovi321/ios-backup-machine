@@ -26,7 +26,7 @@ import wg_manager
 import sync_crypto
 import sync_manager
 
-VERSION = "3.5"
+VERSION = "3.6"
 
 CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/iosbackupmachine/config.yaml")
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webui_static")
@@ -765,13 +765,17 @@ def settings_sync():
             result = sync_manager.test_connection(passphrase=pw)
             flash(result["message"], "success" if result["success"] else "error")
         elif action == "run_sync":
-            sync_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "backup-sync.py")
-            subprocess.Popen(
-                [sys.executable, sync_script],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                env={**os.environ, "IOSBACKUP_CONFIG": CONFIG_PATH},
-            )
-            flash("Sync started. Check the dashboard for progress.", "success")
+            _cur = _read_backup_status() or {}
+            if _cur.get("state") == "syncing":
+                flash("Sync is already in progress.", "error")
+            else:
+                sync_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "backup-sync.py")
+                subprocess.Popen(
+                    [sys.executable, sync_script],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    env={**os.environ, "IOSBACKUP_CONFIG": CONFIG_PATH},
+                )
+                flash("Sync started. Check the dashboard for progress.", "success")
         return redirect(url_for("settings_sync"))
     mode = cfg.get("credential_encryption", {}).get("passphrase_mode", "udid")
     saved_cred = None
@@ -792,7 +796,8 @@ def settings_sync():
             pass
     return render_template("settings_sync.html",
                            cfg=cfg, udid=udid, has_enc_file=has_enc_file,
-                           passphrase_mode=mode, saved_cred=saved_cred)
+                           passphrase_mode=mode, saved_cred=saved_cred,
+                           backup_status=_read_backup_status())
 
 @app.route("/api/sync/decrypt", methods=["POST"])
 @login_required
@@ -1400,6 +1405,10 @@ def sync_start():
     cfg = load_config()
     if not cfg.get("sync", {}).get("enabled"):
         flash("Remote sync is disabled. Enable it in Remote Sync settings.", "error")
+        return redirect(request.referrer or url_for("index"))
+    cur = _read_backup_status() or {}
+    if cur.get("state") == "syncing":
+        flash("Sync is already in progress.", "error")
         return redirect(request.referrer or url_for("index"))
     sync_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "backup-sync.py")
     if not os.path.isfile(sync_script):

@@ -171,7 +171,7 @@
     <form method="POST" style="margin-top:12px;">
         <input type="hidden" name="action" value="run_sync">
         <input type="hidden" name="master_password" id="master_password_sync_hidden">
-        <button type="submit" class="btn btn-success btn-sm" {% if not has_enc_file %}onclick="return showToast('No encrypted credentials found. Save credentials first.')"{% elif not cfg.sync.enabled %}onclick="return showToast('Remote sync is disabled. Enable it in Settings above.')"{% endif %} onclick="document.getElementById('master_password_sync_hidden').value=document.getElementById('master_password_test').value;">Sync Now</button>
+        <button type="submit" class="btn btn-success btn-sm" id="sync-now-btn-custom" {% if backup_status and backup_status.state == 'syncing' %}disabled{% elif not has_enc_file %}onclick="return showToast('No encrypted credentials found. Save credentials first.')"{% elif not cfg.sync.enabled %}onclick="return showToast('Remote sync is disabled. Enable it in Settings above.')"{% endif %} onclick="document.getElementById('master_password_sync_hidden').value=document.getElementById('master_password_test').value;">Sync Now</button>
     </form>
     {% else %}
     <div class="btn-group">
@@ -181,7 +181,7 @@
         </form>
         <form method="POST" style="display:inline;">
             <input type="hidden" name="action" value="run_sync">
-            <button type="submit" class="btn btn-success btn-sm" {% if not has_enc_file %}onclick="return showToast('No encrypted credentials found. Save credentials first.')"{% elif not cfg.sync.enabled %}onclick="return showToast('Remote sync is disabled. Enable it in Settings above.')"{% elif not udid %}onclick="return showToast('Connect iPhone first to decrypt credentials.')"{% endif %}>Sync Now</button>
+            <button type="submit" class="btn btn-success btn-sm" id="sync-now-btn-udid" {% if backup_status and backup_status.state == 'syncing' %}disabled{% elif not has_enc_file %}onclick="return showToast('No encrypted credentials found. Save credentials first.')"{% elif not cfg.sync.enabled %}onclick="return showToast('Remote sync is disabled. Enable it in Settings above.')"{% elif not udid %}onclick="return showToast('Connect iPhone first to decrypt credentials.')"{% endif %}>Sync Now</button>
         </form>
     </div>
     {% endif %}
