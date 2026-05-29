@@ -415,6 +415,13 @@ On the very first boot (when owner info has not been configured), the web UI aut
 
 The Flask session `secret_key` is automatically generated on first start and saved to `config.yaml` — no manual configuration needed.
 
+### Dashboard
+
+The dashboard shows two live status cards and auto-refreshes every 5 seconds:
+
+- **Backup Status** with inline Start Backup / Stop Backup buttons. Shows percentage and encryption status while a backup is running; idle while a remote sync is in progress.
+- **Remote Sync Status** with inline Sync Now (or Cancel Sync, when active) and a Configure shortcut when sync is disabled. Shows percent, transferred / total size, current speed, and stall / scanning hints.
+
 ### Settings pages
 
 - **Backup Settings**: auto-start toggle, notification on rejected devices
@@ -423,11 +430,12 @@ The Flask session `secret_key` is automatically generated on first start and sav
 - **General**: backup directory, display orientation, owner information
 - **Date & Time**: manual date setting, NTP sync configuration
 - **WiFi**: enable/disable, SSID and password
-- **Notifications**: webhook URLs and MQTT broker settings
+- **Notifications**: webhook URLs and MQTT broker settings (separate test buttons for webhook, MQTT, and both)
 - **WireGuard**: upload and encrypt VPN config, start/stop interface, backup encryption key
+- **Remote Sync**: enable, configure SSH credentials (encrypted), test connection, trigger sync, set network restrictions
 - **Web UI**: select which network interfaces the web UI listens on
 - **Password**: protect the web UI with a password (set, change, or remove)
-- **Logs**: browse and view backup log files directly from the browser
+- **Logs**: browse and view backup log files directly from the browser, with separate live-tail links for the most recent backup and the most recent sync log
 
 ### Authentication
 
@@ -453,11 +461,14 @@ WireGuard and remote sync credentials are encrypted using AES-256-GCM with a key
 
 Sync backups to a remote server via **rsync over SSH**. Supports SSH key and password authentication.
 
-- **Manual sync**: double-tap or long-press the PiSugar button, or click **Sync Now** on the web UI dashboard or Remote Sync settings page
-- **Auto-sync**: optionally trigger after each successful backup
-- **Network restrictions**: limit sync to WiFi only, a specific SSID, or iPhone USB tethering
-- **Progress**: the e-paper display shows transferred / total size and current speed alongside a progress bar; the web dashboard mirrors the percentage
-- Configure via web UI under **Remote Sync**
+- **Manual sync**: double-tap or long-press the PiSugar button, or click **Sync Now** on the web UI dashboard or Remote Sync settings page.
+- **Auto-sync**: optionally trigger after each successful backup.
+- **Network restrictions**: limit sync to WiFi only, a specific SSID, or iPhone USB tethering.
+- **Progress display**: the e-paper screen and the web dashboard show transferred / total size, current speed, percentage, and a progress bar. Sizes auto-scale (KB / MB / GB / TB). During the initial file-list scan (rsync `--no-inc-recursive`) you see "Building file list (Xs)" instead of fake progress.
+- **Stall detection**: if rsync produces no output for **2 minutes**, the dashboard shows a yellow "Stalled" badge and the e-ink switches to "Sync STALLED". After **15 minutes** without progress the sync is auto-aborted with a sync_error.
+- **Cancel button**: while a sync is in progress, a Cancel Sync button appears on the dashboard and Remote Sync settings page. It kills `rsync` + `backup-sync.py` immediately and reports `Cancelled by user.`. The end-state (complete / failed / cancelled) stays on the e-ink until another event (new sync, backup start, service restart).
+- **SSH keepalive**: `ServerAliveInterval=30 / CountMax=3` detects dead TCP connections in ~90 s.
+- Configure via web UI under **Remote Sync**.
 
 **Remote server requirement**: `rsync` must be installed on the receiving server (`sudo apt install rsync`).
 
