@@ -169,6 +169,13 @@
         .btn-success { background: var(--success); color: #fff; }
         .btn-success:hover { background: #094a1f; }
         .btn-sm { padding: 6px 14px; font-size: 13px; }
+        .btn:disabled, .btn[disabled] {
+            background: #c8ccd1 !important;
+            color: #6c757d !important;
+            cursor: not-allowed !important;
+            opacity: 0.65;
+        }
+        .btn:disabled:hover, .btn[disabled]:hover { background: #c8ccd1 !important; }
         .btn-group { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
         /* Flash messages */
         .flash {

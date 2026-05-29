@@ -72,7 +72,7 @@
         <h2 style="margin-bottom:0;">Remote Sync Status</h2>
         {% if cfg.sync.enabled %}
         <div class="btn-group" style="margin:0;" id="sync-buttons">
-            <form method="POST" action="{{ url_for('sync_start') }}" style="display:inline; margin:0;">
+            <form method="POST" action="{{ url_for('sync_start') }}" style="display:inline; margin:0;" onsubmit="var b=document.getElementById('sync-now-btn'); if(b){b.disabled=true; b.textContent='Starting…';}">
                 <button type="submit" class="btn btn-primary btn-sm" id="sync-now-btn"{% if backup_status and backup_status.state == 'syncing' %} disabled{% endif %}>Sync Now</button>
             </form>
             <form method="POST" action="{{ url_for('sync_cancel') }}" style="display:{% if backup_status and backup_status.state == 'syncing' %}inline{% else %}none{% endif %}; margin:0;" id="sync-cancel-form">

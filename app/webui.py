@@ -26,7 +26,7 @@ import wg_manager
 import sync_crypto
 import sync_manager
 
-VERSION = "3.9"
+VERSION = "4.0"
 
 CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/iosbackupmachine/config.yaml")
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webui_static")
@@ -769,6 +769,15 @@ def settings_sync():
             if _cur.get("state") == "syncing":
                 flash("Sync is already in progress.", "error")
             else:
+                # Nuke leftovers from a cancelled/crashed sync before relaunching
+                try:
+                    subprocess.run(["pkill", "-9", "-f", "backup-sync.py"],
+                                   capture_output=True, timeout=5)
+                    subprocess.run(["pkill", "-9", "-f", "/usr/bin/rsync"],
+                                   capture_output=True, timeout=5)
+                    time.sleep(0.3)
+                except Exception:
+                    pass
                 sync_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "backup-sync.py")
                 subprocess.Popen(
                     [sys.executable, sync_script],
@@ -1409,18 +1418,25 @@ def sync_cancel():
         flash("No sync is running.", "error")
         return redirect(request.referrer or url_for("index"))
     try:
+        # SIGKILL both — SIGTERM on the python process can leave it in the proc
+        # table long enough that the very next "Sync Now" gets blocked by its
+        # own another_sync_running() guard.
         subprocess.run(["pkill", "-9", "-f", "/usr/bin/rsync"],
                        capture_output=True, timeout=5)
-        subprocess.run(["pkill", "-f", "backup-sync.py"],
+        subprocess.run(["pkill", "-9", "-f", "backup-sync.py"],
                        capture_output=True, timeout=5)
+        time.sleep(0.5)  # give the kernel a moment to reap
         # Mark the sync as cancelled so the dashboard / e-ink reflect it.
         try:
             os.makedirs(LOG_DIR, exist_ok=True)
-            with open(os.path.join(LOG_DIR, "backup_status.json"), "w") as f:
-                from datetime import datetime as _dt
-                json.dump({"state": "sync_error",
-                           "message": "Cancelled by user.",
-                           "timestamp": _dt.now().isoformat()}, f)
+            from datetime import datetime as _dt
+            data = {"state": "sync_error",
+                    "message": "Cancelled by user.",
+                    "timestamp": _dt.now().isoformat()}
+            tmp = os.path.join(LOG_DIR, "backup_status.json.tmp")
+            with open(tmp, "w") as f:
+                json.dump(data, f)
+            os.replace(tmp, os.path.join(LOG_DIR, "backup_status.json"))
         except Exception:
             pass
         flash("Sync cancelled.", "success")
@@ -1444,6 +1460,17 @@ def sync_start():
     if not os.path.isfile(sync_script):
         flash("backup-sync.py not found on disk.", "error")
         return redirect(request.referrer or url_for("index"))
+    # State is not 'syncing' — safe to nuke any leftover backup-sync.py / rsync
+    # processes from a cancelled or crashed sync, so the new launch isn't
+    # blocked by its own another_sync_running() guard.
+    try:
+        subprocess.run(["pkill", "-9", "-f", "backup-sync.py"],
+                       capture_output=True, timeout=5)
+        subprocess.run(["pkill", "-9", "-f", "/usr/bin/rsync"],
+                       capture_output=True, timeout=5)
+        time.sleep(0.3)
+    except Exception:
+        pass
     try:
         subprocess.Popen(
             [sys.executable, sync_script],
