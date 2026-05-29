@@ -453,7 +453,7 @@ WireGuard and remote sync credentials are encrypted using AES-256-GCM with a key
 
 Sync backups to a remote server via **rsync over SSH**. Supports SSH key and password authentication.
 
-- **Manual sync**: double-tap or long-press the PiSugar button, or click **Sync Now** in the web UI
+- **Manual sync**: double-tap or long-press the PiSugar button, or click **Sync Now** on the web UI dashboard or Remote Sync settings page
 - **Auto-sync**: optionally trigger after each successful backup
 - **Network restrictions**: limit sync to WiFi only, a specific SSID, or iPhone USB tethering
 - **Progress**: the e-paper display shows transferred / total size and current speed alongside a progress bar; the web dashboard mirrors the percentage

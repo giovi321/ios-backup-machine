@@ -12,6 +12,14 @@
 </div>
 {% endif %}
 
+{% if current_sync_log %}
+<div class="card">
+    <h2>Current Sync</h2>
+    <a href="{{ url_for('view_log', filename=current_sync_log) }}?live=1" class="btn btn-primary btn-sm">View Live Sync Log</a>
+    <span style="font-size:13px; color:var(--text-muted); margin-left:8px;">{{ current_sync_log }}</span>
+</div>
+{% endif %}
+
 {% if log_files %}
 <div class="card">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:8px;">

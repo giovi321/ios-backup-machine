@@ -26,7 +26,7 @@ import wg_manager
 import sync_crypto
 import sync_manager
 
-VERSION = "3.2"
+VERSION = "3.3"
 
 CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/iosbackupmachine/config.yaml")
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webui_static")
@@ -1179,6 +1179,7 @@ def backups():
 def logs():
     log_files = []
     current_backup_log = None
+    current_sync_log = None
     if os.path.isdir(LOG_DIR):
         for f in sorted(glob.glob(os.path.join(LOG_DIR, "*.log")), reverse=True):
             stat = os.stat(f)
@@ -1191,11 +1192,14 @@ def logs():
                 "size": stat.st_size,
                 "mtime": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(stat.st_mtime)),
             })
-            # Find the most recent backup log (for "View Live" link)
+            # Find the most recent backup / sync logs (for "View Live" links)
             if name.startswith("backup-") and current_backup_log is None:
                 current_backup_log = name
+            if name.startswith("sync-") and current_sync_log is None:
+                current_sync_log = name
     return render_template("logs.html", log_files=log_files,
-                           current_backup_log=current_backup_log)
+                           current_backup_log=current_backup_log,
+                           current_sync_log=current_sync_log)
 
 @app.route("/logs/<filename>")
 @login_required
@@ -1388,6 +1392,29 @@ def api_backup_status():
     """API endpoint for live backup status polling."""
     status = _read_backup_status()
     return jsonify(status or {"state": "idle"})
+
+@app.route("/sync/start", methods=["POST"])
+@login_required
+def sync_start():
+    """Launch backup-sync.py as a subprocess from anywhere (e.g. dashboard button)."""
+    cfg = load_config()
+    if not cfg.get("sync", {}).get("enabled"):
+        flash("Remote sync is disabled. Enable it in Remote Sync settings.", "error")
+        return redirect(request.referrer or url_for("index"))
+    sync_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "backup-sync.py")
+    if not os.path.isfile(sync_script):
+        flash("backup-sync.py not found on disk.", "error")
+        return redirect(request.referrer or url_for("index"))
+    try:
+        subprocess.Popen(
+            [sys.executable, sync_script],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            env={**os.environ, "IOSBACKUP_CONFIG": CONFIG_PATH},
+        )
+        flash("Sync started. Watch the dashboard or live log for progress.", "success")
+    except Exception as e:
+        flash(f"Failed to start sync: {e}", "error")
+    return redirect(request.referrer or url_for("index"))
 
 @app.route("/api/backup-sizes")
 @login_required

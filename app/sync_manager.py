@@ -157,10 +157,11 @@ def run_sync(passphrase=None, backup_dir=None):
         _cleanup_key(key_file)
 
 
-def run_sync_with_progress(passphrase=None, backup_dir=None, on_progress=None):
+def run_sync_with_progress(passphrase=None, backup_dir=None, on_progress=None, log_file=None):
     """
     Run rsync with real-time progress reporting.
-    on_progress(percent: int, elapsed: float) is called as progress updates arrive.
+    on_progress(info: dict) is called as progress updates arrive.
+    log_file: optional writable file object — raw rsync output (stdout+stderr) is teed to it.
     Returns dict: {success: bool, message: str, duration: float}
     """
     cmd, key_file, err = _prepare_sync(passphrase=passphrase, backup_dir=backup_dir, progress=True)
@@ -170,7 +171,14 @@ def run_sync_with_progress(passphrase=None, backup_dir=None, on_progress=None):
     start = time.time()
     try:
         print(f"[SYNC] Running (progress): {' '.join(cmd[:4])}...", flush=True)
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if log_file:
+            try:
+                log_file.write(f"[CMD] {' '.join(cmd)}\n")
+            except Exception:
+                pass
+        # Merge stderr into stdout so a single reader sees both progress and errors,
+        # and so log_file captures everything in correct order.
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
 
         last_pct = -1
         last_bytes = 0
@@ -180,6 +188,11 @@ def run_sync_with_progress(passphrase=None, backup_dir=None, on_progress=None):
             chunk = proc.stdout.read(256)
             if not chunk:
                 break
+            if log_file:
+                try:
+                    log_file.write(chunk)
+                except Exception:
+                    pass
             m = _PROGRESS_RE.search(chunk)
             if m and on_progress:
                 bytes_transferred = int(m.group(1).replace(",", ""))
@@ -213,9 +226,8 @@ def run_sync_with_progress(passphrase=None, backup_dir=None, on_progress=None):
                 })
             return {"success": True, "message": f"Sync complete ({duration:.0f}s).", "duration": duration}
         else:
-            stderr = proc.stderr.read() if proc.stderr else ""
-            err_msg = stderr.strip()[:200] if stderr else f"rsync exit code {proc.returncode}"
-            return {"success": False, "message": f"rsync failed: {err_msg}", "duration": duration}
+            # stderr was merged into stdout and written to log_file already
+            return {"success": False, "message": f"rsync failed (exit {proc.returncode}). See sync log.", "duration": duration}
     except subprocess.TimeoutExpired:
         proc.kill()
         return {"success": False, "message": "Sync timed out (1h limit).", "duration": time.time() - start}

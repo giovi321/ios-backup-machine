@@ -54,8 +54,17 @@
 </div>
 
 <div class="card" style="margin-bottom:20px;">
-    <h2>Remote Sync Status</h2>
-    <div class="info-grid">
+    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+        <h2 style="margin-bottom:0;">Remote Sync Status</h2>
+        {% if cfg.sync.enabled %}
+        <form method="POST" action="{{ url_for('sync_start') }}" style="margin:0;">
+            <button type="submit" class="btn btn-primary btn-sm">Sync Now</button>
+        </form>
+        {% else %}
+        <a href="{{ url_for('settings_sync') }}" class="btn btn-secondary btn-sm">Configure</a>
+        {% endif %}
+    </div>
+    <div class="info-grid" style="margin-top:12px;">
         <div class="info-item">
             <div class="label">State</div>
             <div class="value" id="sync-state">
