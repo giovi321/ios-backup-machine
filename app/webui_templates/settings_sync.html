@@ -173,6 +173,11 @@
         <input type="hidden" name="master_password" id="master_password_sync_hidden">
         <button type="submit" class="btn btn-success btn-sm" id="sync-now-btn-custom" {% if backup_status and backup_status.state == 'syncing' %}disabled{% elif not has_enc_file %}onclick="return showToast('No encrypted credentials found. Save credentials first.')"{% elif not cfg.sync.enabled %}onclick="return showToast('Remote sync is disabled. Enable it in Settings above.')"{% endif %} onclick="document.getElementById('master_password_sync_hidden').value=document.getElementById('master_password_test').value;">Sync Now</button>
     </form>
+    {% if backup_status and backup_status.state == 'syncing' %}
+    <form method="POST" action="{{ url_for('sync_cancel') }}" style="margin-top:12px;">
+        <button type="submit" class="btn btn-secondary btn-sm" style="background:var(--error-bg);color:var(--error);">Cancel Sync</button>
+    </form>
+    {% endif %}
     {% else %}
     <div class="btn-group">
         <form method="POST" style="display:inline;">
@@ -183,6 +188,11 @@
             <input type="hidden" name="action" value="run_sync">
             <button type="submit" class="btn btn-success btn-sm" id="sync-now-btn-udid" {% if backup_status and backup_status.state == 'syncing' %}disabled{% elif not has_enc_file %}onclick="return showToast('No encrypted credentials found. Save credentials first.')"{% elif not cfg.sync.enabled %}onclick="return showToast('Remote sync is disabled. Enable it in Settings above.')"{% elif not udid %}onclick="return showToast('Connect iPhone first to decrypt credentials.')"{% endif %}>Sync Now</button>
         </form>
+        {% if backup_status and backup_status.state == 'syncing' %}
+        <form method="POST" action="{{ url_for('sync_cancel') }}" style="display:inline;">
+            <button type="submit" class="btn btn-secondary btn-sm" style="background:var(--error-bg);color:var(--error);">Cancel Sync</button>
+        </form>
+        {% endif %}
     </div>
     {% endif %}
 </div>

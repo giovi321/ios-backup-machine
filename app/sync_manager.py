@@ -180,8 +180,8 @@ def run_sync_with_progress(passphrase=None, backup_dir=None, on_progress=None, l
     #      to real stall detection: warn quickly, kill after STALL_KILL_SEC.
     SCAN_NOTIFY_SEC = 5      # how soon we tell the UI "we're scanning"
     SCAN_KILL_SEC = 1800     # 30 min — kill if rsync produces NO output at all
-    STALL_WARN_SEC = 30
-    STALL_KILL_SEC = 600     # 10 min — kill stall after transfer has started
+    STALL_WARN_SEC = 120     # 2 min — small ARM SBC + slow remote can pause this long
+    STALL_KILL_SEC = 900     # 15 min — kill stall after transfer has started
 
     start = time.time()
     proc = None

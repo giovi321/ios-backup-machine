@@ -71,9 +71,14 @@
     <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
         <h2 style="margin-bottom:0;">Remote Sync Status</h2>
         {% if cfg.sync.enabled %}
-        <form method="POST" action="{{ url_for('sync_start') }}" style="margin:0;">
-            <button type="submit" class="btn btn-primary btn-sm" id="sync-now-btn"{% if backup_status and backup_status.state == 'syncing' %} disabled{% endif %}>Sync Now</button>
-        </form>
+        <div class="btn-group" style="margin:0;" id="sync-buttons">
+            <form method="POST" action="{{ url_for('sync_start') }}" style="display:inline; margin:0;">
+                <button type="submit" class="btn btn-primary btn-sm" id="sync-now-btn"{% if backup_status and backup_status.state == 'syncing' %} disabled{% endif %}>Sync Now</button>
+            </form>
+            <form method="POST" action="{{ url_for('sync_cancel') }}" style="display:{% if backup_status and backup_status.state == 'syncing' %}inline{% else %}none{% endif %}; margin:0;" id="sync-cancel-form">
+                <button type="submit" class="btn btn-secondary btn-sm" id="sync-cancel-btn" style="background:var(--error-bg);color:var(--error);">Cancel Sync</button>
+            </form>
+        </div>
         {% else %}
         <a href="{{ url_for('settings_sync') }}" class="btn btn-secondary btn-sm">Configure</a>
         {% endif %}
@@ -109,7 +114,7 @@
                 {% if backup_status.stalled %}
                 <small style="color:var(--warning);"><strong>STALLED</strong> · no progress for {{ backup_status.stalled_seconds or 0 }}s (last {{ backup_status.percent }}%)</small>
                 {% else %}
-                <small style="color:var(--text-muted);">{{ backup_status.percent }}%{% if backup_status.bytes and backup_status.total %} &middot; {{ (backup_status.bytes / 1024 / 1024)|round(1) }} MB / {{ (backup_status.total / 1024 / 1024)|round(1) }} MB{% endif %}{% if backup_status.speed %} &middot; {{ backup_status.speed }}{% endif %}</small>
+                <small style="color:var(--text-muted);">{{ backup_status.percent }}%{% if backup_status.bytes and backup_status.total %} &middot; {{ backup_status.bytes|human_size }} / {{ backup_status.total|human_size }}{% endif %}{% if backup_status.speed %} &middot; {{ backup_status.speed }}{% endif %}</small>
                 {% endif %}
                 {% elif backup_status and backup_status.state == 'sync_complete' %}
                 <small style="color:var(--text-muted);">{{ backup_status.get('message', 'Done') }}</small>
@@ -254,6 +259,12 @@
         return '<div style="background:#e8eaed;border-radius:4px;height:12px;width:100%;margin-top:4px;">' +
             '<div style="background:var(--primary);border-radius:4px;height:12px;width:' + pct + '%;transition:width 0.5s;"></div></div>';
     }
+    function humanSize(n) {
+        var units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        var i = 0;
+        while (Math.abs(n) >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+        return n.toFixed(1) + ' ' + units[i];
+    }
 
     // Auto-refresh status every 5 seconds
     setInterval(function() {
@@ -300,9 +311,11 @@
                     }
                 }
 
-                // Sync Now button: disabled while a sync is in progress
+                // Sync Now: disabled while syncing; Cancel Sync: visible only while syncing
                 var sBtn = document.getElementById('sync-now-btn');
                 if (sBtn) sBtn.disabled = (data.state === 'syncing');
+                var sCancel = document.getElementById('sync-cancel-form');
+                if (sCancel) sCancel.style.display = (data.state === 'syncing') ? 'inline' : 'none';
 
                 // Sync state — show Scanning during file-list phase, Stalled if real stall
                 if (sState) {
@@ -326,8 +339,7 @@
                         } else {
                             var det = data.percent + '%';
                             if (data.bytes && data.total) {
-                                var mb = function(n) { return (n / 1024 / 1024).toFixed(1) + ' MB'; };
-                                det += ' · ' + mb(data.bytes) + ' / ' + mb(data.total);
+                                det += ' · ' + humanSize(data.bytes) + ' / ' + humanSize(data.total);
                             }
                             if (data.speed) det += ' · ' + data.speed;
                             sProg.innerHTML = makeBar(data.percent) + '<small style="color:var(--text-muted);">' + det + '</small>';

@@ -26,7 +26,7 @@ import wg_manager
 import sync_crypto
 import sync_manager
 
-VERSION = "3.7"
+VERSION = "3.8"
 
 CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/iosbackupmachine/config.yaml")
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webui_static")
@@ -1086,6 +1086,8 @@ def _human_size(nbytes):
         nbytes /= 1024
     return f"{nbytes:.1f} PB"
 
+app.jinja_env.filters["human_size"] = _human_size
+
 def _parse_info_plist(plist_path):
     """Parse an iOS backup Info.plist and return a dict of useful fields."""
     info = {}
@@ -1397,6 +1399,34 @@ def api_backup_status():
     """API endpoint for live backup status polling."""
     status = _read_backup_status()
     return jsonify(status or {"state": "idle"})
+
+@app.route("/sync/cancel", methods=["POST"])
+@login_required
+def sync_cancel():
+    """Kill any running rsync + backup-sync.py so a stuck/stalled sync stops immediately."""
+    cur = _read_backup_status() or {}
+    if cur.get("state") != "syncing":
+        flash("No sync is running.", "error")
+        return redirect(request.referrer or url_for("index"))
+    try:
+        subprocess.run(["pkill", "-9", "-f", "/usr/bin/rsync"],
+                       capture_output=True, timeout=5)
+        subprocess.run(["pkill", "-f", "backup-sync.py"],
+                       capture_output=True, timeout=5)
+        # Mark the sync as cancelled so the dashboard / e-ink reflect it.
+        try:
+            os.makedirs(LOG_DIR, exist_ok=True)
+            with open(os.path.join(LOG_DIR, "backup_status.json"), "w") as f:
+                from datetime import datetime as _dt
+                json.dump({"state": "sync_error",
+                           "message": "Cancelled by user.",
+                           "timestamp": _dt.now().isoformat()}, f)
+        except Exception:
+            pass
+        flash("Sync cancelled.", "success")
+    except Exception as e:
+        flash(f"Failed to cancel sync: {e}", "error")
+    return redirect(request.referrer or url_for("index"))
 
 @app.route("/sync/start", methods=["POST"])
 @login_required
