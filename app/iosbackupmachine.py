@@ -342,14 +342,27 @@ def fmt_bytes(n):
         n /= 1024
 
 def write_status(state, **extra):
-    """Write backup status JSON for the web UI dashboard."""
+    """Atomic status write — tmp file + rename so partial reads can't happen."""
+    tmp = None
     try:
         ensure_dir(LOG_DIR)
         data = {"state": state, "timestamp": datetime.now().isoformat(), **extra}
-        with open(STATUS_FILE, "w") as f:
+        tmp = STATUS_FILE + f".tmp.{os.getpid()}"
+        with open(tmp, "w") as f:
             json.dump(data, f)
+            f.flush()
+            try:
+                os.fsync(f.fileno())
+            except Exception:
+                pass
+        os.replace(tmp, STATUS_FILE)
     except Exception:
-        pass
+        if tmp:
+            try:
+                if os.path.exists(tmp):
+                    os.remove(tmp)
+            except Exception:
+                pass
 
 def get_connected_udids():
     """Return list of currently connected iPhone UDIDs."""
@@ -777,6 +790,15 @@ def _pisugar_button_listener(panel, ui):
             resp = s.recv(256).decode(errors="replace").strip()
             s.close()
             if "single" in resp.lower() and "true" in resp.lower():
+                # Don't clobber the sync UI for 10s if a sync is in progress —
+                # the button-info overlay would hide rsync progress updates.
+                try:
+                    with open(STATUS_FILE, "r") as _sf:
+                        _st = json.load(_sf)
+                    if _st.get("state") == "syncing":
+                        continue
+                except Exception:
+                    pass
                 ip_info = _get_ip_info()
                 with ui.lock:
                     saved_state = dict(ui.state)
@@ -861,8 +883,18 @@ def main():
 
     _last_reject_udid = None
     _last_sync_render = None      # tracks (state, percent, bytes, stalled_seconds) of last sync UI
+    _sync_dead_logged = False     # so we don't spam the log
     try:
-        write_status("waiting")
+        # Don't clobber an in-progress sync's status if one is already running
+        # (covers iosbackupmachine.py restart while backup-sync.py is alive).
+        _initial = {}
+        try:
+            with open(STATUS_FILE, "r") as _sf:
+                _initial = json.load(_sf)
+        except Exception:
+            pass
+        if _initial.get("state") != "syncing":
+            write_status("waiting")
         ui.set(subtitle="Waiting for iPhone...", percent=None, animate=True, show_header=True)
         while True:
             # External sync (backup-sync.py) writes the status file with state=syncing/...
@@ -873,6 +905,31 @@ def main():
             except Exception:
                 _st = {}
             _state = _st.get("state")
+
+            # Crash detection: if status says syncing but the writer process is gone
+            # and the file is stale, declare failure so the UI doesn't hang forever.
+            if _state == "syncing":
+                try:
+                    _age = time.time() - os.stat(STATUS_FILE).st_mtime
+                except Exception:
+                    _age = 0
+                if _age > 60:
+                    try:
+                        _pg = subprocess.run(["pgrep", "-f", "backup-sync.py"],
+                                             capture_output=True, text=True)
+                        _alive = _pg.returncode == 0
+                    except Exception:
+                        _alive = True
+                    if not _alive:
+                        if not _sync_dead_logged and logf:
+                            logf.write(f"[SYNC] backup-sync.py is gone but status stuck at 'syncing' (age={int(_age)}s); marking as failed\n")
+                            _sync_dead_logged = True
+                        write_status("sync_error", message="Sync process died unexpectedly.")
+                        _state = "sync_error"
+                        _st = {"state": "sync_error", "message": "Sync process died unexpectedly."}
+                else:
+                    _sync_dead_logged = False
+
             if _state == "syncing":
                 pct = _st.get("percent", 0) or 0
                 b = _st.get("bytes", 0) or 0
@@ -890,11 +947,12 @@ def main():
                     sub = f"Syncing to remote server...\n{fmt_bytes(b)} / {fmt_bytes(tot)} | {spd}"
                 else:
                     sub = "Syncing to remote server...\nPreparing..."
-                # refresh every ~5s while scanning/stalled so counters move
-                key = ("syncing", pct, b, stalled, stalled_sec // 5, scanning, scan_sec // 5)
-                if key != _last_sync_render:
-                    _last_sync_render = key
-                    ui.set(subtitle=sub, percent=pct, animate=True, show_header=True)
+                # ALWAYS set the ui state every iteration during a sync. ui.set just
+                # updates a dict (cheap) and guarantees the Animator's next 1Hz tick
+                # draws current sync state — protects against external overrides
+                # (button info, rejected device, etc.) reverting the display.
+                ui.set(subtitle=sub, percent=pct, animate=True, show_header=True)
+                _last_sync_render = ("syncing", pct, b, stalled, stalled_sec, scanning, scan_sec)
                 time.sleep(0.5)
                 continue
             elif _state in ("sync_complete", "sync_error"):
@@ -903,14 +961,19 @@ def main():
                 # to device handling so an iPhone plug-in can still trigger a backup —
                 # _auto_notified is set so the "auto-backup disabled" message won't
                 # redraw over the result.
-                if _last_sync_render is None or _last_sync_render[0] != _state:
-                    msg = (_st.get("message", "") or "")[:60]
-                    if _state == "sync_complete":
-                        ui.set(subtitle=f"Sync complete\n{msg}", percent=None, animate=False, show_header=True)
-                    else:
-                        ui.set(subtitle=f"Sync failed\n{msg}", percent=None, animate=False, show_header=True)
-                    _last_sync_render = (_state, None, None, False, 0)
-                    main._auto_notified = True
+                msg = (_st.get("message", "") or "")[:60]
+                if _state == "sync_complete":
+                    desired_sub = f"Sync complete\n{msg}"
+                else:
+                    desired_sub = f"Sync failed\n{msg}"
+                # Always re-set so external overrides (button info etc.) can't
+                # leave the sync result hidden forever.
+                with ui.lock:
+                    cur_sub = ui.state.get("subtitle")
+                if cur_sub != desired_sub:
+                    ui.set(subtitle=desired_sub, percent=None, animate=False, show_header=True)
+                _last_sync_render = (_state, None, None, False, 0, False, 0)
+                main._auto_notified = True
             elif _last_sync_render is not None:
                 # Sync state was cleared externally; reset marker so future sync UI redraws
                 _last_sync_render = None

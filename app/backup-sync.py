@@ -29,13 +29,25 @@ def load_config(path):
 
 
 def write_status(state, **extra):
+    """Atomic status write: tmp file + rename, so concurrent readers never see partial JSON."""
     try:
         os.makedirs(LOG_DIR, exist_ok=True)
         data = {"state": state, "timestamp": datetime.now().isoformat(), **extra}
-        with open(STATUS_FILE, "w") as f:
+        tmp = STATUS_FILE + f".tmp.{os.getpid()}"
+        with open(tmp, "w") as f:
             json.dump(data, f)
+            f.flush()
+            try:
+                os.fsync(f.fileno())
+            except Exception:
+                pass
+        os.replace(tmp, STATUS_FILE)
     except Exception:
-        pass
+        try:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        except Exception:
+            pass
 
 
 def backup_running():
