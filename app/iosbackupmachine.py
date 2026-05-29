@@ -880,13 +880,18 @@ def main():
                 spd = _st.get("speed", "") or ""
                 stalled = bool(_st.get("stalled", False))
                 stalled_sec = int(_st.get("stalled_seconds", 0))
-                if stalled:
+                scanning = bool(_st.get("scanning", False))
+                scan_sec = int(_st.get("scan_seconds", 0))
+                if scanning:
+                    sub = f"Syncing to remote server...\nBuilding file list ({scan_sec}s)"
+                elif stalled:
                     sub = f"Sync STALLED\nNo progress for {stalled_sec}s ({pct}%)"
                 elif b and tot:
                     sub = f"Syncing to remote server...\n{fmt_bytes(b)} / {fmt_bytes(tot)} | {spd}"
                 else:
                     sub = "Syncing to remote server...\nPreparing..."
-                key = ("syncing", pct, b, stalled, stalled_sec // 5)  # refresh every ~5s while stalled
+                # refresh every ~5s while scanning/stalled so counters move
+                key = ("syncing", pct, b, stalled, stalled_sec // 5, scanning, scan_sec // 5)
                 if key != _last_sync_render:
                     _last_sync_render = key
                     ui.set(subtitle=sub, percent=pct, animate=True, show_header=True)

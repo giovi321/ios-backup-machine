@@ -171,15 +171,22 @@ def run_sync_with_progress(passphrase=None, backup_dir=None, on_progress=None, l
     if err:
         return err
 
-    # Stall watchdog: if rsync produces no output for STALL_WARN_SEC, the dashboard
-    # and e-ink display surface a "stalled" warning. After STALL_KILL_SEC the
-    # process is killed and sync is reported as failed.
+    # Two-phase watchdog:
+    #   1. Initial scan phase — rsync is building the file list (--no-inc-recursive).
+    #      No progress lines yet; the user just needs to know it's still working.
+    #      Surface a "Building file list (Xs)" hint to dashboard/e-ink, and kill
+    #      only after a generous SCAN_KILL_SEC to cover huge trees.
+    #   2. Transfer phase — once we've parsed at least one progress line, switch
+    #      to real stall detection: warn quickly, kill after STALL_KILL_SEC.
+    SCAN_NOTIFY_SEC = 5      # how soon we tell the UI "we're scanning"
+    SCAN_KILL_SEC = 1800     # 30 min — kill if rsync produces NO output at all
     STALL_WARN_SEC = 30
-    STALL_KILL_SEC = 600  # 10 min — covers slow remote scans / fsync of huge files
+    STALL_KILL_SEC = 600     # 10 min — kill stall after transfer has started
 
     start = time.time()
     proc = None
     killed_for_stall = False
+    killed_for_scan = False
     try:
         print(f"[SYNC] Running (progress): {' '.join(cmd[:4])}...", flush=True)
         if log_file:
@@ -198,7 +205,10 @@ def run_sync_with_progress(passphrase=None, backup_dir=None, on_progress=None, l
         last_total = 0
         last_speed = ""
         last_data_time = time.time()
+        seen_progress = False       # True once we've parsed a progress line
         stall_warned = False
+        scan_notified = False
+        scan_start = time.time()
 
         while True:
             if proc.poll() is not None:
@@ -239,6 +249,10 @@ def run_sync_with_progress(passphrase=None, backup_dir=None, on_progress=None, l
                     pct = int(m.group(2))
                     speed = m.group(3)
                     total = int(bytes_transferred * 100 / pct) if pct > 0 else 0
+                    if not seen_progress:
+                        seen_progress = True
+                        if log_file:
+                            log_file.write(f"[INFO] file list complete after {int(time.time() - scan_start)}s, transfer started\n")
                     if pct != last_pct or bytes_transferred != last_bytes:
                         last_pct = pct
                         last_bytes = bytes_transferred
@@ -251,50 +265,80 @@ def run_sync_with_progress(passphrase=None, backup_dir=None, on_progress=None, l
                             "total": total,
                             "speed": speed,
                             "stalled": False,
+                            "scanning": False,
                         })
             else:
                 idle = time.time() - last_data_time
-                if idle >= STALL_KILL_SEC:
-                    killed_for_stall = True
-                    if log_file:
-                        log_file.write(f"[STALL] no output for {int(idle)}s — killing rsync\n")
-                    try:
-                        proc.kill()
-                    except Exception:
-                        pass
-                    try:
-                        proc.wait(timeout=5)
-                    except Exception:
-                        pass
-                    break
-                elif idle >= STALL_WARN_SEC and not stall_warned:
-                    stall_warned = True
-                    if log_file:
-                        log_file.write(f"[STALL] no output for {int(idle)}s\n")
-                    if on_progress:
+                scan_elapsed = int(time.time() - scan_start)
+                if not seen_progress:
+                    # ---- Scan phase: rsync is building the file list ----
+                    if scan_elapsed >= SCAN_KILL_SEC:
+                        killed_for_scan = True
+                        if log_file:
+                            log_file.write(f"[ABORT] rsync produced no progress for {scan_elapsed}s — killing\n")
+                        try:
+                            proc.kill()
+                        except Exception:
+                            pass
+                        try:
+                            proc.wait(timeout=5)
+                        except Exception:
+                            pass
+                        break
+                    if scan_elapsed >= SCAN_NOTIFY_SEC and on_progress:
+                        if not scan_notified:
+                            scan_notified = True
+                            if log_file:
+                                log_file.write(f"[SCAN] still building file list ({scan_elapsed}s)\n")
                         on_progress({
-                            "pct": last_pct if last_pct >= 0 else 0,
+                            "pct": 0,
                             "elapsed": time.time() - start,
-                            "bytes": last_bytes,
-                            "total": last_total,
-                            "speed": last_speed,
-                            "stalled": True,
-                            "stalled_seconds": int(idle),
+                            "bytes": 0,
+                            "total": 0,
+                            "speed": "",
+                            "stalled": False,
+                            "scanning": True,
+                            "scan_seconds": scan_elapsed,
                         })
-                elif stall_warned and on_progress:
-                    # Refresh stall_seconds every couple of seconds so the UI counts up
-                    on_progress({
-                        "pct": last_pct if last_pct >= 0 else 0,
-                        "elapsed": time.time() - start,
-                        "bytes": last_bytes,
-                        "total": last_total,
-                        "speed": last_speed,
-                        "stalled": True,
-                        "stalled_seconds": int(idle),
-                    })
+                else:
+                    # ---- Transfer phase: real stall detection ----
+                    if idle >= STALL_KILL_SEC:
+                        killed_for_stall = True
+                        if log_file:
+                            log_file.write(f"[STALL] no output for {int(idle)}s — killing rsync\n")
+                        try:
+                            proc.kill()
+                        except Exception:
+                            pass
+                        try:
+                            proc.wait(timeout=5)
+                        except Exception:
+                            pass
+                        break
+                    elif idle >= STALL_WARN_SEC:
+                        if not stall_warned:
+                            stall_warned = True
+                            if log_file:
+                                log_file.write(f"[STALL] no output for {int(idle)}s\n")
+                        if on_progress:
+                            on_progress({
+                                "pct": last_pct if last_pct >= 0 else 0,
+                                "elapsed": time.time() - start,
+                                "bytes": last_bytes,
+                                "total": last_total,
+                                "speed": last_speed,
+                                "stalled": True,
+                                "stalled_seconds": int(idle),
+                                "scanning": False,
+                            })
 
         duration = time.time() - start
 
+        if killed_for_scan:
+            mins = SCAN_KILL_SEC // 60
+            return {"success": False,
+                    "message": f"rsync produced no progress in {mins} min (stuck building file list). Aborted.",
+                    "duration": duration}
         if killed_for_stall:
             mins = STALL_KILL_SEC // 60
             return {"success": False,

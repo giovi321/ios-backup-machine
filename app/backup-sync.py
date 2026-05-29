@@ -144,8 +144,13 @@ def on_progress(info):
         speed=info.get("speed", ""),
         stalled=bool(info.get("stalled", False)),
         stalled_seconds=int(info.get("stalled_seconds", 0)),
+        scanning=bool(info.get("scanning", False)),
+        scan_seconds=int(info.get("scan_seconds", 0)),
     )
-    if info.get("stalled"):
+    if info.get("scanning"):
+        # Logged once per state transition by sync_manager; avoid spamming here.
+        pass
+    elif info.get("stalled"):
         logf.write(f"[STALL] no progress for {info.get('stalled_seconds', 0)}s (last {pct}%)\n")
     else:
         logf.write(f"[SYNC] {pct}% ({elapsed:.0f}s)\n")
