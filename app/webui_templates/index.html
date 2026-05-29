@@ -5,12 +5,24 @@
 <p class="subtitle">iOS Backup Machine status overview</p>
 
 <div class="card" style="margin-bottom:20px;">
-    <h2>Backup Status</h2>
-    <div class="info-grid">
+    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+        <h2 style="margin-bottom:0;">Backup Status</h2>
+        <div class="btn-group" style="margin:0;">
+            <form method="POST" action="{{ url_for('api_start_backup') }}" style="display:inline; margin:0;">
+                <button type="submit" class="btn btn-primary btn-sm">Start Backup</button>
+            </form>
+            <form method="POST" action="{{ url_for('api_stop_backup') }}" style="display:inline; margin:0;">
+                <button type="submit" class="btn btn-secondary btn-sm">Stop Backup</button>
+            </form>
+        </div>
+    </div>
+    <div class="info-grid" style="margin-top:12px;">
         <div class="info-item">
             <div class="label">State</div>
             <div class="value" id="backup-state">
-                {% if backup_status %}
+                {% if backup_status and backup_status.state in ('syncing', 'sync_complete', 'sync_error') %}
+                    <span class="badge badge-off"><span class="badge-dot"></span>Idle</span>
+                {% elif backup_status %}
                     {% if backup_status.state == 'backing_up' %}
                         <span class="badge" style="background:var(--info-bg);color:var(--info);"><span class="badge-dot" style="background:var(--info);"></span>Backing up</span>
                     {% elif backup_status.state == 'complete' %}
@@ -34,7 +46,9 @@
         <div class="info-item" id="backup-progress-card">
             <div class="label">Progress</div>
             <div class="value" id="backup-progress">
-                {% if backup_status and backup_status.state == 'backing_up' and backup_status.percent is not none %}
+                {% if backup_status and backup_status.state in ('syncing', 'sync_complete', 'sync_error') %}
+                <small style="color:var(--text-muted);">--</small>
+                {% elif backup_status and backup_status.state == 'backing_up' and backup_status.percent is not none %}
                 <div style="background:#e8eaed;border-radius:4px;height:12px;width:100%;margin-top:4px;">
                     <div id="progress-bar" style="background:var(--primary);border-radius:4px;height:12px;width:{{ backup_status.percent }}%;transition:width 0.5s;"></div>
                 </div>
@@ -86,7 +100,7 @@
                 <div style="background:#e8eaed;border-radius:4px;height:12px;width:100%;margin-top:4px;">
                     <div style="background:var(--primary);border-radius:4px;height:12px;width:{{ backup_status.percent }}%;transition:width 0.5s;"></div>
                 </div>
-                <small style="color:var(--text-muted);">{{ backup_status.percent }}%</small>
+                <small style="color:var(--text-muted);">{{ backup_status.percent }}%{% if backup_status.bytes and backup_status.total %} &middot; {{ (backup_status.bytes / 1024 / 1024)|round(1) }} MB / {{ (backup_status.total / 1024 / 1024)|round(1) }} MB{% endif %}{% if backup_status.speed %} &middot; {{ backup_status.speed }}{% endif %}</small>
                 {% elif backup_status and backup_status.state == 'sync_complete' %}
                 <small style="color:var(--text-muted);">{{ backup_status.get('message', 'Done') }}</small>
                 {% elif backup_status and backup_status.state == 'sync_error' %}
@@ -188,19 +202,6 @@
 {% endif %}
 
 <div class="card" style="margin-top: 24px;">
-    <h2>Backup Control</h2>
-    <div class="btn-group">
-        <form method="POST" action="{{ url_for('api_start_backup') }}" style="display:inline;">
-            <button type="submit" class="btn btn-primary">Start Backup</button>
-        </form>
-        <form method="POST" action="{{ url_for('api_stop_backup') }}" style="display:inline;">
-            <button type="submit" class="btn btn-secondary">Stop Backup</button>
-        </form>
-    </div>
-    <p class="hint" style="margin-top:8px;">Start requires an iPhone to be connected. Stop kills any running backup.</p>
-</div>
-
-<div class="card" style="margin-top: 24px;">
     <h2>Quick Actions</h2>
     <div class="btn-group">
         <a href="{{ url_for('settings_general') }}" class="btn btn-secondary">General Settings</a>
@@ -255,21 +256,25 @@
                 var sState = document.getElementById('sync-state');
                 var sProg = document.getElementById('sync-progress');
 
-                // Backup state
+                // Backup state — during a remote sync the backup card stays Idle
                 if (bState) {
-                    if (data.state === 'backing_up') bState.innerHTML = makeBadge('var(--info-bg)', 'var(--info)', 'Backing up');
+                    if (data.state === 'syncing' || data.state === 'sync_complete' || data.state === 'sync_error') {
+                        bState.innerHTML = '<span class="badge badge-off"><span class="badge-dot"></span>Idle</span>';
+                    }
+                    else if (data.state === 'backing_up') bState.innerHTML = makeBadge('var(--info-bg)', 'var(--info)', 'Backing up');
                     else if (data.state === 'complete') bState.innerHTML = makeBadge('var(--success-bg)', 'var(--success)', 'Complete');
                     else if (data.state === 'error') bState.innerHTML = makeBadge('var(--error-bg)', 'var(--error)', 'Error');
                     else if (data.state === 'interrupted') bState.innerHTML = makeBadge('var(--warning-bg)', 'var(--warning)', 'Interrupted');
                     else if (data.state === 'waiting') bState.innerHTML = '<span class="badge badge-off"><span class="badge-dot"></span>Waiting for iPhone</span>';
                     else if (data.state === 'connected') bState.innerHTML = makeBadge('var(--info-bg)', 'var(--info)', 'Device connected');
-                    else if (data.state === 'syncing' || data.state === 'sync_complete' || data.state === 'sync_error') { /* keep last backup state */ }
                     else bState.innerHTML = '<span class="badge badge-off"><span class="badge-dot"></span>Idle</span>';
                 }
 
-                // Backup progress
+                // Backup progress — also blank during sync
                 if (bProg) {
-                    if (data.state === 'backing_up' && data.percent != null) {
+                    if (data.state === 'syncing' || data.state === 'sync_complete' || data.state === 'sync_error') {
+                        bProg.innerHTML = '<small style="color:var(--text-muted);">--</small>';
+                    } else if (data.state === 'backing_up' && data.percent != null) {
                         var enc = data.encrypted ? ' (encrypted)' : '';
                         bProg.innerHTML = makeBar(data.percent) + '<small style="color:var(--text-muted);">' + data.percent + '%' + enc + '</small>';
                     } else if (data.state === 'complete') {
@@ -280,7 +285,7 @@
                         bProg.innerHTML = '<small style="color:var(--error);">' + (data.message || 'Unknown error') + '</small>';
                     } else if (data.state === 'interrupted') {
                         bProg.innerHTML = '<small style="color:var(--warning);">' + (data.reason || 'Backup was interrupted') + '</small>';
-                    } else if (data.state !== 'syncing' && data.state !== 'sync_complete' && data.state !== 'sync_error') {
+                    } else {
                         bProg.innerHTML = '<small style="color:var(--text-muted);">--</small>';
                     }
                 }
@@ -293,10 +298,16 @@
                     else if (data.state !== 'syncing') sState.innerHTML = '<span class="badge badge-off"><span class="badge-dot"></span>Idle</span>';
                 }
 
-                // Sync progress
+                // Sync progress with size/speed
                 if (sProg) {
                     if (data.state === 'syncing' && data.percent != null) {
-                        sProg.innerHTML = makeBar(data.percent) + '<small style="color:var(--text-muted);">' + data.percent + '%</small>';
+                        var det = data.percent + '%';
+                        if (data.bytes && data.total) {
+                            var mb = function(n) { return (n / 1024 / 1024).toFixed(1) + ' MB'; };
+                            det += ' · ' + mb(data.bytes) + ' / ' + mb(data.total);
+                        }
+                        if (data.speed) det += ' · ' + data.speed;
+                        sProg.innerHTML = makeBar(data.percent) + '<small style="color:var(--text-muted);">' + det + '</small>';
                     } else if (data.state === 'sync_complete') {
                         sProg.innerHTML = '<small style="color:var(--text-muted);">' + (data.message || 'Done') + '</small>';
                     } else if (data.state === 'sync_error') {

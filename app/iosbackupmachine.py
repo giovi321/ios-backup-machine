@@ -706,7 +706,10 @@ def run_backup(panel, logf, ui, _retry=0):
                 else:
                     sub = f"{fmt_bytes(info['bytes'])} | {info['speed']}"
                 ui.set(subtitle=sub, percent=pct, animate=True, show_header=True)
-                write_status("syncing", percent=pct)
+                write_status("syncing", percent=pct,
+                             bytes=info.get("bytes", 0),
+                             total=info.get("total", 0),
+                             speed=info.get("speed", ""))
                 if logf: logf.write(f"[SYNC] {pct}% ({elapsed:.0f}s)\n")
             try:
                 result = _sync_manager.run_sync_with_progress(
@@ -857,10 +860,56 @@ def main():
     btn_thread.start()
 
     _last_reject_udid = None
+    _last_sync_render = None      # tracks (state, percent, bytes) of last sync UI we drew
+    _sync_result_until = 0        # epoch deadline to keep sync_complete/sync_error on screen
     try:
         write_status("waiting")
         ui.set(subtitle="Waiting for iPhone...", percent=None, animate=True, show_header=True)
         while True:
+            # External sync (backup-sync.py) writes the status file with state=syncing/...
+            # We own the EPD, so draw its UI from here.
+            try:
+                with open(STATUS_FILE, "r") as _sf:
+                    _st = json.load(_sf)
+            except Exception:
+                _st = {}
+            _state = _st.get("state")
+            if _state == "syncing":
+                pct = _st.get("percent", 0) or 0
+                b = _st.get("bytes", 0) or 0
+                tot = _st.get("total", 0) or 0
+                spd = _st.get("speed", "") or ""
+                if b and tot:
+                    sub = f"Syncing to remote server...\n{fmt_bytes(b)} / {fmt_bytes(tot)} | {spd}"
+                else:
+                    sub = "Syncing to remote server...\nPreparing..."
+                key = ("syncing", pct, b)
+                if key != _last_sync_render:
+                    _last_sync_render = key
+                    ui.set(subtitle=sub, percent=pct, animate=True, show_header=True)
+                time.sleep(0.5)
+                continue
+            elif _state in ("sync_complete", "sync_error"):
+                if _last_sync_render is not None and _last_sync_render[0] != _state:
+                    msg = (_st.get("message", "") or "")[:60]
+                    if _state == "sync_complete":
+                        ui.set(subtitle=f"Sync complete\n{msg}", percent=None, animate=False, show_header=True)
+                    else:
+                        ui.set(subtitle=f"Sync failed\n{msg}", percent=None, animate=False, show_header=True)
+                    _last_sync_render = (_state, None, None)
+                    _sync_result_until = time.time() + 5
+                    # Allow auto-backup-disabled message (or similar) to re-show after sync
+                    if hasattr(main, '_auto_notified'):
+                        delattr(main, '_auto_notified')
+                if time.time() < _sync_result_until:
+                    time.sleep(0.5)
+                    continue
+                # Result has been shown long enough — fall through to normal device handling
+                _last_sync_render = None
+            elif _last_sync_render is not None:
+                # Sync just finished and status was reset to something else; clear marker
+                _last_sync_render = None
+
             allowed, udid, reason = device_allowed()
             if allowed:
                 _backup_running = True

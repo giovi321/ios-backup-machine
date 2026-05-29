@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 # backup-sync.py — Double-tap / long-press / web UI: sync backups to remote server
+#
+# Does NOT touch the e-paper display. iosbackupmachine.py owns the EPD and reads
+# this script's status writes from backup_status.json to render sync UI.
 import os, sys, time, json, subprocess, yaml, traceback
 from datetime import datetime
 
@@ -33,14 +36,6 @@ def write_status(state, **extra):
             json.dump(data, f)
     except Exception:
         pass
-
-
-def fmt_bytes(n):
-    n = float(n)
-    for unit in ("B", "KB", "MB", "GB", "TB"):
-        if n < 1024 or unit == "TB":
-            return f"{int(n)} B" if unit == "B" else f"{n:.1f} {unit}"
-        n /= 1024
 
 
 def backup_running():
@@ -84,7 +79,7 @@ def kill_stale_rsync(logf):
         logf.write(f"[WARN] kill_stale_rsync failed: {e}\n")
 
 
-# ---------- Setup: config + log file FIRST ----------
+# ---------- Setup ----------
 CFG = load_config(CONFIG_PATH)
 for k, v in CFG.get("env", {}).items():
     os.environ[k] = str(v)
@@ -101,7 +96,7 @@ except Exception as e:
 
 logf.write(f"[{ts}] backup-sync.py starting (pid={os.getpid()})\n")
 
-# ---------- Guards (visible in dashboard + log) ----------
+# ---------- Guards ----------
 if not CFG.get("sync", {}).get("enabled", False):
     logf.write("[SKIP] sync is disabled in config\n")
     write_status("sync_error", message="Sync is disabled in settings.")
@@ -122,88 +117,9 @@ if backup_running():
 # Clean up any orphaned rsync processes from previous interrupted runs
 kill_stale_rsync(logf)
 
-# ---------- Status BEFORE EPD init so dashboard updates even if display fails ----------
-write_status("syncing", percent=0)
-
-# ---------- EPD setup (best effort, non-fatal) ----------
-ORIENT = str(CFG.get("orientation", "landscape_right")).lower()
-CUSTOM_FONT = CFG.get("font_path") or "/root/iosbackupmachine/UbuntuMono-Regular.ttf"
-
-epd = None
-F = F_SM = None
-PW = PH = LW = LH = 0
-_Image = _ImageDraw = None
-try:
-    from PIL import Image as _Image, ImageDraw as _ImageDraw, ImageFont
-    from waveshare_epd import epd2in13_V4, epdconfig
-
-    def _font(sz):
-        try:
-            return ImageFont.truetype(CUSTOM_FONT, sz)
-        except Exception:
-            return ImageFont.load_default()
-
-    F = _font(14)
-    F_SM = _font(12)
-    try:
-        epdconfig.module_exit()
-    except Exception:
-        pass
-    epd = epd2in13_V4.EPD()
-    epd.init()
-    epd.Clear(0xFF)
-    PW, PH = epd.width, epd.height
-    LW, LH = (PH, PW) if ORIENT in ("landscape_right", "landscape_left") else (PW, PH)
-    logf.write(f"[INFO] EPD initialized {PW}x{PH}, orientation={ORIENT}\n")
-except Exception as e:
-    logf.write(f"[WARN] EPD init failed, continuing without display: {e}\n")
-    epd = None
-
-BAR_H = 8
-BAR_MARGIN = 16
-
-
-def text_wh(d, t, f):
-    try:
-        l, t0, r, b = d.textbbox((0, 0), t, font=f)
-        return r - l, b - t0
-    except AttributeError:
-        return d.textsize(t, font=f)
-
-
-def show_message(lines_with_fonts, percent=None):
-    if epd is None or _Image is None:
-        return
-    try:
-        img = _Image.new("1", (LW, LH), 255)
-        drw = _ImageDraw.Draw(img)
-        spacing = 6
-        heights = [text_wh(drw, ln, f)[1] for ln, f in lines_with_fonts]
-        total_h = sum(heights) + spacing * (len(lines_with_fonts) - 1)
-        if percent is not None:
-            total_h += BAR_H + spacing
-        y = (LH - total_h) // 2
-        for ln, f in lines_with_fonts:
-            tw, th = text_wh(drw, ln, f)
-            drw.text(((LW - tw) // 2, y), ln, font=f, fill=0)
-            y += th + spacing
-        if percent is not None:
-            bar_x = BAR_MARGIN
-            bar_w = LW - 2 * BAR_MARGIN
-            drw.rectangle([bar_x, y, bar_x + bar_w, y + BAR_H], outline=0)
-            fill_w = int(bar_w * min(percent, 100) / 100)
-            if fill_w > 0:
-                drw.rectangle([bar_x, y, bar_x + fill_w, y + BAR_H], fill=0)
-        out = img.rotate(90, expand=True) if ORIENT == "landscape_right" else (
-              img.rotate(270, expand=True) if ORIENT == "landscape_left" else img)
-        if out.size != (PW, PH):
-            out = out.resize((PW, PH))
-        epd.display(epd.getbuffer(out))
-    except Exception as e:
-        logf.write(f"[WARN] show_message failed: {e}\n")
-
-
-show_message([("Syncing to remote server...", F), ("Preparing...", F_SM)], percent=0)
+# Initial status: iosbackupmachine.py picks this up and starts drawing sync UI
+write_status("syncing", percent=0, bytes=0, total=0, speed="")
+logf.write("[INFO] status set to syncing — display owned by iosbackupmachine.py\n")
 
 # ---------- Notifications (non-fatal) ----------
 try:
@@ -216,22 +132,18 @@ send_notification("sync_start")
 # ---------- Run sync ----------
 import sync_manager
 
-last_display_update = [0]
-
 
 def on_progress(info):
-    pct = info["pct"]
-    elapsed = info["elapsed"]
-    write_status("syncing", percent=pct)
+    pct = info.get("pct", 0)
+    elapsed = info.get("elapsed", 0.0)
+    write_status(
+        "syncing",
+        percent=pct,
+        bytes=info.get("bytes", 0),
+        total=info.get("total", 0),
+        speed=info.get("speed", ""),
+    )
     logf.write(f"[SYNC] {pct}% ({elapsed:.0f}s)\n")
-    now = time.time()
-    if now - last_display_update[0] >= 2 or pct >= 100:
-        last_display_update[0] = now
-        if info.get("total"):
-            sub = f"{fmt_bytes(info['bytes'])} / {fmt_bytes(info['total'])} | {info['speed']}"
-        else:
-            sub = f"{fmt_bytes(info['bytes'])} | {info['speed']}"
-        show_message([("Syncing to remote server...", F), (sub, F_SM)], percent=pct)
 
 
 try:
@@ -244,36 +156,12 @@ except Exception as e:
 if result["success"]:
     logf.write(f"[OK] {result['message']}\n")
     write_status("sync_complete", message=result["message"])
-    show_message([("Sync complete", F), (result["message"], F_SM)], percent=100)
     send_notification("sync_complete", {"message": result["message"]})
 else:
     msg = result["message"]
     logf.write(f"[ERROR] {msg}\n")
-    short = msg[:37] + "..." if len(msg) > 40 else msg
     write_status("sync_error", message=msg)
-    show_message([("Sync failed", F), (short, F_SM)])
     send_notification("sync_error", {"error": msg})
 
 logf.close()
-
-# Release display so shutdown / boot-message can use it
-if epd is not None:
-    try:
-        epd.sleep()
-    except Exception:
-        pass
-    try:
-        from waveshare_epd import epdconfig as _epdconfig
-        _epdconfig.module_exit()
-    except Exception:
-        pass
-
-time.sleep(5)
-
-# Chain to boot screen
-next_path = os.path.join(SCRIPT_DIR, "boot-message.py")
-if os.path.isfile(next_path):
-    rc = subprocess.run([sys.executable, next_path]).returncode
-    sys.exit(rc)
-else:
-    sys.exit(0)
+sys.exit(0)
