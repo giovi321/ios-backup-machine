@@ -1550,6 +1550,10 @@ def sync_start():
     if cur.get("state") == "syncing":
         flash("Sync is already in progress.", "error")
         return redirect(request.referrer or url_for("index"))
+    # Mutual exclusion: don't start a sync while a backup is running.
+    if _backup_in_progress():
+        flash("A backup is in progress. Wait for it to finish (or use auto-sync).", "error")
+        return redirect(request.referrer or url_for("index"))
     sync_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "backup-sync.py")
     if not os.path.isfile(sync_script):
         flash("backup-sync.py not found on disk.", "error")
@@ -1631,6 +1635,17 @@ def _iphone_connected():
         return False
 
 
+def _backup_in_progress():
+    """True if a backup is running (status or a live idevicebackup2)."""
+    if (_read_backup_status() or {}).get("state") in ("backing_up", "connected"):
+        return True
+    try:
+        return subprocess.run(["pgrep", "-f", "idevicebackup2"],
+                              capture_output=True).returncode == 0
+    except Exception:
+        return False
+
+
 @app.route("/api/start-backup", methods=["POST"])
 @login_required
 def api_start_backup():
@@ -1640,6 +1655,10 @@ def api_start_backup():
     # Don't trigger a backup when no iPhone is connected.
     if not _iphone_connected():
         flash("No iPhone connected. Plug in and unlock your iPhone, then try again.", "error")
+        return redirect(request.referrer or url_for("index"))
+    # Mutual exclusion: don't start a backup while a sync is running.
+    if (_read_backup_status() or {}).get("state") == "syncing":
+        flash("A sync is in progress. Wait for it to finish, then start the backup.", "error")
         return redirect(request.referrer or url_for("index"))
     try:
         os.makedirs(LOG_DIR, exist_ok=True)

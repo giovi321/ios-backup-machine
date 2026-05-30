@@ -25,6 +25,17 @@ if pgrep -f "python.*backup-sync\.py" >/dev/null 2>&1; then
     exit 0
 fi
 
+# Check 3b: Is a sync in progress per the status file (covers the in-process
+# auto-sync that runs after a backup)? Don't launch a second sync over it.
+STATUS_FILE=/var/log/iosbackupmachine/backup_status.json
+if [ -f "$STATUS_FILE" ]; then
+    STATE=$(/root/iosbackupmachine/bin/python3 -c "import json;print(json.load(open('$STATUS_FILE')).get('state',''))" 2>/dev/null || echo "")
+    if [ "$STATE" = "syncing" ]; then
+        log "A sync is already in progress (status=syncing), ignoring long press."
+        exit 0
+    fi
+fi
+
 # Check 4: Is setup completed?
 if ! /root/iosbackupmachine/bin/python3 -c "
 import yaml, sys

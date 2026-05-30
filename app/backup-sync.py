@@ -80,6 +80,23 @@ def another_sync_running():
         return False
 
 
+def sync_in_progress():
+    """True if a sync is already running — either another backup-sync.py or the
+    in-process auto-sync in iosbackupmachine.py (status 'syncing' + a live rsync).
+    Guards against kill_stale_rsync() killing an active auto-sync's rsync."""
+    try:
+        with open(STATUS_FILE, "r") as f:
+            if (json.load(f) or {}).get("state") != "syncing":
+                return False
+    except Exception:
+        return False
+    try:
+        return subprocess.run(["pgrep", "-f", "/usr/bin/rsync"],
+                              capture_output=True).returncode == 0
+    except Exception:
+        return False
+
+
 def kill_stale_rsync(logf):
     """Kill orphaned rsync processes left behind by previous interrupted runs."""
     try:
@@ -123,6 +140,11 @@ if another_sync_running():
 if backup_running():
     logf.write("[SKIP] backup (idevicebackup2) in progress\n")
     write_status("sync_error", message="Backup in progress — sync skipped.")
+    logf.close()
+    sys.exit(0)
+
+if sync_in_progress():
+    logf.write("[SKIP] a sync is already in progress (in-process or external)\n")
     logf.close()
     sys.exit(0)
 

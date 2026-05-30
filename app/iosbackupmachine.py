@@ -618,12 +618,21 @@ class Animator:
                 self._do_shutdown(); return
             with self.lock:
                 s = dict(self.state)
-            # Auto-detect a screen-type change and force ONE full refresh on it,
-            # so the previous screen can never ghost/overlap behind the new one.
-            # This is the single mechanism that guarantees one screen at a time.
+            # Auto-detect a screen change and force ONE full refresh on it, so the
+            # previous screen can never ghost/overlap behind the new one. This is
+            # the single mechanism that guarantees one screen at a time.
+            # For static screens the key includes the actual text, so two
+            # different results (e.g. "Sync failed" -> "Sync complete") still
+            # trigger a clearing full refresh. Animated screens (backup/sync
+            # progress) redraw via partial every tick, so their content is excluded.
+            if s.get("animate"):
+                content = None
+            else:
+                il = s.get("info_lines")
+                content = (s.get("subtitle"), s.get("center_block"),
+                           tuple(tuple(x) for x in il) if il else None)
             layout = (s.get("screen"), bool(s.get("show_header")),
-                      s.get("percent") is None, bool(s.get("center_block")),
-                      bool(s.get("info_lines")))
+                      s.get("percent") is None, content)
             if layout != self._last_layout:
                 self._force_full = True
                 self._last_layout = layout
@@ -1048,11 +1057,14 @@ def run_backup(panel, logf, ui, _retry=0):
             "device": CFG.get("owner_lines", [""])[0],
             "verified": ok,
         })
-        time.sleep(2)
 
-        # Auto-sync to remote server if enabled
+        # Auto-sync decision. Claim the sync slot (status=syncing) BEFORE the
+        # "Backup completed" pause, so a sync triggered during it (web Sync Now /
+        # long-press, both of which refuse when status==syncing) can't race the
+        # auto-sync — backup and sync stay mutually exclusive.
         sync_cfg = CFG.get("sync", {})
-        if sync_cfg.get("enabled") and sync_cfg.get("auto_sync") and _sync_manager:
+        do_autosync = bool(sync_cfg.get("enabled") and sync_cfg.get("auto_sync") and _sync_manager)
+        if do_autosync:
             # Power-aware: skip auto-sync on low battery (unless charging).
             try:
                 import power as _power
@@ -1063,8 +1075,13 @@ def run_backup(panel, logf, ui, _retry=0):
                 if logf: logf.write(f"[SYNC] Skipped auto-sync: {_reason}\n")
                 write_status("sync_error", message=_reason)
                 send_notification("sync_error", {"error": _reason})
-                return 0
+                do_autosync = False
+            else:
+                write_status("syncing", percent=0)   # claim the slot now
 
+        time.sleep(2)   # let the user see "Backup completed"
+
+        if do_autosync:
             # Auto-sync logs to its own sync-*.log (consistent with a manual sync),
             # not the backup log; the backup log just gets a pointer.
             sync_ts = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -1076,7 +1093,6 @@ def run_backup(panel, logf, ui, _retry=0):
                 synclogf = None
             if logf: logf.write(f"[SYNC] Auto-sync started; see {os.path.basename(sync_logpath)}\n")
 
-            write_status("syncing", percent=0)
             send_notification("sync_start")
             ui.set(screen="normal", subtitle="Syncing to remote server...", percent=0,
                    animate=True, show_header=True)
