@@ -126,6 +126,25 @@ if backup_running():
     logf.close()
     sys.exit(0)
 
+# Power-aware: refuse to start a sync on low battery (unless charging).
+# Fail-open if the battery can't be read.
+try:
+    import power
+    _threshold = CFG.get("sync", {}).get("min_battery_percent", 35)
+    _batt_ok, _batt_reason = power.sync_allowed(_threshold)
+except Exception:
+    _batt_ok, _batt_reason = True, ""
+if not _batt_ok:
+    logf.write(f"[SKIP] {_batt_reason}\n")
+    write_status("sync_error", message=_batt_reason)
+    try:
+        from notifications import send_notification as _notify
+        _notify("sync_error", {"error": _batt_reason})
+    except Exception:
+        pass
+    logf.close()
+    sys.exit(0)
+
 # Clean up any orphaned rsync processes from previous interrupted runs
 kill_stale_rsync(logf)
 

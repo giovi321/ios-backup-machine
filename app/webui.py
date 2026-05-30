@@ -25,6 +25,8 @@ import wg_crypto
 import wg_manager
 import sync_crypto
 import sync_manager
+import config_schema
+import power
 
 VERSION = "4.0"
 
@@ -61,35 +63,12 @@ logging.getLogger("werkzeug").setLevel(logging.WARNING)
 # ---------------------------------------------------------------------------
 
 def load_config():
-    with open(CONFIG_PATH, "r") as f:
-        cfg = yaml.safe_load(f) or {}
-    _apply_defaults(cfg)
-    return cfg
+    # config_schema is the single source of defaults + the migration step.
+    return config_schema.load_config(CONFIG_PATH)
 
 def _apply_defaults(cfg):
-    cfg.setdefault("backup_dir", "/media/iosbackup/")
-    cfg.setdefault("marker_file", ".foldermarker")
-    cfg.setdefault("disk_device", "/dev/mmcblk1")
-    cfg.setdefault("orientation", "landscape_right")
-    cfg.setdefault("font_path", "/root/iosbackupmachine/UbuntuMono-Regular.ttf")
-    cfg.setdefault("owner_lines", ["Name", "telephone", "email", "message"])
-    cfg.setdefault("error_codes", {})
-    cfg.setdefault("env", {})
-    cfg.setdefault("auth", {"password_hash": ""})
-    cfg.setdefault("backup", {"auto_start": True, "notify_on_rejected": True})
-    cfg.setdefault("backup_encryption", {"encryption_confirmed": False})
-    cfg.setdefault("device_filter", {"enabled": False, "allowed_devices": []})
-    cfg.setdefault("wifi", {"enabled": False, "ssid": "", "password": ""})
-    cfg.setdefault("ntp", {"enabled": True, "servers": ["pool.ntp.org", "time.google.com"]})
-    cfg.setdefault("webui", {"enabled": True, "port": 8080, "bind_interfaces": ["all"], "secret_key": "change-me"})
-    cfg.setdefault("notifications", {
-        "webhook": {"enabled": False, "url": "", "events": ["backup_complete", "backup_error"]},
-        "mqtt": {"enabled": False, "broker": "", "port": 1883, "username": "", "password": "", "topic_prefix": "iosbackupmachine", "events": ["backup_complete", "backup_error"]},
-    })
-    cfg.setdefault("wireguard", {"enabled": False, "auto_connect": False, "auto_connect_on": ["iphone"], "interface_name": "wg0"})
-    cfg.setdefault("credential_encryption", {"passphrase_mode": "udid"})
-    cfg.setdefault("sync", {"enabled": False, "auto_sync": False, "allowed_network": "any"})
-    cfg.setdefault("setup_completed", False)
+    # Kept for backward compatibility; defaults now live in config_schema.
+    return config_schema.apply_defaults(cfg)
 
 # ---------------------------------------------------------------------------
 # Authentication helpers
@@ -123,8 +102,9 @@ def login_required(f):
     return decorated
 
 def save_config(cfg):
-    with open(CONFIG_PATH, "w") as f:
-        yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+    # Atomic write (tmp + fsync + rename) — a power loss mid-save can no longer
+    # truncate config.yaml.
+    config_schema.atomic_save(cfg, CONFIG_PATH)
 
 # ---------------------------------------------------------------------------
 # First-start / secret-key helpers
@@ -1367,6 +1347,120 @@ def api_status():
         "time": time.strftime("%Y-%m-%d %H:%M:%S"),
     })
 
+# --- Health endpoint ---
+_HEALTH_UNITS = ["iosbackupmachine", "webui", "pisugar-server", "usbmuxd"]
+
+
+def _service_states(units=None):
+    """Return {unit: active|inactive|failed|unknown} via systemctl is-active."""
+    states = {}
+    for u in (units or _HEALTH_UNITS):
+        try:
+            r = subprocess.run(["systemctl", "is-active", u],
+                               capture_output=True, text=True, timeout=5)
+            states[u] = r.stdout.strip() or "unknown"
+        except Exception:
+            states[u] = "unknown"
+    return states
+
+
+def _iso_from_mtime(ts):
+    return time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(ts))
+
+
+def _last_backup_info():
+    """Current backup state + newest backup folder time (best-effort)."""
+    st = _read_backup_status() or {}
+    info = {
+        "state": st.get("state"),
+        "timestamp": st.get("timestamp"),
+        "completed_at": st.get("completed_at"),
+        "last_backup_time": None,
+    }
+    try:
+        bd = load_config().get("backup_dir", "/media/iosbackup/")
+        latest = None
+        if os.path.isdir(bd):
+            for e in os.scandir(bd):
+                if e.is_dir() and os.path.exists(os.path.join(e.path, "Info.plist")):
+                    m = e.stat().st_mtime
+                    if latest is None or m > latest:
+                        latest = m
+        if latest:
+            info["last_backup_time"] = _iso_from_mtime(latest)
+    except Exception:
+        pass
+    return info
+
+
+def _last_sync_info():
+    """Last sync result from the status file, else newest sync log mtime."""
+    st = _read_backup_status() or {}
+    state = st.get("state")
+    if state in ("syncing", "sync_complete", "sync_error"):
+        return {"state": state, "message": st.get("message"), "timestamp": st.get("timestamp")}
+    try:
+        logs = glob.glob(os.path.join(LOG_DIR, "sync-*.log"))
+        if logs:
+            newest = max(logs, key=os.path.getmtime)
+            return {"state": None, "timestamp": _iso_from_mtime(os.path.getmtime(newest)),
+                    "log": os.path.basename(newest)}
+    except Exception:
+        pass
+    return {"state": None, "timestamp": None}
+
+
+@app.route("/api/health")
+def api_health():
+    """Aggregate health for external monitoring. Login-exempt and free of
+    secrets (no owner info, credentials, or keys)."""
+    cfg = load_config()
+    services = _service_states()
+    storage = _get_storage_info()
+    battery = power.get_battery()
+    ip, iface_type = netutil.get_active_ip()
+    wg = cfg.get("wireguard", {})
+    network = {
+        "active_ip": ip,
+        "interface": iface_type,
+        "wifi_ip": netutil.get_wifi_ip(),
+        "usb_iphone_ip": netutil.get_usb_iphone_ip(),
+        "internet": netutil.have_connectivity(timeout=2),
+        "wireguard": wg_manager.get_wireguard_status(wg.get("interface_name", "wg0")),
+    }
+    backup = _last_backup_info()
+    sync = _last_sync_info()
+
+    # Overall rollup
+    status, warnings = "ok", []
+    if services.get("iosbackupmachine") == "failed" or services.get("webui") == "failed":
+        status = "error"; warnings.append("service failed")
+    bd_info = storage.get("backup")
+    if isinstance(bd_info, dict) and bd_info.get("percent", 0) >= 95:
+        status = "error"; warnings.append("backup disk almost full")
+    pct = battery.get("percent")
+    thr = cfg.get("sync", {}).get("min_battery_percent", 35)
+    if pct is not None and not battery.get("charging") and pct < thr and status != "error":
+        status = "warning"; warnings.append("battery low")
+    if not network["internet"] and status == "ok":
+        status = "warning"; warnings.append("no internet")
+    if backup.get("state") == "error" and status != "error":
+        status = "warning"; warnings.append("last backup error")
+
+    return jsonify({
+        "status": status,
+        "warnings": warnings,
+        "version": VERSION,
+        "time": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "services": services,
+        "disk": storage,
+        "battery": battery,
+        "network": network,
+        "backup": backup,
+        "sync": sync,
+    })
+
+
 @app.route("/api/pair", methods=["POST"])
 def api_pair():
     """Trigger iPhone pairing (shows 'Trust this computer?' on iPhone).
@@ -1519,8 +1613,10 @@ def api_import_config():
         if not isinstance(cfg, dict):
             flash("Invalid config file (not a YAML dict).", "error")
             return redirect(url_for("settings_general"))
-        with open(CONFIG_PATH, "w") as out:
-            out.write(content)
+        # Migrate + default-fill the imported config, then save atomically so a
+        # bad upload or power loss can't leave a half-written config.yaml.
+        cfg = config_schema.apply_defaults(config_schema.migrate(cfg))
+        save_config(cfg)
         flash("Config imported. Restart services to apply.", "success")
     except Exception as e:
         flash(f"Import failed: {e}", "error")

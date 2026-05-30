@@ -22,6 +22,11 @@ try:
 except ImportError:
     _sync_manager = None
 
+try:
+    import config_schema as _config_schema
+except ImportError:
+    _config_schema = None
+
 CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/iosbackupmachine/config.yaml")
 LOG_DIR = "/var/log/iosbackupmachine"
 STATUS_FILE = os.path.join(LOG_DIR, "backup_status.json")
@@ -552,8 +557,12 @@ def _check_encryption(logf, ui):
                     if not enc.get("encryption_confirmed", False):
                         enc["encryption_confirmed"] = True
                         live["backup_encryption"] = enc
-                        with open(CONFIG_PATH, "w") as f:
-                            yaml.dump(live, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+                        # Atomic write so a power loss mid-save can't truncate config.yaml.
+                        if _config_schema:
+                            _config_schema.atomic_save(live, CONFIG_PATH)
+                        else:
+                            with open(CONFIG_PATH, "w") as f:
+                                yaml.dump(live, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
                 except Exception:
                     pass
                 return True
@@ -707,6 +716,17 @@ def run_backup(panel, logf, ui, _retry=0):
         sync_cfg = CFG.get("sync", {})
         if sync_cfg.get("enabled") and sync_cfg.get("auto_sync") and _sync_manager:
             if logf: logf.write("[SYNC] Auto-sync triggered after successful backup.\n")
+            # Power-aware: skip auto-sync on low battery (unless charging).
+            try:
+                import power as _power
+                _ok, _reason = _power.sync_allowed(sync_cfg.get("min_battery_percent", 35))
+            except Exception:
+                _ok, _reason = True, ""
+            if not _ok:
+                if logf: logf.write(f"[SYNC] Skipped auto-sync: {_reason}\n")
+                write_status("sync_error", message=_reason)
+                send_notification("sync_error", {"error": _reason})
+                return 0
             write_status("syncing", percent=0)
             send_notification("sync_start")
             ui.start()

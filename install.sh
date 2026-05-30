@@ -55,6 +55,8 @@ APP_FILES=(
     "app/wg_manager.py:wg_manager.py"
     "app/sync_crypto.py:sync_crypto.py"
     "app/sync_manager.py:sync_manager.py"
+    "app/config_schema.py:config_schema.py"
+    "app/power.py:power.py"
     "scripts/iosbackupmachine_launcher.sh:iosbackupmachine_launcher.sh"
     "scripts/unplug-notify.sh:unplug-notify.sh"
     "scripts/shutdown.sh:shutdown.sh"
@@ -379,34 +381,30 @@ done
 
 # --- Config migration ---
 if [ -f "${INSTALL_DIR}/config.yaml" ]; then
-    info "Migrating config: merging new defaults into existing config.yaml"
-    # Use Python to merge new defaults without overwriting existing values
-    "${VENV_DIR}/bin/python3" - "${REPO_DIR}/config/config.yaml.example" "${INSTALL_DIR}/config.yaml" <<'PYEOF'
+    info "Migrating config: versioned schema migration + new defaults"
+    # config_schema.py (installed above) is the single migration step: it pulls
+    # in any shipped defaults from the example, runs the versioned migration,
+    # fills schema defaults, and saves atomically.
+    "${VENV_DIR}/bin/python3" - "${INSTALL_DIR}" "${REPO_DIR}/config/config.yaml.example" "${INSTALL_DIR}/config.yaml" <<'PYEOF'
 import sys, yaml
 
-example_path, config_path = sys.argv[1], sys.argv[2]
+install_dir, example_path, config_path = sys.argv[1], sys.argv[2], sys.argv[3]
+sys.path.insert(0, install_dir)
+import config_schema
 
 with open(example_path, "r") as f:
-    defaults = yaml.safe_load(f) or {}
+    example = yaml.safe_load(f) or {}
 with open(config_path, "r") as f:
     current = yaml.safe_load(f) or {}
 
-def merge(base, override):
-    """Recursively merge base into override (override wins)."""
-    result = dict(base)
-    for k, v in override.items():
-        if k in result and isinstance(result[k], dict) and isinstance(v, dict):
-            result[k] = merge(result[k], v)
-        else:
-            result[k] = v
-    return result
+# Bring in shipped example defaults (e.g. error_codes) without overwriting user
+# values, then run the versioned schema migration + atomic save.
+merged = config_schema._deep_merge(example, current)
+merged = config_schema.migrate(merged)
+merged = config_schema.apply_defaults(merged)
+config_schema.atomic_save(merged, config_path)
 
-merged = merge(defaults, current)
-
-with open(config_path, "w") as f:
-    yaml.dump(merged, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
-
-added = [k for k in defaults if k not in current]
+added = [k for k in merged if k not in current]
 if added:
     print(f"    Added new config keys: {', '.join(added)}")
 PYEOF

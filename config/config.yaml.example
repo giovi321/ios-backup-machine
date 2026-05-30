@@ -1,4 +1,6 @@
 # /root/iosbackupmachine/config.yaml
+# config_version is managed automatically; do not edit by hand.
+config_version: 1
 setup_completed: false
 backup_dir: /media/iosbackup/
 marker_file: .foldermarker
@@ -92,3 +94,17 @@ wireguard:
   interface_name: "wg0"
   # WireGuard config is stored encrypted in /root/iosbackupmachine/wireguard.enc
   # The encryption key is derived from the connected iPhone's UUID
+
+# --- Credential encryption (WireGuard + remote sync) ---
+credential_encryption:
+  passphrase_mode: udid   # "udid" (auto-decrypt when iPhone connected) or "custom"
+
+# --- Remote sync (rsync over SSH) ---
+sync:
+  enabled: false
+  auto_sync: false           # sync automatically after each successful backup
+  allowed_network: any       # any | wifi | wifi_ssid | usb
+  # Power-aware sync: refuse to start (and auto-abort) a sync when not charging
+  # and battery is below this percent. Kept above PiSugar's 30% auto-shutdown so
+  # a long rsync isn't cut mid-transfer. SSH credentials live encrypted in sync.enc.
+  min_battery_percent: 35

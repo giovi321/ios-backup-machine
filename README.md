@@ -234,6 +234,8 @@ wireguard:
 - The `.foldermarker` file confirms the SD card is mounted correctly.  
 - Edit `owner_lines` to customize contact info shown on the e-ink display.  
 - `disk_device` allows monitoring disk usage after backup.
+- Config is written **atomically** (tmp + `fsync` + rename), so a power loss mid-save can't truncate `config.yaml`.
+- `config_version` is managed automatically: on update, a single versioned migration step fills new defaults without overwriting your values. Don't edit it by hand.
 - **WireGuard config** is stored separately in `/root/wireguard.enc`, encrypted with the iPhone's UUID.
 - **`secret_key`** is auto-generated on first start and persisted to `config.yaml`. Never needs manual editing.
 
@@ -468,9 +470,34 @@ Sync backups to a remote server via **rsync over SSH**. Supports SSH key and pas
 - **Stall detection**: if rsync produces no output for **2 minutes**, the dashboard shows a yellow "Stalled" badge and the e-ink switches to "Sync STALLED". After **15 minutes** without progress the sync is auto-aborted with a sync_error.
 - **Cancel button**: while a sync is in progress, a Cancel Sync button appears on the dashboard and Remote Sync settings page. It kills `rsync` + `backup-sync.py` immediately and reports `Cancelled by user.`. The end-state (complete / failed / cancelled) stays on the e-ink until another event (new sync, backup start, service restart).
 - **SSH keepalive**: `ServerAliveInterval=30 / CountMax=3` detects dead TCP connections in ~90 s.
+- **Resumable across reboots**: rsync runs with `--partial --partial-dir=.rsync-partial`, so a reboot (or power loss) mid-sync resumes from where it stopped instead of restarting from zero. Incomplete files live in `.rsync-partial/` on the remote.
+- **Power-aware**: a sync won't start — and an in-progress sync auto-aborts — when the battery is below `sync.min_battery_percent` (default **35%**) and the device isn't charging, so a long transfer isn't cut mid-way by PiSugar's 30% auto-shutdown. The aborted transfer resumes on the next run (see above). The threshold is tunable in `config.yaml`; battery is read fail-open (if the UPS can't be reached, the sync proceeds).
 - Configure via web UI under **Remote Sync**.
 
 **Remote server requirement**: `rsync` must be installed on the receiving server (`sudo apt install rsync`).
+
+## Health endpoint
+
+`GET /api/health` returns a JSON snapshot for external monitoring (Uptime Kuma, Home Assistant, a cron check, etc.). It is **login-exempt** and contains no secrets (no owner info, credentials, or keys):
+
+```json
+{
+  "status": "ok",                       // ok | warning | error (rollup)
+  "warnings": [],
+  "version": "4.0",
+  "time": "2026-05-30T11:13:31",
+  "services": { "iosbackupmachine": "active", "webui": "active",
+                "pisugar-server": "active", "usbmuxd": "active" },
+  "disk":     { "root": {...}, "backup": { "free": "...", "percent": 42.0 } },
+  "battery":  { "percent": 62.0, "charging": false },
+  "network":  { "active_ip": "192.168.1.50", "interface": "wifi",
+                "internet": true, "wireguard": {...} },
+  "backup":   { "state": "complete", "last_backup_time": "..." },
+  "sync":     { "state": "sync_complete", "timestamp": "..." }
+}
+```
+
+`status` rolls up to `error` (failed service / backup disk ≥95%), `warning` (low battery, no internet, last backup errored), or `ok`.
 
 ## Notifications
 
@@ -494,14 +521,8 @@ Things I want to get to. PRs welcome.
 
 ### Architecture
 - **Single e-paper owner.** Right now every screen (boot, idle, button-info, backup, sync, unplug, owner) is its own systemd unit or subprocess that opens the EPD on its own. That's why we keep hitting SPI bus conflicts and "screen not updating" bugs. Replace it with one long-running display service that owns the EPD and renders frames from a status file or a small socket protocol. Everything else just writes state.
-- **Atomic config writes.** `config.yaml` is rewritten in place. A power loss mid-save can leave it empty. Use tmp + rename like the status file already does.
-- **Config schema + migrations.** Drop the ad-hoc `setdefault` chains in favour of a versioned schema and a single migration step on update.
 
-### Reliability
-- **Health endpoint.** `/api/health` returning service states, last backup, last sync, disk free, battery, network. Easy hook for external monitoring.
-- **Resumable rsync across reboots.** Today a reboot mid-sync starts the next run from zero. Use `--partial-dir` and a stable temp location so the next sync picks up where it stopped.
-- **Power-aware sync.** Don't start (or auto-abort) a sync when the UPS reports under N% battery. Same idea as the existing backup-stops-at-30% guard.
-- **Tests.** At minimum: unit tests for `sync_manager` progress parsing, `sync_crypto` round-trip, and `wg_crypto` UDID derivation. CI on push.
+  _Config-side architecture items (**atomic config writes** and a **versioned config schema + migrations**) are done — see [Configuration](#configuration)._
 
 ### Features
 - **Multiple sync destinations.** Today there's exactly one remote. Allow a list and let the user pick which one runs on auto-sync vs. manual.
@@ -518,6 +539,20 @@ Things I want to get to. PRs welcome.
 ### Docs
 - Photo walkthrough of the hardware assembly (case, HAT alignment, PiSugar wiring).
 - Troubleshooting section for the things I keep answering in issues (SSH key with Windows line endings, missing rsync on the remote, EPD stuck after power loss).
+
+## Development
+
+Unit tests cover the hardware-independent core (rsync progress parsing, sync/WireGuard
+credential crypto round-trips, the config schema/migration, and the power-aware battery
+logic). They import the flat app modules via a path shim and need no e-paper hardware.
+
+```bash
+pip install -r requirements.txt -r requirements-dev.txt
+pytest
+```
+
+CI (GitHub Actions, `.github/workflows/ci.yml`) runs the suite on Python 3.11–3.13 on every
+push and pull request.
 
 ## License
 MIT License  

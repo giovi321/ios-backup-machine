@@ -9,6 +9,11 @@ import os, sys, re, select, subprocess, tempfile, time, yaml
 
 import sync_crypto
 
+try:
+    import power
+except ImportError:
+    power = None
+
 CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/iosbackupmachine/config.yaml")
 
 
@@ -96,7 +101,11 @@ def _prepare_sync(passphrase=None, backup_dir=None, progress=False):
                 f"-o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=3")
     key_file = None
 
-    rsync_flags = ["-az", "--delete", "--rsync-path=/usr/bin/rsync"]
+    # --partial + --partial-dir keep incomplete files in a stable dir on the
+    # remote, so a reboot mid-sync resumes instead of restarting from zero.
+    # rsync auto-excludes the partial-dir from --delete.
+    rsync_flags = ["-az", "--delete", "--partial", "--partial-dir=.rsync-partial",
+                   "--rsync-path=/usr/bin/rsync"]
     if progress:
         rsync_flags.append("--info=progress2")
         rsync_flags.append("--no-inc-recursive")
@@ -130,6 +139,33 @@ def _cleanup_key(key_file):
 _PROGRESS_RE = re.compile(r"([\d,]+)\s+(\d+)%\s+([\d.]+[kKMGT]?B/s)")
 
 
+def parse_progress_line(text):
+    """Parse an rsync ``--info=progress2`` chunk.
+
+    Returns ``{"bytes", "pct", "speed", "total"}`` for the first progress match
+    in ``text``, or ``None`` if there is none. Pure and stateless so it can be
+    unit-tested without spawning rsync.
+    """
+    m = _PROGRESS_RE.search(text or "")
+    if not m:
+        return None
+    bytes_transferred = int(m.group(1).replace(",", ""))
+    pct = int(m.group(2))
+    speed = m.group(3)
+    total = int(bytes_transferred * 100 / pct) if pct > 0 else 0
+    return {"bytes": bytes_transferred, "pct": pct, "speed": speed, "total": total}
+
+
+def _resolve_min_battery(min_battery):
+    """Resolve the power-aware sync threshold (config default 35; 0 disables)."""
+    if min_battery is not None:
+        return min_battery
+    try:
+        return _load_config().get("sync", {}).get("min_battery_percent", 35)
+    except Exception:
+        return 35
+
+
 def run_sync(passphrase=None, backup_dir=None):
     """
     Run rsync to sync backups to remote server (blocking, no progress).
@@ -160,16 +196,20 @@ def run_sync(passphrase=None, backup_dir=None):
         _cleanup_key(key_file)
 
 
-def run_sync_with_progress(passphrase=None, backup_dir=None, on_progress=None, log_file=None):
+def run_sync_with_progress(passphrase=None, backup_dir=None, on_progress=None, log_file=None,
+                           min_battery=None):
     """
     Run rsync with real-time progress reporting.
     on_progress(info: dict) is called as progress updates arrive.
     log_file: optional writable file object — raw rsync output (stdout+stderr) is teed to it.
+    min_battery: power-aware abort threshold (percent). None → config default (35); 0 disables.
     Returns dict: {success: bool, message: str, duration: float}
     """
     cmd, key_file, err = _prepare_sync(passphrase=passphrase, backup_dir=backup_dir, progress=True)
     if err:
         return err
+
+    min_battery = _resolve_min_battery(min_battery)
 
     # Two-phase watchdog:
     #   1. Initial scan phase — rsync is building the file list (--no-inc-recursive).
@@ -183,10 +223,14 @@ def run_sync_with_progress(passphrase=None, backup_dir=None, on_progress=None, l
     STALL_WARN_SEC = 120     # 2 min — small ARM SBC + slow remote can pause this long
     STALL_KILL_SEC = 900     # 15 min — kill stall after transfer has started
 
+    BATTERY_CHECK_SEC = 30   # how often to poll the UPS for the abort guard
+
     start = time.time()
     proc = None
     killed_for_stall = False
     killed_for_scan = False
+    killed_for_battery = False
+    battery_reason = ""
     try:
         print(f"[SYNC] Running (progress): {' '.join(cmd[:4])}...", flush=True)
         if log_file:
@@ -209,8 +253,30 @@ def run_sync_with_progress(passphrase=None, backup_dir=None, on_progress=None, l
         stall_warned = False
         scan_notified = False
         scan_start = time.time()
+        last_batt_check = time.time()
 
         while True:
+            # Power-aware abort: if the UPS drops below the threshold (and isn't
+            # charging) mid-sync, kill rsync so it doesn't get cut by PiSugar's
+            # own auto-shutdown — and so --partial-dir can resume it next time.
+            if min_battery and power and time.time() - last_batt_check >= BATTERY_CHECK_SEC:
+                last_batt_check = time.time()
+                batt_ok, batt_reason = power.sync_allowed(min_battery)
+                if not batt_ok:
+                    killed_for_battery = True
+                    battery_reason = batt_reason
+                    if log_file:
+                        log_file.write(f"[ABORT] {batt_reason} — killing rsync\n")
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+                    try:
+                        proc.wait(timeout=5)
+                    except Exception:
+                        pass
+                    break
+
             if proc.poll() is not None:
                 # Drain anything still buffered
                 try:
@@ -243,12 +309,12 @@ def run_sync_with_progress(passphrase=None, backup_dir=None, on_progress=None, l
                         log_file.write(chunk)
                     except Exception:
                         pass
-                m = _PROGRESS_RE.search(chunk)
-                if m and on_progress:
-                    bytes_transferred = int(m.group(1).replace(",", ""))
-                    pct = int(m.group(2))
-                    speed = m.group(3)
-                    total = int(bytes_transferred * 100 / pct) if pct > 0 else 0
+                parsed = parse_progress_line(chunk)
+                if parsed and on_progress:
+                    bytes_transferred = parsed["bytes"]
+                    pct = parsed["pct"]
+                    speed = parsed["speed"]
+                    total = parsed["total"]
                     if not seen_progress:
                         seen_progress = True
                         if log_file:
@@ -334,6 +400,10 @@ def run_sync_with_progress(passphrase=None, backup_dir=None, on_progress=None, l
 
         duration = time.time() - start
 
+        if killed_for_battery:
+            return {"success": False,
+                    "message": f"Sync aborted: {battery_reason} Will resume next time.",
+                    "duration": duration}
         if killed_for_scan:
             mins = SCAN_KILL_SEC // 60
             return {"success": False,
