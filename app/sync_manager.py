@@ -101,14 +101,17 @@ def _prepare_sync(passphrase=None, backup_dir=None, progress=False):
                 f"-o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=3")
     key_file = None
 
-    # --partial + --partial-dir keep incomplete files in a stable dir on the
-    # remote, so a reboot mid-sync resumes instead of restarting from zero.
-    # rsync auto-excludes the partial-dir from --delete.
-    rsync_flags = ["-az", "--delete", "--partial", "--partial-dir=.rsync-partial",
+    # -a (archive) but NOT -z: iOS backups are encrypted / already-compressed, so
+    # gzip gains ~nothing and just burns the Radxa's weak CPU (and can bottleneck
+    # the transfer). --partial + --partial-dir keep incomplete files in a stable
+    # dir on the remote so a reboot mid-sync resumes; rsync excludes it from --delete.
+    rsync_flags = ["-a", "--delete", "--partial", "--partial-dir=.rsync-partial",
                    "--rsync-path=/usr/bin/rsync"]
     if progress:
-        rsync_flags.append("--info=progress2")
-        rsync_flags.append("--no-inc-recursive")
+        # --outbuf=L line-buffers rsync's output. Without it, rsync block-buffers
+        # progress2 to the pipe and emits it in bursts with long gaps, which
+        # trips the stall detector even though the transfer is alive.
+        rsync_flags += ["--info=progress2", "--no-inc-recursive", "--outbuf=L"]
 
     if auth_method == "key" and ssh_key:
         fd, key_file = tempfile.mkstemp(prefix="sync_key_", suffix=".pem")
