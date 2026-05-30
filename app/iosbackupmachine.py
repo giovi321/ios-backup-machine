@@ -499,7 +499,10 @@ class Panel:
                     tw, th = self._text_wh(drw, ln, F_MD)
                     drw.text(((LW - tw)//2, y), ln, font=F_MD, fill=0); y += th + 2
 
-        if center_block:
+        # center_block belongs to the "complete" result screen only. Guard against
+        # a stale center_block (left in the Animator state by a previous result
+        # screen) bleeding onto a normal screen and overlapping its subtitle.
+        if center_block and screen == "complete":
             lines = []
             for ln in center_block.strip().splitlines():
                 if ln.strip():
