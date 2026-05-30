@@ -164,6 +164,12 @@ send_notification("sync_start")
 import sync_manager
 
 
+# Throttle progress logging: only on a percent change or every 30s, so a stuck
+# or slow sync leaves a sparse, readable trail instead of a line every second.
+# Scan and stall transitions are logged separately (once) by sync_manager.
+_last_log = {"pct": None, "t": 0.0}
+
+
 def on_progress(info):
     pct = info.get("pct", 0)
     elapsed = info.get("elapsed", 0.0)
@@ -178,13 +184,12 @@ def on_progress(info):
         scanning=bool(info.get("scanning", False)),
         scan_seconds=int(info.get("scan_seconds", 0)),
     )
-    if info.get("scanning"):
-        # Logged once per state transition by sync_manager; avoid spamming here.
-        pass
-    elif info.get("stalled"):
-        logf.write(f"[STALL] no progress for {info.get('stalled_seconds', 0)}s (last {pct}%)\n")
-    else:
+    if info.get("scanning") or info.get("stalled"):
+        return  # transitions are logged by sync_manager; don't spam here
+    if pct != _last_log["pct"] or (elapsed - _last_log["t"]) >= 30:
         logf.write(f"[SYNC] {pct}% ({elapsed:.0f}s)\n")
+        _last_log["pct"] = pct
+        _last_log["t"] = elapsed
 
 
 try:

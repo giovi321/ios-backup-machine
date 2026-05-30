@@ -255,6 +255,27 @@ def run_sync_with_progress(passphrase=None, backup_dir=None, on_progress=None, l
         scan_start = time.time()
         last_batt_check = time.time()
 
+        # Tee rsync output to the log a line at a time, dropping the progress-bar
+        # updates (the "1,234  45%  1.2MB/s" spam) — that data is already surfaced
+        # via on_progress. Keeps file names and errors so the log stays useful
+        # without growing by tens of KB per minute.
+        log_tail = ""
+
+        def _tee(text):
+            nonlocal log_tail
+            if not log_file or not text:
+                return
+            log_tail += text
+            parts = re.split(r"[\r\n]+", log_tail)
+            log_tail = parts.pop()
+            for line in parts:
+                line = line.rstrip()
+                if line and not _PROGRESS_RE.search(line):
+                    try:
+                        log_file.write(line + "\n")
+                    except Exception:
+                        pass
+
         while True:
             # Power-aware abort: if the UPS drops below the threshold (and isn't
             # charging) mid-sync, kill rsync so it doesn't get cut by PiSugar's
@@ -284,10 +305,7 @@ def run_sync_with_progress(passphrase=None, backup_dir=None, on_progress=None, l
                 except Exception:
                     rest = b""
                 if rest and log_file:
-                    try:
-                        log_file.write(rest.decode("utf-8", errors="replace"))
-                    except Exception:
-                        pass
+                    _tee(rest.decode("utf-8", errors="replace"))
                 break
 
             r, _, _ = select.select([fd], [], [], 2.0)
@@ -304,11 +322,7 @@ def run_sync_with_progress(passphrase=None, backup_dir=None, on_progress=None, l
                     stall_warned = False
                     if log_file:
                         log_file.write("[INFO] resumed receiving data from rsync\n")
-                if log_file:
-                    try:
-                        log_file.write(chunk)
-                    except Exception:
-                        pass
+                _tee(chunk)
                 parsed = parse_progress_line(chunk)
                 if parsed and on_progress:
                     bytes_transferred = parsed["bytes"]
@@ -397,6 +411,13 @@ def run_sync_with_progress(passphrase=None, backup_dir=None, on_progress=None, l
                                 "stalled_seconds": int(idle),
                                 "scanning": False,
                             })
+
+        # Flush any trailing buffered line (e.g. a final error without a newline).
+        if log_file and log_tail.strip() and not _PROGRESS_RE.search(log_tail):
+            try:
+                log_file.write(log_tail.rstrip() + "\n")
+            except Exception:
+                pass
 
         duration = time.time() - start
 

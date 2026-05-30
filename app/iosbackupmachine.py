@@ -1004,7 +1004,6 @@ def run_backup(panel, logf, ui, _retry=0):
         # Auto-sync to remote server if enabled
         sync_cfg = CFG.get("sync", {})
         if sync_cfg.get("enabled") and sync_cfg.get("auto_sync") and _sync_manager:
-            if logf: logf.write("[SYNC] Auto-sync triggered after successful backup.\n")
             # Power-aware: skip auto-sync on low battery (unless charging).
             try:
                 import power as _power
@@ -1016,11 +1015,27 @@ def run_backup(panel, logf, ui, _retry=0):
                 write_status("sync_error", message=_reason)
                 send_notification("sync_error", {"error": _reason})
                 return 0
+
+            # Auto-sync logs to its own sync-*.log (consistent with a manual sync),
+            # not the backup log; the backup log just gets a pointer.
+            sync_ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+            sync_logpath = os.path.join(LOG_DIR, f"sync-{sync_ts}.log")
+            try:
+                synclogf = open(sync_logpath, "a", buffering=1)
+                synclogf.write(f"[{sync_ts}] auto-sync after backup\n")
+            except Exception:
+                synclogf = None
+            if logf: logf.write(f"[SYNC] Auto-sync started; see {os.path.basename(sync_logpath)}\n")
+
             write_status("syncing", percent=0)
             send_notification("sync_start")
             ui.set(screen="normal", subtitle="Syncing to remote server...", percent=0,
                    animate=True, show_header=True)
             ui.request_full()   # clear the backup-complete screen before sync progress
+
+            _log_pct = [None]    # throttle state: last-logged pct / elapsed
+            _log_t = [0.0]
+
             def _sync_progress(info):
                 pct = info["pct"]
                 elapsed = info["elapsed"]
@@ -1033,19 +1048,28 @@ def run_backup(panel, logf, ui, _retry=0):
                              bytes=info.get("bytes", 0),
                              total=info.get("total", 0),
                              speed=info.get("speed", ""))
-                if logf: logf.write(f"[SYNC] {pct}% ({elapsed:.0f}s)\n")
+                # Throttled: log only on a percent change or every 30s, so a
+                # stuck/scanning sync leaves a sparse trail (scan/stall transitions
+                # are logged separately by sync_manager) instead of a line/second.
+                if synclogf and not info.get("scanning") and not info.get("stalled"):
+                    if pct != _log_pct[0] or (elapsed - _log_t[0]) >= 30:
+                        synclogf.write(f"[SYNC] {pct}% ({elapsed:.0f}s)\n")
+                        _log_pct[0] = pct
+                        _log_t[0] = elapsed
+
             try:
                 result = _sync_manager.run_sync_with_progress(
-                    backup_dir=CFG.get("backup_dir"), on_progress=_sync_progress)
+                    backup_dir=CFG.get("backup_dir"), on_progress=_sync_progress,
+                    log_file=synclogf)
                 if result["success"]:
-                    if logf: logf.write(f"[SYNC] {result['message']}\n")
+                    if synclogf: synclogf.write(f"[OK] {result['message']}\n")
                     write_status("sync_complete", message=result["message"])
                     ui.set(screen="complete", subtitle="", percent=None, animate=False,
                            center_block=f"Sync complete.\n{result['message']}", show_header=True)
                     ui.request_full()
                     send_notification("sync_complete", {"message": result["message"]})
                 else:
-                    if logf: logf.write(f"[SYNC] Failed: {result['message']}\n")
+                    if synclogf: synclogf.write(f"[ERROR] {result['message']}\n")
                     write_status("sync_error", message=result["message"])
                     ui.set(screen="complete", subtitle="", percent=None, animate=False,
                            center_block=f"Sync failed.\n{result['message'][:60]}", show_header=True)
@@ -1053,8 +1077,12 @@ def run_backup(panel, logf, ui, _retry=0):
                     send_notification("sync_error", {"error": result["message"]})
                 time.sleep(5)
             except Exception as e:
-                if logf: logf.write(f"[SYNC] Error: {e}\n")
+                if synclogf: synclogf.write(f"[ERROR] sync raised: {e}\n")
                 write_status("sync_error", message=str(e))
+            finally:
+                if synclogf:
+                    try: synclogf.close()
+                    except Exception: pass
 
         return 0
     else:
