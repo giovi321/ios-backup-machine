@@ -313,6 +313,23 @@ class Panel:
         except AttributeError:
             return drw.textsize(text, font=font)
 
+    def _wrap_text(self, drw, text, font, max_w):
+        """Word-wrap `text` to lines no wider than max_w px, so long messages
+        don't overflow the display. Returns a list of lines."""
+        words = str(text).split()
+        if not words:
+            return [str(text)]
+        lines, cur = [], words[0]
+        for w in words[1:]:
+            test = cur + " " + w
+            if self._text_wh(drw, test, font)[0] <= max_w:
+                cur = test
+            else:
+                lines.append(cur)
+                cur = w
+        lines.append(cur)
+        return lines
+
     def _now_str(self):
         return datetime.now().strftime("%H:%M / %d %b %Y").lower()
 
@@ -432,7 +449,10 @@ class Panel:
             drw.text((LW - tw - 4, 2), now_s, font=F_SM, fill=0)
 
             if percent is None:
-                lines = [p for p in subtitle.split("\n") if p.strip()]
+                lines = []
+                for p in subtitle.split("\n"):
+                    if p.strip():
+                        lines.extend(self._wrap_text(drw, p, F_MD, LW - 8))
                 sizes = [self._text_wh(drw, ln, F_MD) for ln in lines]
                 total_h = sum(h for _, h in sizes) + 2*(len(lines)-1)
                 top, bottom = 26, LH - 20
@@ -463,18 +483,27 @@ class Panel:
                     drw.rectangle((px - 2, py - 2, px + ptw + 2, py + pth + 2), fill=255)
                     drw.text((px, py), pct, font=F_MD, fill=0)
 
-                lines = [p for p in subtitle.split("\n") if p.strip()]
+                lines = []
+                for p in subtitle.split("\n"):
+                    if p.strip():
+                        lines.extend(self._wrap_text(drw, p, F_MD, LW - 8))
                 y2 = y + h + 6
                 for ln in lines:
                     tw2, th2 = self._text_wh(drw, ln, F_MD)
                     drw.text(((LW - tw2)//2, y2), ln, font=F_MD, fill=0); y2 += th2 + 2
         else:
             if subtitle:
-                tw, th = self._text_wh(drw, subtitle, F_MD)
-                drw.text(((LW - tw)//2, 6), subtitle, font=F_MD, fill=0)
+                lines = self._wrap_text(drw, subtitle, F_MD, LW - 8)
+                y = 6
+                for ln in lines:
+                    tw, th = self._text_wh(drw, ln, F_MD)
+                    drw.text(((LW - tw)//2, y), ln, font=F_MD, fill=0); y += th + 2
 
         if center_block:
-            lines = [ln for ln in center_block.strip().splitlines() if ln.strip()]
+            lines = []
+            for ln in center_block.strip().splitlines():
+                if ln.strip():
+                    lines.extend(self._wrap_text(drw, ln, F_SM, LW - 8))
             total_h = sum(self._text_wh(drw, ln, F_SM)[1] for ln in lines) + (len(lines)-1)*4
             y_start = (LH - total_h) // 2
             for ln in lines:
@@ -554,6 +583,7 @@ class Animator:
         self.running = False
         self.thread = None
         self._last = None
+        self._last_layout = None     # screen-type signature of the last drawn frame
         self._force_full = False     # one-shot: next draw is a clean full refresh
 
     def set(self, **kwargs):
@@ -588,6 +618,15 @@ class Animator:
                 self._do_shutdown(); return
             with self.lock:
                 s = dict(self.state)
+            # Auto-detect a screen-type change and force ONE full refresh on it,
+            # so the previous screen can never ghost/overlap behind the new one.
+            # This is the single mechanism that guarantees one screen at a time.
+            layout = (s.get("screen"), bool(s.get("show_header")),
+                      s.get("percent") is None, bool(s.get("center_block")),
+                      bool(s.get("info_lines")))
+            if layout != self._last_layout:
+                self._force_full = True
+                self._last_layout = layout
             # Redraw every tick for animated screens; otherwise only on change,
             # so a static screen isn't re-flashed once a second. A pending
             # full-refresh request also forces a redraw even if state is unchanged.
@@ -657,6 +696,16 @@ def get_connected_udids():
 
 def device_present():
     return bool(get_connected_udids())
+
+
+def _sync_running():
+    """True if a remote sync (backup-sync.py) is active — used to keep a backup
+    and a sync mutually exclusive (never run both / show both)."""
+    try:
+        return subprocess.run(["pgrep", "-f", "backup-sync.py"],
+                              capture_output=True).returncode == 0
+    except Exception:
+        return False
 
 def device_allowed():
     """
@@ -1322,13 +1371,13 @@ def main():
                 time.sleep(0.5)
                 continue
 
-            # Web UI / double-tap "Start Backup" sentinel. Kept armed for 60s so a
-            # click just before plugging the iPhone still takes effect; consumed
-            # only when a backup actually starts (below).
+            # Web UI / double-tap "Start Backup" sentinel. Short 15s window so it
+            # only takes effect if an iPhone is connected right around the request
+            # — it won't silently fire a backup minutes later when one is plugged.
             manual_start = False
             try:
                 if os.path.exists(START_FILE):
-                    if time.time() - os.path.getmtime(START_FILE) > 60:
+                    if time.time() - os.path.getmtime(START_FILE) > 15:
                         os.remove(START_FILE)
                     else:
                         manual_start = True
@@ -1345,6 +1394,13 @@ def main():
             # device filter — won't override a rejected device).
             if manual_start and not allowed and reason == "auto_start_disabled" and udid:
                 allowed = True
+
+            # Mutual exclusion: never start a backup while a remote sync is
+            # running (and vice-versa — backup-sync.py checks for a live backup).
+            # Prevents the two operations and their screens from overlapping.
+            if allowed and _sync_running():
+                time.sleep(0.3)
+                continue
 
             if allowed:
                 try:
@@ -1382,11 +1438,10 @@ def main():
                         _lcfg = {}
                     if _lcfg.get("backup", {}).get("notify_on_rejected", True):
                         send_notification("device_rejected", {"udid": udid})
-            elif reason == "auto_start_disabled" and udid:
-                show(screen="normal", subtitle="Auto-backup disabled.\nUse web UI to start.",
-                     percent=None, animate=False, show_header=True)
             else:
-                # Idle: persist a sync result if one is pending, else the boot screen.
+                # Idle (incl. auto-start disabled): persist a sync result if one
+                # is pending, else show the boot/idle screen. No "auto-backup
+                # disabled" message — start via double-tap or the web UI.
                 _last_reject_udid = None
                 if _state in ("sync_complete", "sync_error"):
                     msg = (_st.get("message", "") or "")[:60]

@@ -1622,19 +1622,32 @@ def api_import_config():
         flash(f"Import failed: {e}", "error")
     return redirect(url_for("settings_general"))
 
+def _iphone_connected():
+    """True if at least one iPhone is currently connected (idevice_id -l)."""
+    try:
+        r = subprocess.run(["idevice_id", "-l"], capture_output=True, text=True, timeout=5)
+        return bool(r.stdout.strip())
+    except Exception:
+        return False
+
+
 @app.route("/api/start-backup", methods=["POST"])
 @login_required
 def api_start_backup():
     """Request a backup from the always-on display daemon (used when auto-start
     is off). Drops a sentinel the daemon consumes; it backs up if an allowed
     iPhone is connected. We never restart the service — that owns the e-ink."""
+    # Don't trigger a backup when no iPhone is connected.
+    if not _iphone_connected():
+        flash("No iPhone connected. Plug in and unlock your iPhone, then try again.", "error")
+        return redirect(request.referrer or url_for("index"))
     try:
         os.makedirs(LOG_DIR, exist_ok=True)
         # Make sure the daemon is up (no-op if already running).
         subprocess.run(["systemctl", "start", "iosbackupmachine.service"],
                        capture_output=True, timeout=10)
         open(os.path.join(LOG_DIR, "start_requested"), "w").close()
-        flash("Backup requested. Make sure your iPhone is plugged in and unlocked.", "success")
+        flash("Backup requested. Make sure your iPhone is unlocked.", "success")
     except Exception as e:
         flash(f"Error: {e}", "error")
     return redirect(url_for("index"))

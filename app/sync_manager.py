@@ -220,8 +220,12 @@ def run_sync_with_progress(passphrase=None, backup_dir=None, on_progress=None, l
     #      to real stall detection: warn quickly, kill after STALL_KILL_SEC.
     SCAN_NOTIFY_SEC = 5      # how soon we tell the UI "we're scanning"
     SCAN_KILL_SEC = 1800     # 30 min — kill if rsync produces NO output at all
-    STALL_WARN_SEC = 120     # 2 min — small ARM SBC + slow remote can pause this long
-    STALL_KILL_SEC = 900     # 15 min — kill stall after transfer has started
+    # rsync's progress2 output is bursty on a many-small-files backup over SSH:
+    # it can legitimately go silent for minutes between bursts (per-file overhead,
+    # delete pass, remote fsync). Keep the thresholds generous so a slow-but-alive
+    # transfer isn't flagged "stalled" or falsely aborted.
+    STALL_WARN_SEC = 300     # 5 min — only then surface "stalled" on the UI
+    STALL_KILL_SEC = 1800    # 30 min — kill only after a long, genuine silence
 
     BATTERY_CHECK_SEC = 30   # how often to poll the UPS for the abort guard
 
@@ -428,12 +432,12 @@ def run_sync_with_progress(passphrase=None, backup_dir=None, on_progress=None, l
         if killed_for_scan:
             mins = SCAN_KILL_SEC // 60
             return {"success": False,
-                    "message": f"rsync produced no progress in {mins} min (stuck building file list). Aborted.",
+                    "message": f"No progress {mins} min, aborted.",
                     "duration": duration}
         if killed_for_stall:
             mins = STALL_KILL_SEC // 60
             return {"success": False,
-                    "message": f"Sync stalled — no progress for {mins} min. Aborted.",
+                    "message": f"Sync stalled {mins} min, aborted.",
                     "duration": duration}
         if proc.returncode == 0:
             if on_progress:
