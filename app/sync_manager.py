@@ -107,6 +107,12 @@ def _prepare_sync(passphrase=None, backup_dir=None, progress=False):
     # dir on the remote so a reboot mid-sync resumes; rsync excludes it from --delete.
     rsync_flags = ["-a", "--delete", "--partial", "--partial-dir=.rsync-partial",
                    "--rsync-path=/usr/bin/rsync"]
+    # Leave destination-managed metadata alone. The source never has these, so
+    # without excluding them --delete tries (and fails, noisily) to remove the
+    # remote's Syncthing markers / lost+found — e.g. a Syncthing-managed target.
+    for _pat in (".stfolder", ".stignore", ".stversions", ".stglobalstate",
+                 ".stfolder/**", "~syncthing~*.tmp", ".syncthing.*.tmp", "lost+found"):
+        rsync_flags += ["--exclude", _pat]
     if progress:
         # --outbuf=L line-buffers rsync's output. Without it, rsync block-buffers
         # progress2 to the pipe and emits it in bursts with long gaps, which
