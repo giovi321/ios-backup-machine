@@ -41,12 +41,7 @@ REPO_VERSION=$(sed -n 's/^VERSION *= *"\([^"]*\)".*/\1/p' "${REPO_DIR}/app/webui
 APP_FILES=(
     "app/iosbackupmachine.py:iosbackupmachine.py"
     "app/webui.py:webui.py"
-    "app/boot-message.py:boot-message.py"
-    "app/owner-message.py:owner-message.py"
-    "app/button-info.py:button-info.py"
     "app/backup-sync.py:backup-sync.py"
-    "app/last-backup.py:last-backup.py"
-    "app/unplug-notify.py:unplug-notify.py"
     "app/ntp-sync.py:ntp-sync.py"
     "app/notifications.py:notifications.py"
     "app/netutil.py:netutil.py"
@@ -57,20 +52,18 @@ APP_FILES=(
     "app/sync_manager.py:sync_manager.py"
     "app/config_schema.py:config_schema.py"
     "app/power.py:power.py"
-    "scripts/iosbackupmachine_launcher.sh:iosbackupmachine_launcher.sh"
     "scripts/unplug-notify.sh:unplug-notify.sh"
     "scripts/shutdown.sh:shutdown.sh"
-    "scripts/display-shutdown.sh:display-shutdown.sh"
     "scripts/long-press-backup.sh:long-press-backup.sh"
     "scripts/wg-autoconnect.sh:wg-autoconnect.sh"
     "assets/UbuntuMono-Regular.ttf:UbuntuMono-Regular.ttf"
     "requirements.txt:requirements.txt"
 )
 
-# Services
+# Services. iosbackupmachine.service is now the always-on single EPD owner, so it
+# is enabled at boot (previously it was only udev-triggered per iPhone plug).
 ENABLE_SERVICES=(
-    owner-message.service
-    shutdown-display.service
+    iosbackupmachine.service
     webui.service
     ntp-sync.service
     rtc-sync.service
@@ -446,10 +439,8 @@ for d in webui_templates webui_static; do
 done
 
 # Make shell scripts executable
-chmod +x "${INSTALL_DIR}/iosbackupmachine_launcher.sh" 2>/dev/null || true
 chmod +x "${INSTALL_DIR}/unplug-notify.sh" 2>/dev/null || true
 chmod +x "${INSTALL_DIR}/shutdown.sh" 2>/dev/null || true
-chmod +x "${INSTALL_DIR}/display-shutdown.sh" 2>/dev/null || true
 chmod +x "${INSTALL_DIR}/long-press-backup.sh" 2>/dev/null || true
 chmod +x "${INSTALL_DIR}/wg-autoconnect.sh" 2>/dev/null || true
 
@@ -516,6 +507,14 @@ if [ -f /etc/systemd/system/webui.service ]; then
     systemctl restart webui.service 2>/dev/null && \
         info "Restarted webui.service" || \
         warn "Could not start webui.service (will start on next boot)"
+fi
+
+# Start the display daemon now on upgrades (SPI/I2C overlays are already active).
+# On a fresh install the overlays need a reboot first, so it starts on next boot.
+if [ "${IS_UPGRADE}" = true ] && [ -f /etc/systemd/system/iosbackupmachine.service ]; then
+    systemctl restart iosbackupmachine.service 2>/dev/null && \
+        info "Restarted iosbackupmachine.service (display daemon)" || \
+        warn "Could not start iosbackupmachine.service (will start on next boot)"
 fi
 
 # ---------------------------------------------------------------------------

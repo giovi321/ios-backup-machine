@@ -7,7 +7,7 @@
   "auto_wake_time": null,
   "auto_wake_repeat": 0,
   "single_tap_enable": true,
-  "single_tap_shell": "systemctl start button-info.service",
+  "single_tap_shell": "",
   "double_tap_enable": true,
   "double_tap_shell": "systemctl start backup-sync.service",
   "long_tap_enable": true,

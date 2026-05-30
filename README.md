@@ -84,6 +84,18 @@ All backups stay local on the microSD card and can be restored anytime using too
 - On boot, owner info is displayed.  
 - When idle, the screen shows last backup result, timestamp, disk usage, and owner info.
 
+### Display architecture
+The e-paper display has a **single owner**: the always-on `iosbackupmachine.service` daemon. It holds the EPD for the whole uptime and renders every screen — boot/idle, backup progress, sync progress, single-tap system info, unplug/interrupted, and the power-off owner screen — from state. Everything else just *writes state* and never touches the display:
+
+- **Backup** runs inside the daemon and detects an iPhone by polling (no udev restart, which previously tore down the display owner mid-render).
+- **Remote sync** (`backup-sync.py`) writes progress to the status file; the daemon draws it.
+- **Single-tap** (PiSugar) is handled by the daemon's button listener.
+- **Unplug** (udev) only stops a running `idevicebackup2`; the daemon renders the interrupted screen.
+- **Shutdown** sends the daemon `SIGTERM`; it paints the owner screen and sleeps the panel so the image persists after power-off.
+- **Web UI** Start/Stop Backup drop small sentinel files the daemon consumes, instead of restarting the service.
+
+This is what fixed the recurring SPI-bus conflicts and "screen not updating" bugs: only one process ever opens the EPD.
+
 
 ## Hardware
 
@@ -115,18 +127,16 @@ All backups stay local on the microSD card and can be restored anytime using too
 ├── install.sh / update.sh / uninstall.sh
 ├── requirements.txt
 ├── app/                             # Python source files
-│   ├── iosbackupmachine.py          # Main backup program
+│   ├── iosbackupmachine.py          # Always-on display daemon + backup logic (owns the EPD)
 │   ├── webui.py                     # Flask web UI
-│   ├── boot-message.py              # Boot screen (power icon + title + owner info)
-│   ├── owner-message.py             # Power-off screen (owner info only)
-│   ├── button-info.py               # Single-tap: system info (30s)
-│   ├── backup-sync.py               # Double-tap: remote sync via rsync
-│   ├── unplug-notify.py             # Unplug interruption screen
-│   ├── last-backup.py, ntp-sync.py, notifications.py, netutil.py
+│   ├── backup-sync.py               # Double-tap / web UI: remote sync via rsync
+│   ├── config_schema.py             # Config defaults, versioned migration, atomic save
+│   ├── power.py                     # PiSugar UPS battery reader (power-aware sync)
+│   ├── ntp-sync.py, notifications.py, netutil.py
 │   ├── wg_crypto.py, wg_manager.py  # WireGuard encryption & management
 │   ├── sync_crypto.py, sync_manager.py  # Remote sync encryption & execution
 │   ├── epdconfig.py                 # E-paper hardware config
-│   ├── webui_templates/             # HTML templates (19 files)
+│   ├── webui_templates/             # HTML templates
 │   └── webui_static/                # Icon, favicon
 ├── config/                          # Configuration templates
 │   ├── config.yaml.example, [pisugar]config.json
@@ -343,7 +353,7 @@ ln -s /root/e-Paper/RaspberryPi_JetsonNano/python/lib/waveshare_epd   /root/iosb
 cp ios-backup-machine/*.rules /etc/udev/rules.d/
 cp ios-backup-machine/*.service /etc/systemd/system/
 systemctl daemon-reload
-systemctl enable boot-message
+systemctl enable iosbackupmachine.service   # always-on display daemon
 systemctl enable webui.service
 systemctl enable ntp-sync.service
 udevadm control --reload-rules
@@ -520,9 +530,9 @@ When the filter is disabled (default), any iPhone triggers a backup.
 Things I want to get to. PRs welcome.
 
 ### Architecture
-- **Single e-paper owner.** Right now every screen (boot, idle, button-info, backup, sync, unplug, owner) is its own systemd unit or subprocess that opens the EPD on its own. That's why we keep hitting SPI bus conflicts and "screen not updating" bugs. Replace it with one long-running display service that owns the EPD and renders frames from a status file or a small socket protocol. Everything else just writes state.
-
-  _Config-side architecture items (**atomic config writes** and a **versioned config schema + migrations**) are done — see [Configuration](#configuration)._
+_The Architecture items are done:_
+- **Single e-paper owner.** `iosbackupmachine.service` is now an always-on display daemon that solely owns the EPD and renders every screen (boot, idle, backup, sync, button-info, unplug, owner) from state. Nothing else opens the display — the former per-screen scripts and services are gone — which removes the SPI-bus contention. See [Display architecture](#display-architecture).
+- **Atomic config writes** and a **versioned config schema + migrations** — see [Configuration](#configuration).
 
 ### Features
 - **Multiple sync destinations.** Today there's exactly one remote. Allow a list and let the user pick which one runs on auto-sync vs. manual.

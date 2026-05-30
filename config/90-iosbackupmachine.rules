@@ -1,9 +1,12 @@
-# Match iPhones in normal mode and recovery/DFU modes
-# reset-failed ensures the service can restart after a previous exit
-ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="05ac", ATTR{idProduct}=="12a8", RUN+="/bin/sh -c '/bin/systemctl reset-failed iosbackupmachine.service 2>/dev/null; /bin/systemctl --no-block restart iosbackupmachine.service'"
-ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="05ac", ATTR{idProduct}=="12a0", RUN+="/bin/sh -c '/bin/systemctl reset-failed iosbackupmachine.service 2>/dev/null; /bin/systemctl --no-block restart iosbackupmachine.service'"
-ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="05ac", ATTR{idProduct}=="12a9", RUN+="/bin/sh -c '/bin/systemctl reset-failed iosbackupmachine.service 2>/dev/null; /bin/systemctl --no-block restart iosbackupmachine.service'"
-ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="05ac", ATTR{idProduct}=="12ab", RUN+="/bin/sh -c '/bin/systemctl reset-failed iosbackupmachine.service 2>/dev/null; /bin/systemctl --no-block restart iosbackupmachine.service'"
+# iPhone hotplug rules.
+#
+# Plug-in is NOT handled here anymore: the always-on display daemon
+# (iosbackupmachine.service) owns the e-ink for the whole uptime and polls for a
+# connected device itself. Restarting it on plug would tear down the EPD owner
+# mid-render — the SPI contention this refactor removes.
+#
+# Removal still fires a one-shot that stops a running idevicebackup2 so the
+# daemon notices the unplug promptly (it renders the interrupted/idle screen).
 ACTION=="remove", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", \
   ENV{PRODUCT}=="5ac/*", \
   RUN+="/bin/systemctl --no-block start unplug-notify.service"

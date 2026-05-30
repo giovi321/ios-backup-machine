@@ -21,10 +21,14 @@ Environment=IOSBACKUP_CONFIG=/root/iosbackupmachine/config.yaml
 ExecStartPre=/bin/mkdir -p /var/log/iosbackupmachine
 StandardOutput=journal
 StandardError=journal
-# behavior
-Restart=no
+# behavior — always-on single EPD owner.
+# On stop, SIGTERM tells the daemon to paint the owner screen and sleep the panel
+# (so the e-paper holds it after power-off); TimeoutStopSec covers the full refresh.
+Restart=on-failure
+RestartSec=5
 KillMode=process
-TimeoutStopSec=5s
+KillSignal=SIGTERM
+TimeoutStopSec=20s
 
 [Install]
 WantedBy=basic.target

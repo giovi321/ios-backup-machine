@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import os, re, sys, time, json, subprocess, threading, socket
+import os, re, sys, time, json, signal, subprocess, threading, socket
 from datetime import datetime
 from periphery.gpio import GPIOError
 
@@ -30,6 +30,10 @@ except ImportError:
 CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/iosbackupmachine/config.yaml")
 LOG_DIR = "/var/log/iosbackupmachine"
 STATUS_FILE = os.path.join(LOG_DIR, "backup_status.json")
+# Sentinels the web UI drops to drive the always-on daemon (which can no longer
+# be started/stopped by restarting its service — that would kill the EPD owner).
+START_FILE = os.path.join(LOG_DIR, "start_requested")   # force a backup (auto-start off)
+STOP_FILE = os.path.join(LOG_DIR, "stop_requested")     # abort the current backup
 IDLE_REFRESH_SEC = 4
 TITLE = "iOS Backup Machine"
 
@@ -65,6 +69,131 @@ def font(sz):
 F_SM = font(12)
 F_MD = font(12)
 F_LG = font(12)
+F_14 = font(14)
+
+# Process-wide shutdown latch. The SIGTERM/SIGINT handler sets it; the Animator
+# thread (the sole EPD drawer) notices it, paints the owner screen one last time,
+# sleeps the panel so the image persists after power-off, and exits.
+SHUTDOWN = threading.Event()
+
+
+# ---------------------------------------------------------------------------
+# Shared drawing helpers (folded in from the former standalone screen scripts:
+# boot-message.py, button-info.py, owner-message.py, unplug-notify.py).
+# The display service is now the single owner of the EPD — nothing else draws.
+# ---------------------------------------------------------------------------
+
+def draw_small_power_icon(drw, x, y, size=10):
+    """Small power-on indicator (circle with stem)."""
+    cx, cy = x + size // 2, y + size // 2
+    r = size // 2
+    drw.arc((cx - r, cy - r, cx + r, cy + r), start=300, end=240, fill=0, width=1)
+    drw.line((cx, cy - r, cx, cy - 1), fill=0, width=1)
+
+
+def draw_project_icon(drw, cx, cy, size=36):
+    """1-bit project icon: rounded-rect outline + downward arrow."""
+    half = size // 2
+    x0, y0 = cx - half, cy - half
+    x1, y1 = cx + half, cy + half
+    drw.rounded_rectangle((x0, y0, x1, y1), radius=size // 6, outline=0, width=2)
+    arrow_w = size * 2 // 5
+    margin = size // 5
+    drw.line((cx, y0 + margin, cx, y1 - margin), fill=0, width=2)
+    head_y = cy + margin // 2
+    drw.line((cx - arrow_w // 2, head_y, cx, y1 - margin), fill=0, width=2)
+    drw.line((cx + arrow_w // 2, head_y, cx, y1 - margin), fill=0, width=2)
+
+
+def _normpath(p):
+    if not p:
+        return p
+    return os.path.abspath(os.path.expanduser(os.path.expandvars(p)))
+
+
+def get_ip_addr():
+    try:
+        out = subprocess.check_output(["hostname", "-I"], text=True, timeout=5).strip()
+        return out.split()[0] if out else "No IP"
+    except Exception:
+        return "No IP"
+
+
+def get_soc_temp():
+    try:
+        with open("/sys/class/thermal/thermal_zone0/temp", "r") as f:
+            return round(int(f.read().strip()) / 1000, 1)
+    except Exception:
+        return None
+
+
+def _device_to_mountpoint(dev):
+    try:
+        with open("/proc/mounts", "r") as f:
+            rows = [ln.split() for ln in f.read().splitlines()]
+        mp = None
+        for src, mnt, *_ in rows:
+            if src == dev and (not mp or len(mnt) > len(mp)):
+                mp = mnt
+        return mp
+    except Exception:
+        return None
+
+
+def get_free_disk_pct():
+    dev = CFG.get("disk_device")
+    mp = _device_to_mountpoint(dev) if dev and str(dev).startswith("/dev/") else None
+    if not mp:
+        mp = _normpath(CFG.get("backup_dir")) or "/"
+    try:
+        st = os.statvfs(mp)
+        total = st.f_blocks * st.f_frsize
+        if total <= 0:
+            return None
+        return round(st.f_bavail * st.f_frsize / total * 100, 1)
+    except Exception:
+        return None
+
+
+def get_last_backup_str():
+    bd = _normpath(CFG.get("backup_dir"))
+    if not bd or not os.path.isdir(bd):
+        return "No backups"
+    try:
+        mtimes = [e.stat(follow_symlinks=True).st_mtime
+                  for e in os.scandir(bd) if e.is_dir(follow_symlinks=True)]
+        if not mtimes:
+            return "No backups"
+        return time.strftime("%H:%M / %d %b %Y", time.localtime(max(mtimes)))
+    except Exception:
+        return "No backups"
+
+
+def get_vpn_status():
+    try:
+        iface = CFG.get("wireguard", {}).get("interface_name", "wg0")
+        r = subprocess.run(["ip", "link", "show", iface], capture_output=True, text=True, timeout=3)
+        return "VPN: connected" if r.returncode == 0 else "VPN: off"
+    except Exception:
+        return "VPN: off"
+
+
+def build_button_info_lines():
+    """Lines for the single-tap system-info screen: (text, big?)."""
+    now = datetime.now()
+    temp = get_soc_temp()
+    free = get_free_disk_pct()
+    return [
+        (now.strftime("%d %b %Y"), True),
+        (now.strftime("%H:%M"), True),
+        ("", False),
+        (f"IP: {get_ip_addr()}", False),
+        (get_vpn_status(), False),
+        (f"Last: {get_last_backup_str()}", False),
+        (f"SD free: {free}%" if free is not None else "SD free: n/a", False),
+        (f"Temp: {temp}C" if temp is not None else "Temp: n/a", False),
+    ]
+
 
 class Panel:
     def __init__(self):
@@ -194,7 +323,100 @@ class Panel:
         drw.arc((cx - r, cy - r, cx + r, cy + r), start=300, end=240, fill=0, width=1)
         drw.line((cx, cy - r, cx, cy - 1), fill=0, width=1)
 
-    def draw(self, subtitle, percent=None, animate=True, center_block=None, show_tail_lines=None, show_header=True):
+    def _show_full(self, img):
+        """Rotate a logical image to the panel and push it as a full refresh.
+        Used for the static screens (boot, info, interrupted, owner)."""
+        out = self._rotate_for_display(img)
+        if out.size != (self.pw, self.ph):
+            out = out.resize((self.pw, self.ph))
+        self._display_full(out)
+
+    def _draw_boot(self):
+        """Boot / idle screen: project icon + title + owner info."""
+        LW, LH = self._logical_size()
+        img = Image.new('1', (LW, LH), 255)
+        drw = ImageDraw.Draw(img)
+        draw_small_power_icon(drw, 4, LH - 14, size=10)
+        ICON = 36
+        title = TITLE
+        tw, th = self._text_wh(drw, title, F_14)
+        owner = [str(l) for l in CFG.get("owner_lines", []) if str(l).strip()]
+        oh = [self._text_wh(drw, l, F_SM)[1] for l in owner]
+        gap_it, gap_to, ls = 8, 6, 4
+        total = ICON + gap_it + th + gap_to + sum(oh) + max(0, len(owner) - 1) * ls
+        y = (LH - total) // 2
+        draw_project_icon(drw, LW // 2, y + ICON // 2, ICON)
+        y += ICON + gap_it
+        drw.text(((LW - tw) // 2, y), title, font=F_14, fill=0); y += th + gap_to
+        for l in owner:
+            w, h = self._text_wh(drw, l, F_SM)
+            drw.text(((LW - w) // 2, y), l, font=F_SM, fill=0); y += h + ls
+        self._show_full(img)
+
+    def _draw_info(self, lines):
+        """Single-tap system-info screen. lines: list of (text, big?)."""
+        LW, LH = self._logical_size()
+        img = Image.new('1', (LW, LH), 255)
+        drw = ImageDraw.Draw(img)
+        spacing = 4
+        heights = [self._text_wh(drw, t, F_14 if big else F_SM)[1] if t else 4 for t, big in lines]
+        total = sum(heights) + spacing * (len(lines) - 1)
+        y = (LH - total) // 2
+        for t, big in lines:
+            if t:
+                f = F_14 if big else F_SM
+                w, h = self._text_wh(drw, t, f)
+                drw.text(((LW - w) // 2, y), t, font=f, fill=0); y += h + spacing
+            else:
+                y += 4 + spacing
+        self._show_full(img)
+
+    def _draw_interrupted(self, when_str):
+        """Backup-interrupted screen: header + timestamp + owner info."""
+        LW, LH = self._logical_size()
+        img = Image.new('1', (LW, LH), 255)
+        drw = ImageDraw.Draw(img)
+        owner = [str(l) for l in CFG.get("owner_lines", []) if str(l).strip()]
+        lines = [("Backup interrupted", F_14), (when_str or self._now_str(), F_SM), ("", None)]
+        lines += [(l, F_SM) for l in owner]
+        spacing = 5
+        heights = [self._text_wh(drw, t, f)[1] if t else 4 for t, f in lines]
+        total = sum(heights) + spacing * (len(lines) - 1)
+        y = (LH - total) // 2
+        for t, f in lines:
+            if t:
+                w, h = self._text_wh(drw, t, f)
+                drw.text(((LW - w) // 2, y), t, font=f, fill=0); y += h + spacing
+            else:
+                y += 4 + spacing
+        self._show_full(img)
+
+    def draw_owner(self):
+        """Power-off screen: owner info only (persists on e-paper after power cut)."""
+        LW, LH = self._logical_size()
+        img = Image.new('1', (LW, LH), 255)
+        drw = ImageDraw.Draw(img)
+        owner = [str(l) for l in CFG.get("owner_lines", []) if str(l).strip()]
+        heights = [self._text_wh(drw, l, F_14)[1] for l in owner]
+        total = sum(heights) + max(0, len(owner) - 1) * 6
+        y = (LH - total) // 2
+        for l in owner:
+            w, h = self._text_wh(drw, l, F_14)
+            drw.text(((LW - w) // 2, y), l, font=F_14, fill=0); y += h + 6
+        self._show_full(img)
+
+    def draw(self, subtitle="", percent=None, animate=True, center_block=None,
+             show_tail_lines=None, show_header=True, screen="normal", info_lines=None):
+        # Static, non-"normal" screens render once via full refresh.
+        if screen == "boot":
+            return self._draw_boot()
+        if screen == "info":
+            return self._draw_info(info_lines or [])
+        if screen == "interrupted":
+            return self._draw_interrupted(subtitle)
+        if screen == "owner":
+            return self.draw_owner()
+        # screen in ("normal", "complete"): the header/percent/center-block layout below.
         LW, LH = self._logical_size()
         img = Image.new('1', (LW, LH), 255)
         drw = ImageDraw.Draw(img)
@@ -299,32 +521,67 @@ class Panel:
             except Exception: pass
 
 class Animator:
-    """1 Hz UI animator so the bottom-right squares always animate."""
+    """The single EPD drawer. Runs at 1 Hz for the whole process lifetime:
+    animated screens (waiting / backup / sync) are redrawn every tick so the
+    bottom-right squares animate; static screens (boot / info / interrupted /
+    complete / owner) are drawn once and then skipped, so the e-ink doesn't
+    flash. Nothing else in the process touches the EPD, which is what makes this
+    the 'single e-paper owner'. On shutdown it paints the owner screen and
+    sleeps the panel so the image persists after power-off."""
     def __init__(self, panel):
         self.panel = panel
         self.lock = threading.Lock()
         self.state = {
+            "screen": "boot",
             "subtitle": "",
             "percent": None,
-            "animate": True,
+            "animate": False,
             "center_block": None,
             "show_tail_lines": None,
             "show_header": True,
+            "info_lines": None,
         }
         self.running = False
         self.thread = None
+        self._last = None
 
     def set(self, **kwargs):
         with self.lock:
             self.state.update(kwargs)
 
+    def get_state(self):
+        with self.lock:
+            return dict(self.state)
+
+    def _do_shutdown(self):
+        # Paint the owner screen one last time, crisp full refresh, then sleep
+        # the panel so the e-paper holds the image after PiSugar cuts power.
+        try:
+            self.panel.draw_owner()
+        except Exception:
+            pass
+        try:
+            self.panel.sleep()
+        except Exception:
+            pass
+        os._exit(0)
+
     def _tick(self):
         while self.running:
+            if SHUTDOWN.is_set():
+                self._do_shutdown(); return
             with self.lock:
                 s = dict(self.state)
-            # draw at 1 Hz so the four squares animate each second
-            self.panel.draw(**s)
-            time.sleep(1)
+            # Redraw every tick for animated screens; otherwise only on change,
+            # so a static screen isn't re-flashed once a second.
+            if s.get("animate") or s != self._last:
+                try:
+                    self.panel.draw(**s)
+                    self._last = s
+                except Exception as e:
+                    print(f"[DRAW] {e}", flush=True)
+            if SHUTDOWN.wait(1):    # wakes immediately when shutdown is requested
+                self._do_shutdown(); return
 
     def start(self):
         if self.running: return
@@ -335,7 +592,7 @@ class Animator:
     def stop(self):
         self.running = False
         if self.thread:
-            self.thread.join(timeout=1)
+            self.thread.join(timeout=2)
 
 def ensure_dir(p): os.makedirs(p, exist_ok=True)
 
@@ -435,16 +692,20 @@ def log_open():
     f.write(f"[{ts}] backup started\n")
     return f, path
 
-def check_backup_mount(panel, logf):
+def check_backup_mount(logf, ui):
+    """Return True if the backup folder is mounted; else show an error via the
+    Animator and return False. The daemon stays alive (single EPD owner)."""
     ensure_dir(CFG["backup_dir"])
     marker = os.path.join(CFG["backup_dir"], CFG["marker_file"])
     if not os.path.exists(marker):
         msg = "Backup folder not found or not mounted"
         print(f"[ERROR] {msg} (missing {marker})")
         if logf: logf.write(f"[ERROR] {msg} (missing {marker})\n")
-        panel.draw("Backup folder not found.", percent=None, animate=False, show_header=True)
-        panel.sleep()
-        sys.exit(2)
+        write_status("error", message=msg)
+        ui.set(screen="normal", subtitle="Backup folder not found.", percent=None,
+               animate=False, show_header=True)
+        return False
+    return True
 
 def check_disk_space(logf, ui):
     """Check disk space on root and backup drive before starting."""
@@ -584,7 +845,15 @@ def _check_encryption(logf, ui):
             return None
 
 def run_backup(panel, logf, ui, _retry=0):
-    check_backup_mount(panel, logf)
+    if _retry == 0:
+        # Fresh backup — clear any stale stop request from a previous run.
+        try:
+            if os.path.exists(STOP_FILE):
+                os.remove(STOP_FILE)
+        except Exception:
+            pass
+    if not check_backup_mount(logf, ui):
+        return 2
     check_disk_space(logf, ui)
     _check_encryption(logf, ui)
     cmd = ["idevicebackup2", "backup", CFG["backup_dir"]]
@@ -701,9 +970,9 @@ def run_backup(panel, logf, ui, _retry=0):
             f"  \n"
             f"{owner[0]}\n{owner[1]}\n{owner[2]}\n{owner[3]}"
         )
-        ui.stop()
         write_status("complete", usage=usage_str, completed_at=ts_end, verified=ok)
-        panel.draw("", percent=None, animate=False, center_block=center, show_header=False)
+        ui.set(screen="complete", subtitle="", percent=None, animate=False,
+               center_block=center, show_header=False)
         if logf: logf.write(f"[OK] completed at {ts_end} usage={usage_str}\n")
         send_notification("backup_complete", {
             "usage": usage_str, "timestamp": ts_end,
@@ -729,8 +998,8 @@ def run_backup(panel, logf, ui, _retry=0):
                 return 0
             write_status("syncing", percent=0)
             send_notification("sync_start")
-            ui.start()
-            ui.set(subtitle="Syncing to remote server...", percent=0, animate=True, show_header=True)
+            ui.set(screen="normal", subtitle="Syncing to remote server...", percent=0,
+                   animate=True, show_header=True)
             def _sync_progress(info):
                 pct = info["pct"]
                 elapsed = info["elapsed"]
@@ -747,61 +1016,62 @@ def run_backup(panel, logf, ui, _retry=0):
             try:
                 result = _sync_manager.run_sync_with_progress(
                     backup_dir=CFG.get("backup_dir"), on_progress=_sync_progress)
-                ui.stop()
                 if result["success"]:
                     if logf: logf.write(f"[SYNC] {result['message']}\n")
                     write_status("sync_complete", message=result["message"])
-                    panel.draw("", percent=None, animate=False,
-                               center_block=f"Sync complete.\n{result['message']}", show_header=True)
+                    ui.set(screen="complete", subtitle="", percent=None, animate=False,
+                           center_block=f"Sync complete.\n{result['message']}", show_header=True)
                     send_notification("sync_complete", {"message": result["message"]})
                 else:
                     if logf: logf.write(f"[SYNC] Failed: {result['message']}\n")
                     write_status("sync_error", message=result["message"])
-                    panel.draw("", percent=None, animate=False,
-                               center_block=f"Sync failed.\n{result['message'][:60]}", show_header=True)
+                    ui.set(screen="complete", subtitle="", percent=None, animate=False,
+                           center_block=f"Sync failed.\n{result['message'][:60]}", show_header=True)
                     send_notification("sync_error", {"error": result["message"]})
                 time.sleep(5)
             except Exception as e:
-                ui.stop()
                 if logf: logf.write(f"[SYNC] Error: {e}\n")
                 write_status("sync_error", message=str(e))
 
         return 0
     else:
+        # Interrupted (web-UI Stop) or iPhone unplugged mid-backup: show the
+        # interrupted screen, not a generic error, and don't retry.
+        stop_req = False
+        try:
+            if os.path.exists(STOP_FILE):
+                os.remove(STOP_FILE); stop_req = True
+        except Exception:
+            pass
+        if stop_req or not device_present():
+            reason_txt = "Stopped from web UI" if stop_req else "iPhone unplugged"
+            if logf: logf.write(f"[INTERRUPT] {reason_txt}\n")
+            write_status("interrupted", reason=reason_txt)
+            ui.set(screen="interrupted", subtitle=ts_end, percent=None, animate=False)
+            if not stop_req:
+                send_notification("device_disconnected", {"timestamp": ts_end})
+            return 0
         # Retry once on failure
         if _retry == 0:
             if logf: logf.write("[RETRY] Backup failed, retrying once...\n")
-            ui.set(subtitle="Backup failed.\nRetrying...", percent=None, animate=True, show_header=True)
+            ui.set(screen="normal", subtitle="Backup failed.\nRetrying...", percent=None,
+                   animate=True, show_header=True)
             time.sleep(3)
             return run_backup(panel, logf, ui, _retry=1)
         send_notification("backup_error", {"error": "Unknown error, rc!=0"})
         error_and_wait("Unknown error.\nCheck logs.", None, "rc!=0")
 
 # ---------------------------------------------------------------------------
-# PiSugar button listener (IP display on press, only when idle)
+# PiSugar button listener (single-tap → system-info screen for 30s)
 # ---------------------------------------------------------------------------
 _backup_running = False
+_button_info_until = 0.0    # while now() < this, the main loop leaves the info screen up
 
-def _get_ip_info():
-    """Return a short string with IP and interface type."""
-    if netutil:
-        ip, itype = netutil.get_active_ip()
-        if ip:
-            return f"IP: {ip} ({itype})"
-    # Fallback: try to get any IP
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 53))
-        ip = s.getsockname()[0]
-        s.close()
-        return f"IP: {ip}"
-    except Exception:
-        return "No network"
-
-def _pisugar_button_listener(panel, ui):
-    """Listen for PiSugar button press via TCP.
-    Shows IP info for 10s on single-tap, both when idle and during backup.
-    During backup, the Animator resumes the backup display after."""
+def _pisugar_button_listener(ui):
+    """Listen for the PiSugar single-tap and show the system-info screen for 30s.
+    Skipped while a backup or sync is active so their progress isn't covered;
+    the main loop reverts to the boot/idle screen once the 30s window elapses."""
+    global _button_info_until
     while True:
         try:
             s = socket.create_connection(("127.0.0.1", 8423), timeout=5)
@@ -810,22 +1080,16 @@ def _pisugar_button_listener(panel, ui):
             resp = s.recv(256).decode(errors="replace").strip()
             s.close()
             if "single" in resp.lower() and "true" in resp.lower():
-                # Don't clobber the sync UI for 10s if a sync is in progress —
-                # the button-info overlay would hide rsync progress updates.
                 try:
                     with open(STATUS_FILE, "r") as _sf:
-                        _st = json.load(_sf)
-                    if _st.get("state") == "syncing":
-                        continue
+                        _state = json.load(_sf).get("state")
                 except Exception:
-                    pass
-                ip_info = _get_ip_info()
-                with ui.lock:
-                    saved_state = dict(ui.state)
-                ui.set(subtitle=ip_info, percent=None, animate=False, show_header=True)
-                time.sleep(10)
-                with ui.lock:
-                    ui.state.update(saved_state)
+                    _state = None
+                if _state in ("syncing", "backing_up", "connected"):
+                    continue   # don't cover active backup/sync progress
+                _button_info_until = time.time() + 30
+                ui.set(screen="info", info_lines=build_button_info_lines(),
+                       percent=None, animate=False, show_header=False)
         except Exception:
             pass
         time.sleep(1)
@@ -849,16 +1113,27 @@ def _try_ntp_sync():
     except Exception:
         pass
 
+def _request_shutdown(signum, frame):
+    """SIGTERM/SIGINT handler — the Animator thread paints the owner screen and exits."""
+    SHUTDOWN.set()
+
+
+def _setup_completed():
+    try:
+        with open(CONFIG_PATH, "r") as f:
+            return bool((yaml.safe_load(f) or {}).get("setup_completed", False))
+    except Exception:
+        return False
+
+
 def main():
     global _backup_running
 
-    # Do not start backup if first-time setup hasn't been completed
+    # Single EPD owner: on shutdown the Animator paints the owner screen and sleeps
+    # the panel so the image persists after PiSugar cuts power.
+    signal.signal(signal.SIGTERM, _request_shutdown)
     try:
-        with open(CONFIG_PATH, "r") as _f:
-            _cfg_check = yaml.safe_load(_f) or {}
-        if not _cfg_check.get("setup_completed", False):
-            print("[SKIP] Setup not completed yet. Exiting.", flush=True)
-            sys.exit(0)
+        signal.signal(signal.SIGINT, _request_shutdown)
     except Exception:
         pass
 
@@ -896,17 +1171,18 @@ def main():
 
     ui = Animator(p)
     ui.start()
+    # Boot / idle screen immediately (folded in from boot-message.py).
+    ui.set(screen="boot", subtitle="", percent=None, animate=False, show_header=True)
 
-    # Start PiSugar button listener for IP display
-    btn_thread = threading.Thread(target=_pisugar_button_listener, args=(p, ui), daemon=True)
+    # Single-tap → system-info screen (folded in from button-info.py).
+    btn_thread = threading.Thread(target=_pisugar_button_listener, args=(ui,), daemon=True)
     btn_thread.start()
 
     _last_reject_udid = None
-    _last_sync_render = None      # tracks (state, percent, bytes, stalled_seconds) of last sync UI
     _sync_dead_logged = False     # so we don't spam the log
     try:
         # Don't clobber an in-progress sync's status if one is already running
-        # (covers iosbackupmachine.py restart while backup-sync.py is alive).
+        # (covers a daemon restart while backup-sync.py is alive).
         _initial = {}
         try:
             with open(STATUS_FILE, "r") as _sf:
@@ -915,8 +1191,14 @@ def main():
             pass
         if _initial.get("state") != "syncing":
             write_status("waiting")
-        ui.set(subtitle="Waiting for iPhone...", percent=None, animate=True, show_header=True)
         while True:
+            # The Animator owns the EPD; this loop only decides what state to show.
+            if SHUTDOWN.is_set():
+                time.sleep(0.2); continue   # Animator paints owner + exits
+            # Leave the system-info screen up for its 30s window after a tap.
+            if time.time() < _button_info_until:
+                time.sleep(0.3); continue
+
             # External sync (backup-sync.py) writes the status file with state=syncing/...
             # We own the EPD, so draw its UI from here.
             try:
@@ -971,70 +1253,78 @@ def main():
                 # updates a dict (cheap) and guarantees the Animator's next 1Hz tick
                 # draws current sync state — protects against external overrides
                 # (button info, rejected device, etc.) reverting the display.
-                ui.set(subtitle=sub, percent=pct, animate=True, show_header=True)
-                _last_sync_render = ("syncing", pct, b, stalled, stalled_sec, scanning, scan_sec)
+                ui.set(screen="normal", subtitle=sub, percent=pct, animate=True, show_header=True)
                 time.sleep(0.5)
                 continue
-            elif _state in ("sync_complete", "sync_error"):
-                # Persist sync result on the e-ink until another event changes state
-                # (new sync, backup start, device rejected, shutdown). Fall through
-                # to device handling so an iPhone plug-in can still trigger a backup —
-                # _auto_notified is set so the "auto-backup disabled" message won't
-                # redraw over the result.
-                msg = (_st.get("message", "") or "")[:60]
-                if _state == "sync_complete":
-                    desired_sub = f"Sync complete\n{msg}"
-                else:
-                    desired_sub = f"Sync failed\n{msg}"
-                # Always re-set so external overrides (button info etc.) can't
-                # leave the sync result hidden forever.
-                with ui.lock:
-                    cur_sub = ui.state.get("subtitle")
-                if cur_sub != desired_sub:
-                    ui.set(subtitle=desired_sub, percent=None, animate=False, show_header=True)
-                _last_sync_render = (_state, None, None, False, 0, False, 0)
-                main._auto_notified = True
-            elif _last_sync_render is not None:
-                # Sync state was cleared externally; reset marker so future sync UI redraws
-                _last_sync_render = None
 
-            allowed, udid, reason = device_allowed()
+            # --- Device handling (only once first-time setup is complete) ---
+            if _setup_completed():
+                allowed, udid, reason = device_allowed()
+            else:
+                allowed, udid, reason = False, None, "setup_pending"
+
+            # Web UI "Start Backup": force a backup even when auto-start is off.
+            # Still honours the device filter (won't override a rejected device).
+            try:
+                manual_start = os.path.exists(START_FILE)
+                if manual_start:
+                    os.remove(START_FILE)
+            except Exception:
+                manual_start = False
+            if manual_start and not allowed and reason == "auto_start_disabled" and udid:
+                allowed = True
+
             if allowed:
                 _backup_running = True
                 write_status("connected", udid=udid)
                 send_notification("device_connected", {"udid": udid})
-                ui.set(subtitle="Device detected. Preparing...", percent=None, animate=True, show_header=True)
+                ui.set(screen="normal", subtitle="Device detected. Preparing...",
+                       percent=None, animate=True, show_header=True)
                 try: subprocess.run(["idevicepair", "validate"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 except Exception: pass
-                run_backup(p, logf, ui); break
-            elif reason == "device_rejected" and udid and udid != _last_reject_udid:
-                _last_reject_udid = udid
-                ui.set(subtitle=f"Device not allowed:\n{udid[:20]}...", percent=None, animate=False, show_header=True)
-                if logf: logf.write(f"[REJECT] Device {udid} not in allowed list\n")
-                # Re-read config for notify_on_rejected
-                try:
-                    with open(CONFIG_PATH, "r") as _f:
-                        _lcfg = yaml.safe_load(_f) or {}
-                except Exception:
-                    _lcfg = {}
-                if _lcfg.get("backup", {}).get("notify_on_rejected", True):
-                    send_notification("device_rejected", {"udid": udid})
-            elif reason == "auto_start_disabled" and udid:
-                if not hasattr(main, '_auto_notified'):
-                    main._auto_notified = True
-                    ui.set(subtitle="Auto-backup disabled.\nUse web UI to start.", percent=None, animate=False, show_header=True)
-            else:
+                run_backup(p, logf, ui)
+                _backup_running = False
+                # Keep the result screen (complete/interrupted/error) up until the
+                # iPhone is unplugged, so we don't immediately re-back-up the same device.
+                while device_present() and not SHUTDOWN.is_set():
+                    time.sleep(1)
                 _last_reject_udid = None
-                time.sleep(0.3)
+                continue
+            elif reason == "device_rejected" and udid:
+                ui.set(screen="normal", subtitle=f"Device not allowed:\n{udid[:20]}...",
+                       percent=None, animate=False, show_header=True)
+                if udid != _last_reject_udid:
+                    _last_reject_udid = udid
+                    if logf: logf.write(f"[REJECT] Device {udid} not in allowed list\n")
+                    try:
+                        with open(CONFIG_PATH, "r") as _f:
+                            _lcfg = yaml.safe_load(_f) or {}
+                    except Exception:
+                        _lcfg = {}
+                    if _lcfg.get("backup", {}).get("notify_on_rejected", True):
+                        send_notification("device_rejected", {"udid": udid})
+            elif reason == "auto_start_disabled" and udid:
+                ui.set(screen="normal", subtitle="Auto-backup disabled.\nUse web UI to start.",
+                       percent=None, animate=False, show_header=True)
+            else:
+                # Idle: persist a sync result if one is pending, else the boot screen.
+                _last_reject_udid = None
+                if _state in ("sync_complete", "sync_error"):
+                    msg = (_st.get("message", "") or "")[:60]
+                    head = "Sync complete" if _state == "sync_complete" else "Sync failed"
+                    ui.set(screen="complete", subtitle="", percent=None, animate=False,
+                           center_block=f"{head}\n{msg}", show_header=True)
+                else:
+                    ui.set(screen="boot", subtitle="", percent=None, animate=False, show_header=True)
             time.sleep(0.3)
-    except KeyboardInterrupt:
-        if logf: logf.write("[INTERRUPT]\n")
+    except Exception as e:
+        if logf:
+            logf.write(f"[FATAL] main loop: {e}\n")
+        # Let the Animator paint the owner screen and exit; the unit restarts on failure.
+        SHUTDOWN.set()
+        time.sleep(2)
     finally:
         _backup_running = False
-        try: ui.stop()
-        except Exception: pass
-        try: p.sleep()
-        except Exception: pass
         try: logf.close()
         except Exception: pass
 

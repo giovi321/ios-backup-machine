@@ -1625,16 +1625,16 @@ def api_import_config():
 @app.route("/api/start-backup", methods=["POST"])
 @login_required
 def api_start_backup():
-    """Start or restart the backup service."""
+    """Request a backup from the always-on display daemon (used when auto-start
+    is off). Drops a sentinel the daemon consumes; it backs up if an allowed
+    iPhone is connected. We never restart the service — that owns the e-ink."""
     try:
-        subprocess.run(["systemctl", "reset-failed", "iosbackupmachine.service"],
-                       capture_output=True, timeout=5)
-        r = subprocess.run(["systemctl", "restart", "iosbackupmachine.service"],
-                           capture_output=True, text=True, timeout=10)
-        if r.returncode == 0:
-            flash("Backup service started.", "success")
-        else:
-            flash(f"Failed to start backup: {r.stderr.strip()[:200]}", "error")
+        os.makedirs(LOG_DIR, exist_ok=True)
+        # Make sure the daemon is up (no-op if already running).
+        subprocess.run(["systemctl", "start", "iosbackupmachine.service"],
+                       capture_output=True, timeout=10)
+        open(os.path.join(LOG_DIR, "start_requested"), "w").close()
+        flash("Backup requested. Make sure your iPhone is plugged in and unlocked.", "success")
     except Exception as e:
         flash(f"Error: {e}", "error")
     return redirect(url_for("index"))
@@ -1642,32 +1642,21 @@ def api_start_backup():
 @app.route("/api/stop-backup", methods=["POST"])
 @login_required
 def api_stop_backup():
-    """Stop the backup service, show interrupted screen on e-ink."""
+    """Abort the current backup. Signals the always-on display daemon (which owns
+    the e-ink and renders the interrupted screen) instead of stopping its service."""
     try:
-        subprocess.run(["systemctl", "stop", "iosbackupmachine.service"],
-                       capture_output=True, timeout=10)
+        os.makedirs(LOG_DIR, exist_ok=True)
+        open(os.path.join(LOG_DIR, "stop_requested"), "w").close()
         subprocess.run(["pkill", "-f", "idevicebackup2"],
                        capture_output=True, timeout=5)
-        # Update status to interrupted (stopped via web UI)
-        status_file = os.path.join(LOG_DIR, "backup_status.json")
+        # Reflect the stop on the dashboard immediately (atomic write).
         try:
-            os.makedirs(LOG_DIR, exist_ok=True)
-            with open(status_file, "w") as f:
+            status_file = os.path.join(LOG_DIR, "backup_status.json")
+            tmp = status_file + ".tmp"
+            with open(tmp, "w") as f:
                 json.dump({"state": "interrupted", "reason": "Stopped from web UI",
                            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S")}, f)
-        except Exception:
-            pass
-        # Show interrupted screen on e-ink (release GPIO first, then draw)
-        try:
-            subprocess.Popen(
-                ["/root/iosbackupmachine/bin/python3", "/root/iosbackupmachine/unplug-notify.py"],
-                env={**os.environ,
-                     "EPD_GPIO_CHIP": "/dev/gpiochip3", "EPD_PIN_DC": "17",
-                     "EPD_PIN_RST": "1", "EPD_PIN_BUSY": "10",
-                     "EPD_SPI_DEV": "/dev/spidev3.0", "EPD_SPI_HZ": "2000000",
-                     "IOSBACKUP_CONFIG": CONFIG_PATH},
-                start_new_session=True
-            )
+            os.replace(tmp, status_file)
         except Exception:
             pass
         flash("Backup stopped.", "success")
