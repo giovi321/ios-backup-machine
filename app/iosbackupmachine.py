@@ -406,7 +406,8 @@ class Panel:
         self._show_full(img)
 
     def draw(self, subtitle="", percent=None, animate=True, center_block=None,
-             show_tail_lines=None, show_header=True, screen="normal", info_lines=None):
+             show_tail_lines=None, show_header=True, screen="normal", info_lines=None,
+             full=False):
         # Static, non-"normal" screens render once via full refresh.
         if screen == "boot":
             return self._draw_boot()
@@ -497,6 +498,15 @@ class Panel:
         if out.size != (self.pw, self.ph):  # safety. try to avoid resize churn for partials.
             out = out.resize((self.pw, self.ph))
 
+        # One-shot full refresh requested for a screen-type transition (e.g.
+        # backup-complete -> sync, sync -> result): clears the previous screen so
+        # it can't ghost through the partial-refresh updates that follow.
+        if full:
+            self._display_full(out)
+            self._partial_ready = False
+            self._partial_count = 0
+            return
+
         # choose refresh path
         use_partial = show_header and ((percent is not None) or self._force_partial)
 
@@ -544,10 +554,16 @@ class Animator:
         self.running = False
         self.thread = None
         self._last = None
+        self._force_full = False     # one-shot: next draw is a clean full refresh
 
     def set(self, **kwargs):
         with self.lock:
             self.state.update(kwargs)
+
+    def request_full(self):
+        """Make the next rendered frame a full refresh (clears ghosting on a
+        screen-type transition). One-shot; consumed by the next tick."""
+        self._force_full = True
 
     def get_state(self):
         with self.lock:
@@ -573,10 +589,13 @@ class Animator:
             with self.lock:
                 s = dict(self.state)
             # Redraw every tick for animated screens; otherwise only on change,
-            # so a static screen isn't re-flashed once a second.
-            if s.get("animate") or s != self._last:
+            # so a static screen isn't re-flashed once a second. A pending
+            # full-refresh request also forces a redraw even if state is unchanged.
+            if self._force_full or s.get("animate") or s != self._last:
+                full = self._force_full
+                self._force_full = False
                 try:
-                    self.panel.draw(**s)
+                    self.panel.draw(full=full, **s)
                     self._last = s
                 except Exception as e:
                     print(f"[DRAW] {e}", flush=True)
@@ -973,6 +992,7 @@ def run_backup(panel, logf, ui, _retry=0):
         write_status("complete", usage=usage_str, completed_at=ts_end, verified=ok)
         ui.set(screen="complete", subtitle="", percent=None, animate=False,
                center_block=center, show_header=False)
+        ui.request_full()   # clean transition from backup progress
         if logf: logf.write(f"[OK] completed at {ts_end} usage={usage_str}\n")
         send_notification("backup_complete", {
             "usage": usage_str, "timestamp": ts_end,
@@ -1000,6 +1020,7 @@ def run_backup(panel, logf, ui, _retry=0):
             send_notification("sync_start")
             ui.set(screen="normal", subtitle="Syncing to remote server...", percent=0,
                    animate=True, show_header=True)
+            ui.request_full()   # clear the backup-complete screen before sync progress
             def _sync_progress(info):
                 pct = info["pct"]
                 elapsed = info["elapsed"]
@@ -1021,12 +1042,14 @@ def run_backup(panel, logf, ui, _retry=0):
                     write_status("sync_complete", message=result["message"])
                     ui.set(screen="complete", subtitle="", percent=None, animate=False,
                            center_block=f"Sync complete.\n{result['message']}", show_header=True)
+                    ui.request_full()
                     send_notification("sync_complete", {"message": result["message"]})
                 else:
                     if logf: logf.write(f"[SYNC] Failed: {result['message']}\n")
                     write_status("sync_error", message=result["message"])
                     ui.set(screen="complete", subtitle="", percent=None, animate=False,
                            center_block=f"Sync failed.\n{result['message'][:60]}", show_header=True)
+                    ui.request_full()
                     send_notification("sync_error", {"error": result["message"]})
                 time.sleep(5)
             except Exception as e:
@@ -1180,6 +1203,7 @@ def main():
 
     _last_reject_udid = None
     _sync_dead_logged = False     # so we don't spam the log
+    _prev_state = None            # for full-refresh on status transitions
     try:
         # Don't clobber an in-progress sync's status if one is already running
         # (covers a daemon restart while backup-sync.py is alive).
@@ -1236,6 +1260,13 @@ def main():
                         _st = {"state": "sync_error", "message": "Sync process died unexpectedly."}
                 else:
                     _sync_dead_logged = False
+
+            # A change in the status-file state is a screen-type transition;
+            # request one full refresh so the previous screen can't ghost through.
+            state_changed = (_state != _prev_state)
+            _prev_state = _state
+            if state_changed and _state in ("syncing", "sync_complete", "sync_error"):
+                ui.request_full()
 
             if _state == "syncing":
                 pct = _st.get("percent", 0) or 0
@@ -1299,6 +1330,7 @@ def main():
                 send_notification("device_connected", {"udid": udid})
                 ui.set(screen="normal", subtitle="Device detected. Preparing...",
                        percent=None, animate=True, show_header=True)
+                ui.request_full()   # clean transition from the boot/idle screen
                 try: subprocess.run(["idevicepair", "validate"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 except Exception: pass
                 run_backup(p, logf, ui)
