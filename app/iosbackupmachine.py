@@ -1127,7 +1127,7 @@ def _setup_completed():
 
 
 def main():
-    global _backup_running
+    global _backup_running, _button_info_until
 
     # Single EPD owner: on shutdown the Animator paints the owner screen and sleeps
     # the panel so the image persists after PiSugar cuts power.
@@ -1191,13 +1191,18 @@ def main():
             pass
         if _initial.get("state") != "syncing":
             write_status("waiting")
+
+        def show(**kw):
+            # Passive redraw — skipped while the single-tap info screen is up, so
+            # it isn't clobbered. Active screens (backup/sync) call ui.set directly.
+            if time.time() < _button_info_until:
+                return
+            ui.set(**kw)
+
         while True:
             # The Animator owns the EPD; this loop only decides what state to show.
             if SHUTDOWN.is_set():
                 time.sleep(0.2); continue   # Animator paints owner + exits
-            # Leave the system-info screen up for its 30s window after a tap.
-            if time.time() < _button_info_until:
-                time.sleep(0.3); continue
 
             # External sync (backup-sync.py) writes the status file with state=syncing/...
             # We own the EPD, so draw its UI from here.
@@ -1253,9 +1258,23 @@ def main():
                 # updates a dict (cheap) and guarantees the Animator's next 1Hz tick
                 # draws current sync state — protects against external overrides
                 # (button info, rejected device, etc.) reverting the display.
+                _button_info_until = 0   # a live sync takes priority over the info screen
                 ui.set(screen="normal", subtitle=sub, percent=pct, animate=True, show_header=True)
                 time.sleep(0.5)
                 continue
+
+            # Web UI / double-tap "Start Backup" sentinel. Kept armed for 60s so a
+            # click just before plugging the iPhone still takes effect; consumed
+            # only when a backup actually starts (below).
+            manual_start = False
+            try:
+                if os.path.exists(START_FILE):
+                    if time.time() - os.path.getmtime(START_FILE) > 60:
+                        os.remove(START_FILE)
+                    else:
+                        manual_start = True
+            except Exception:
+                manual_start = False
 
             # --- Device handling (only once first-time setup is complete) ---
             if _setup_completed():
@@ -1263,18 +1282,18 @@ def main():
             else:
                 allowed, udid, reason = False, None, "setup_pending"
 
-            # Web UI "Start Backup": force a backup even when auto-start is off.
-            # Still honours the device filter (won't override a rejected device).
-            try:
-                manual_start = os.path.exists(START_FILE)
-                if manual_start:
-                    os.remove(START_FILE)
-            except Exception:
-                manual_start = False
+            # Manual start forces a backup when auto-start is off (still honours the
+            # device filter — won't override a rejected device).
             if manual_start and not allowed and reason == "auto_start_disabled" and udid:
                 allowed = True
 
             if allowed:
+                try:
+                    if os.path.exists(START_FILE):
+                        os.remove(START_FILE)   # consume the request
+                except Exception:
+                    pass
+                _button_info_until = 0          # a backup takes priority over the info screen
                 _backup_running = True
                 write_status("connected", udid=udid)
                 send_notification("device_connected", {"udid": udid})
@@ -1291,8 +1310,8 @@ def main():
                 _last_reject_udid = None
                 continue
             elif reason == "device_rejected" and udid:
-                ui.set(screen="normal", subtitle=f"Device not allowed:\n{udid[:20]}...",
-                       percent=None, animate=False, show_header=True)
+                show(screen="normal", subtitle=f"Device not allowed:\n{udid[:20]}...",
+                     percent=None, animate=False, show_header=True)
                 if udid != _last_reject_udid:
                     _last_reject_udid = udid
                     if logf: logf.write(f"[REJECT] Device {udid} not in allowed list\n")
@@ -1304,18 +1323,18 @@ def main():
                     if _lcfg.get("backup", {}).get("notify_on_rejected", True):
                         send_notification("device_rejected", {"udid": udid})
             elif reason == "auto_start_disabled" and udid:
-                ui.set(screen="normal", subtitle="Auto-backup disabled.\nUse web UI to start.",
-                       percent=None, animate=False, show_header=True)
+                show(screen="normal", subtitle="Auto-backup disabled.\nUse web UI to start.",
+                     percent=None, animate=False, show_header=True)
             else:
                 # Idle: persist a sync result if one is pending, else the boot screen.
                 _last_reject_udid = None
                 if _state in ("sync_complete", "sync_error"):
                     msg = (_st.get("message", "") or "")[:60]
                     head = "Sync complete" if _state == "sync_complete" else "Sync failed"
-                    ui.set(screen="complete", subtitle="", percent=None, animate=False,
-                           center_block=f"{head}\n{msg}", show_header=True)
+                    show(screen="complete", subtitle="", percent=None, animate=False,
+                         center_block=f"{head}\n{msg}", show_header=True)
                 else:
-                    ui.set(screen="boot", subtitle="", percent=None, animate=False, show_header=True)
+                    show(screen="boot", subtitle="", percent=None, animate=False, show_header=True)
             time.sleep(0.3)
     except Exception as e:
         if logf:

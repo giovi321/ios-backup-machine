@@ -276,6 +276,20 @@ else
     warn "${ARMBIAN_ENV} not found - skipping overlay configuration"
 fi
 
+# Per-release reboot flag: a commit that needs a reboot bumps the integer in the
+# repo's REBOOT_EPOCH file. If the installed epoch is behind, require a reboot
+# (in addition to any overlay change above). Lets each release decide for itself
+# instead of hardcoding "no reboot required".
+REPO_REBOOT_EPOCH=$(cat "${REPO_DIR}/REBOOT_EPOCH" 2>/dev/null || echo 0)
+INSTALLED_REBOOT_EPOCH=$(cat "${INSTALL_DIR}/.reboot_epoch" 2>/dev/null || echo 0)
+case "${REPO_REBOOT_EPOCH}${INSTALLED_REBOOT_EPOCH}" in
+    *[!0-9]*) REPO_REBOOT_EPOCH=0; INSTALLED_REBOOT_EPOCH=0 ;;  # non-numeric → ignore
+esac
+if [ "${IS_UPGRADE}" = true ] && [ "${REPO_REBOOT_EPOCH}" -gt "${INSTALLED_REBOOT_EPOCH}" ]; then
+    NEED_REBOOT=true
+    info "This update requires a reboot (reboot flag ${INSTALLED_REBOOT_EPOCH} -> ${REPO_REBOOT_EPOCH})"
+fi
+
 # ---------------------------------------------------------------------------
 # Step: Install system dependencies
 # ---------------------------------------------------------------------------
@@ -489,8 +503,12 @@ info "Reloaded systemd daemon"
 
 for svc in "${ENABLE_SERVICES[@]}"; do
     if [ -f "/etc/systemd/system/${svc}" ]; then
-        systemctl enable "${svc}" 2>/dev/null
-        detail "Enabled ${svc}"
+        systemctl enable "${svc}" >/dev/null 2>&1 || true
+        if systemctl is-enabled --quiet "${svc}" 2>/dev/null; then
+            detail "Enabled ${svc}"
+        else
+            warn "Could NOT enable ${svc} — it will not start at boot"
+        fi
     else
         warn "Service file not found: ${svc}"
     fi
@@ -639,6 +657,15 @@ else
     warn "webui.service is not running"
 fi
 
+# Check the display daemon (single EPD owner)
+if systemctl is-active --quiet iosbackupmachine.service 2>/dev/null; then
+    info "iosbackupmachine.service (display daemon) is running"
+elif [ "${NEED_REBOOT}" = true ]; then
+    info "iosbackupmachine.service will start after the reboot"
+else
+    warn "iosbackupmachine.service is not running (check: journalctl -u iosbackupmachine)"
+fi
+
 if [ "${HEALTH_OK}" = true ]; then
     info "All health checks passed"
 else
@@ -667,16 +694,18 @@ echo -e "  ${GREEN}✓${NC} Previous version backed up to ${BACKUP_PATH}"
 fi
 echo ""
 
+# Record the reboot epoch we just installed, so the next update can compare.
+echo "${REPO_REBOOT_EPOCH}" > "${INSTALL_DIR}/.reboot_epoch" 2>/dev/null || true
+
 if [ "${NEED_REBOOT}" = true ]; then
-    echo -e "  ${YELLOW}⚠ SPI/I2C overlays were changed in ${ARMBIAN_ENV}.${NC}"
-    echo -e "  ${YELLOW}  A reboot is required for the e-ink display to work.${NC}"
+    echo -e "  ${YELLOW}⚠ A reboot is required to apply this update.${NC}"
     echo ""
     read -rp "  Reboot now? [y/N] " answer
     if [[ "${answer}" =~ ^[Yy]$ ]]; then
         echo "  Rebooting..."
         reboot
     else
-        echo -e "  ${YELLOW}Remember to reboot before using the e-ink display.${NC}"
+        echo -e "  ${YELLOW}Remember to reboot to finish applying the update.${NC}"
     fi
 else
     echo -e "  No reboot required."

@@ -9,7 +9,7 @@
   "single_tap_enable": true,
   "single_tap_shell": "",
   "double_tap_enable": true,
-  "double_tap_shell": "systemctl start backup-sync.service",
+  "double_tap_shell": "/usr/bin/touch /var/log/iosbackupmachine/start_requested",
   "long_tap_enable": true,
   "long_tap_shell": "/root/iosbackupmachine/long-press-backup.sh",
   "auto_shutdown_level": 30.0,

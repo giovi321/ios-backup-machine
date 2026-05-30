@@ -9,10 +9,10 @@
         <h2 style="margin-bottom:0;">Backup Status</h2>
         <div class="btn-group" style="margin:0;">
             <form method="POST" action="{{ url_for('api_start_backup') }}" style="display:inline; margin:0;">
-                <button type="submit" class="btn btn-primary btn-sm">Start Backup</button>
+                <button type="submit" class="btn btn-primary btn-sm" id="start-backup-btn"{% if backup_status and backup_status.state in ('backing_up', 'connected') %} disabled{% endif %}>Start Backup</button>
             </form>
             <form method="POST" action="{{ url_for('api_stop_backup') }}" style="display:inline; margin:0;">
-                <button type="submit" class="btn btn-secondary btn-sm">Stop Backup</button>
+                <button type="submit" class="btn btn-secondary btn-sm" id="stop-backup-btn"{% if not (backup_status and backup_status.state in ('backing_up', 'connected')) %} disabled{% endif %}>Stop Backup</button>
             </form>
         </div>
     </div>
@@ -276,6 +276,13 @@
                 var bProg = document.getElementById('backup-progress');
                 var sState = document.getElementById('sync-state');
                 var sProg = document.getElementById('sync-progress');
+
+                // Grey out Start while a backup runs; grey out Stop while idle.
+                var backupActive = (data.state === 'backing_up' || data.state === 'connected');
+                var startBtn = document.getElementById('start-backup-btn');
+                var stopBtn = document.getElementById('stop-backup-btn');
+                if (startBtn) startBtn.disabled = backupActive;
+                if (stopBtn) stopBtn.disabled = !backupActive;
 
                 // Backup state — during a remote sync the backup card stays Idle
                 if (bState) {

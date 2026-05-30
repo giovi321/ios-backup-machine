@@ -68,8 +68,9 @@ All backups stay local on the microSD card and can be restored anytime using too
 **In case you unplug the iPhone** the process stops safely and the screen shows the interruption timestamp.
 
 ### Interactive functions
-- **Single-tap** PiSugar button: shows date, time, IP address, last backup time, disk free %, and SoC temperature for 30 seconds, then returns to boot screen.
-- **Double-tap** or **long-press** PiSugar button: triggers remote sync to configured server (rsync over SSH). The e-ink display shows transferred / total size, current speed, and a progress bar.
+- **Single-tap** PiSugar button: shows date, time, IP address, last backup time, disk free %, and SoC temperature for 30 seconds, then returns to the boot screen.
+- **Double-tap** PiSugar button: starts an iPhone backup (same as the web UI **Start Backup** — needs an allowed iPhone connected; works even when auto-start is off).
+- **Long-press** PiSugar button: triggers remote sync to the configured server (rsync over SSH). The e-ink display shows transferred / total size, current speed, and a progress bar.
 - **Boot screen**: power icon + "iOS Backup Machine" title + owner info.
 - **Power-off screen**: owner info only (persists on e-paper after shutdown).
 
@@ -473,7 +474,7 @@ WireGuard and remote sync credentials are encrypted using AES-256-GCM with a key
 
 Sync backups to a remote server via **rsync over SSH**. Supports SSH key and password authentication.
 
-- **Manual sync**: double-tap or long-press the PiSugar button, or click **Sync Now** on the web UI dashboard or Remote Sync settings page.
+- **Manual sync**: long-press the PiSugar button, or click **Sync Now** on the web UI dashboard or Remote Sync settings page.
 - **Auto-sync**: optionally trigger after each successful backup.
 - **Network restrictions**: limit sync to WiFi only, a specific SSID, or iPhone USB tethering.
 - **Progress display**: the e-paper screen and the web dashboard show transferred / total size, current speed, percentage, and a progress bar. Sizes auto-scale (KB / MB / GB / TB). During the initial file-list scan (rsync `--no-inc-recursive`) you see "Building file list (Xs)" instead of fake progress.
