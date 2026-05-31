@@ -50,6 +50,7 @@ APP_FILES=(
     "app/wg_manager.py:wg_manager.py"
     "app/sync_crypto.py:sync_crypto.py"
     "app/sync_manager.py:sync_manager.py"
+    "app/notify_crypto.py:notify_crypto.py"
     "app/config_schema.py:config_schema.py"
     "app/power.py:power.py"
     "scripts/unplug-notify.sh:unplug-notify.sh"

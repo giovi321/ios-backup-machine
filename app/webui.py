@@ -25,6 +25,7 @@ import wg_crypto
 import wg_manager
 import sync_crypto
 import sync_manager
+import notify_crypto
 import config_schema
 import power
 
@@ -554,6 +555,24 @@ def settings_notifications():
         wh["url"] = request.form.get("webhook_url", "")
         wh_events = request.form.getlist("webhook_events")
         wh["events"] = wh_events
+        # Optional auth header. The header NAME is stored in config; the VALUE is
+        # encrypted into notify.enc (same credential store as WireGuard/sync).
+        wh["auth_enabled"] = request.form.get("webhook_auth_enabled") == "on"
+        wh["auth_header"] = (request.form.get("webhook_auth_header", "").strip()
+                             or "Authorization")
+        auth_value = request.form.get("webhook_auth_value", "")
+        if auth_value.strip():
+            mode = cfg.get("credential_encryption", {}).get("passphrase_mode", "udid")
+            pw = (wg_crypto.get_iphone_serial() if mode == "udid"
+                  else request.form.get("master_password", "").strip())
+            if not pw:
+                flash("Connect iPhone first." if mode == "udid"
+                      else "Master password required to save the webhook auth header.", "error")
+            elif notify_crypto.encrypt_notify_config(
+                    {"header": wh["auth_header"], "value": auth_value.strip()}, passphrase=pw):
+                flash("Webhook auth header encrypted and saved.", "success")
+            else:
+                flash("Failed to encrypt the webhook auth header.", "error")
         notif["webhook"] = wh
         # MQTT
         mq = notif.get("mqtt", {})
@@ -573,13 +592,14 @@ def settings_notifications():
         save_config(cfg)
         flash("Notification settings saved.", "success")
         return redirect(url_for("settings_notifications"))
-    return render_template("settings_notifications.html", cfg=cfg)
+    return render_template("settings_notifications.html", cfg=cfg,
+                           has_notify_enc=os.path.exists(notify_crypto.ENC_FILE))
 
 @app.route("/settings/notifications/test", methods=["POST"])
 @login_required
 def test_notification():
     """Send a test notification via a specific channel or both."""
-    from notifications import send_notification, _send_webhook, _send_mqtt
+    from notifications import send_notification, _send_webhook, _send_mqtt, webhook_auth_headers
     channel = request.form.get("channel", "all")
     cfg = load_config()
     ncfg = cfg.get("notifications", {})
@@ -592,11 +612,12 @@ def test_notification():
     if channel == "webhook":
         wh = ncfg.get("webhook", {})
         if wh.get("url"):
-            result = _send_webhook(wh["url"], payload)
-            if result and 200 <= result < 300:
-                flash("Webhook test sent successfully.", "success")
+            status, err = _send_webhook(wh["url"], payload, webhook_auth_headers(wh))
+            if status and 200 <= status < 300:
+                flash(f"Webhook test sent successfully (HTTP {status}).", "success")
             else:
-                flash(f"Webhook test failed (status: {result}).", "error")
+                detail = err or (f"status {status}" if status else "no response")
+                flash(f"Webhook test failed ({detail}).", "error")
         else:
             flash("No webhook URL configured.", "error")
     elif channel == "mqtt":

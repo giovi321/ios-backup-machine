@@ -77,6 +77,12 @@ notifications:
     events:
       - "backup_complete"
       - "backup_error"
+    # Optional auth header. The header VALUE is encrypted at rest in notify.enc
+    # (same AES-256-GCM credential store as WireGuard/sync). Set the value via the
+    # web UI. In UDID mode it can only be decrypted while the iPhone is connected,
+    # so events fired without a device go out unauthenticated.
+    auth_enabled: false
+    auth_header: "Authorization"
   mqtt:
     enabled: false
     broker: ""

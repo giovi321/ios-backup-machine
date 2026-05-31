@@ -46,7 +46,8 @@ DEFAULTS = {
     "ntp": {"enabled": True, "servers": ["pool.ntp.org", "time.google.com"]},
     "webui": {"enabled": True, "port": 8080, "bind_interfaces": ["all"], "secret_key": "change-me"},
     "notifications": {
-        "webhook": {"enabled": False, "url": "", "events": ["backup_complete", "backup_error"]},
+        "webhook": {"enabled": False, "url": "", "events": ["backup_complete", "backup_error"],
+                    "auth_enabled": False, "auth_header": "Authorization"},
         "mqtt": {"enabled": False, "broker": "", "port": 1883, "username": "", "password": "",
                  "topic_prefix": "iosbackupmachine", "events": ["backup_complete", "backup_error"]},
     },
