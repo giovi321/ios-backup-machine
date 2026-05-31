@@ -24,6 +24,12 @@ When you plug in your iPhone, the system automatically runs an encrypted `idevic
 
 ![Image2](./assets/images/Image2.jpg)
 
+## Architecture
+
+One long-running **display service** owns the e-paper and renders every screen from a shared, atomically-written status file; everything else — backup, remote sync, web UI, PiSugar button — just *writes state*. Backups land on the microSD; an optional rsync-over-SSH ships them to a remote backup server.
+
+![System architecture](./assets/diagrams/architecture-dark.svg)
+
 # Check out apple-juicer: an iOS backup explorer
 <img width="100" height="100" alt="apple-juicer logo" src="https://github.com/user-attachments/assets/e564146f-3fa4-40df-9acc-c3a2de363b29" />
 
@@ -96,6 +102,10 @@ The e-paper display has a **single owner**: the always-on `iosbackupmachine.serv
 - **Web UI** Start/Stop Backup drop small sentinel files the daemon consumes, instead of restarting the service.
 
 This is what fixed the recurring SPI-bus conflicts and "screen not updating" bugs: only one process ever opens the EPD.
+
+The daemon renders these screens, with one full refresh on every screen-type transition (and partial refresh for animated progress):
+
+![Display state machine](./assets/diagrams/state-machine-dark.svg)
 
 
 ## Hardware
@@ -528,12 +538,7 @@ When the filter is disabled (default), any iPhone triggers a backup.
 
 ## To-do
 
-Things I want to get to. PRs welcome.
-
-### Architecture
-_The Architecture items are done:_
-- **Single e-paper owner.** `iosbackupmachine.service` is now an always-on display daemon that solely owns the EPD and renders every screen (boot, idle, backup, sync, button-info, unplug, owner) from state. Nothing else opens the display — the former per-screen scripts and services are gone — which removes the SPI-bus contention. See [Display architecture](#display-architecture).
-- **Atomic config writes** and a **versioned config schema + migrations** — see [Configuration](#configuration).
+Things I want to get to. PRs welcome. _(The architecture and reliability items — single e-paper owner, atomic config + migrations, `/api/health`, resumable & power-aware sync, tests/CI — are done; see [Architecture](#architecture), [Configuration](#configuration), and [Development](#development).)_
 
 ### Features
 - **Multiple sync destinations.** Today there's exactly one remote. Allow a list and let the user pick which one runs on auto-sync vs. manual.

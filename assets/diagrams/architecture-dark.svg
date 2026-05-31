@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 560" width="1000" height="560" font-family="'Geist', system-ui, sans-serif">
+  <defs>
+    <pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse">
+      <circle cx="1" cy="1" r="0.9" fill="rgba(241,239,231,0.10)"/>
+    </pattern>
+    <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#a8a69d"/></marker>
+    <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#ff6a30"/></marker>
+    <marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#5ba8eb"/></marker>
+    <marker id="arrow-start" markerWidth="8" markerHeight="6" refX="1" refY="3" orient="auto"><polygon points="8 0, 0 3, 8 6" fill="#a8a69d"/></marker>
+  </defs>
+
+  <rect width="100%" height="100%" fill="#1c1a17"/>
+  <rect width="100%" height="100%" fill="url(#dots)" opacity="0.55"/>
+
+  <!-- title -->
+  <text x="32" y="40" fill="#a8a69d" font-size="11" font-family="'Geist Mono', monospace" letter-spacing="0.18em">ARCHITECTURE · IOS BACKUP MACHINE</text>
+
+  <!-- ===== arrows (behind boxes) ===== -->
+  <line x1="144" y1="208" x2="208" y2="208" stroke="#ff6a30" stroke-width="1.4" marker-end="url(#arrow-accent)"/>
+  <line x1="384" y1="208" x2="448" y2="208" stroke="#ff6a30" stroke-width="1.4" marker-end="url(#arrow-accent)"/>
+  <line x1="560" y1="208" x2="624" y2="208" stroke="#a8a69d" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="768" y1="208" x2="832" y2="208" stroke="#5ba8eb" stroke-width="1.3" marker-end="url(#arrow-link)"/>
+  <line x1="300" y1="168" x2="324" y2="104" stroke="#a8a69d" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="316" y1="252" x2="392" y2="380" stroke="#a8a69d" stroke-width="1.2" marker-start="url(#arrow-start)" marker-end="url(#arrow)"/>
+  <line x1="684" y1="240" x2="508" y2="384" stroke="#a8a69d" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="160" y1="372" x2="336" y2="400" stroke="#a8a69d" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="160" y1="444" x2="336" y2="428" stroke="#a8a69d" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+  <!-- ===== arrow labels (masked) ===== -->
+  <rect x="162" y="196" width="36" height="12" rx="2" fill="#1c1a17"/><text x="180" y="206" fill="#ff6a30" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">USB</text>
+  <rect x="396" y="196" width="56" height="12" rx="2" fill="#1c1a17"/><text x="424" y="206" fill="#ff6a30" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">BACKUP</text>
+  <rect x="572" y="196" width="40" height="12" rx="2" fill="#1c1a17"/><text x="592" y="206" fill="#a8a69d" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">READ</text>
+  <rect x="772" y="196" width="64" height="12" rx="2" fill="#1c1a17"/><text x="804" y="206" fill="#5ba8eb" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">RSYNC·SSH</text>
+  <rect x="316" y="122" width="52" height="12" rx="2" fill="#1c1a17"/><text x="342" y="132" fill="#a8a69d" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">RENDER</text>
+  <rect x="312" y="306" width="80" height="12" rx="2" fill="#1c1a17"/><text x="352" y="316" fill="#a8a69d" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">STATE·READ</text>
+  <rect x="556" y="296" width="64" height="12" rx="2" fill="#1c1a17"/><text x="588" y="306" fill="#a8a69d" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">PROGRESS</text>
+  <rect x="220" y="372" width="52" height="12" rx="2" fill="#1c1a17"/><text x="246" y="382" fill="#a8a69d" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">CONFIG</text>
+  <rect x="224" y="430" width="44" height="12" rx="2" fill="#1c1a17"/><text x="246" y="440" fill="#a8a69d" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">TAPS</text>
+
+  <!-- ===== e-Paper (output) ===== -->
+  <rect x="256" y="44" width="144" height="56" rx="6" fill="#1c1a17"/>
+  <rect x="256" y="44" width="144" height="56" rx="6" fill="rgba(241,239,231,0.03)" stroke="rgba(241,239,231,0.30)" stroke-width="1"/>
+  <rect x="264" y="50" width="28" height="12" rx="2" fill="transparent" stroke="rgba(241,239,231,0.22)" stroke-width="0.8"/>
+  <text x="278" y="59" fill="#8e8c83" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">EPD</text>
+  <text x="328" y="78" fill="#f1efe7" font-size="12" font-weight="600" text-anchor="middle">e-Paper display</text>
+  <text x="328" y="92" fill="#a8a69d" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">Waveshare 2.13"</text>
+
+  <!-- ===== iPhone (input) ===== -->
+  <rect x="32" y="176" width="112" height="64" rx="6" fill="#1c1a17"/>
+  <rect x="32" y="176" width="112" height="64" rx="6" fill="rgba(168,166,157,0.10)" stroke="#8e8c83" stroke-width="1"/>
+  <rect x="40" y="182" width="28" height="12" rx="2" fill="transparent" stroke="rgba(142,140,131,0.40)" stroke-width="0.8"/>
+  <text x="54" y="191" fill="#8e8c83" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">USB</text>
+  <text x="88" y="212" fill="#f1efe7" font-size="12" font-weight="600" text-anchor="middle">iPhone</text>
+  <text x="88" y="228" fill="#a8a69d" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">idevicebackup2</text>
+
+  <!-- ===== Display service (FOCAL) ===== -->
+  <rect x="208" y="168" width="176" height="84" rx="6" fill="#1c1a17"/>
+  <rect x="208" y="168" width="176" height="84" rx="6" fill="rgba(255,106,48,0.08)" stroke="#ff6a30" stroke-width="1"/>
+  <rect x="216" y="176" width="32" height="12" rx="2" fill="transparent" stroke="rgba(255,106,48,0.50)" stroke-width="0.8"/>
+  <text x="232" y="185" fill="#ff6a30" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">SVC</text>
+  <text x="296" y="208" fill="#f1efe7" font-size="13" font-weight="600" text-anchor="middle">Display service</text>
+  <text x="296" y="224" fill="#a8a69d" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">iosbackupmachine.py</text>
+  <text x="296" y="240" fill="#a8a69d" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">sole EPD owner</text>
+
+  <!-- ===== microSD (store) ===== -->
+  <rect x="448" y="176" width="112" height="64" rx="6" fill="#1c1a17"/>
+  <rect x="448" y="176" width="112" height="64" rx="6" fill="rgba(241,239,231,0.05)" stroke="#a8a69d" stroke-width="1"/>
+  <rect x="456" y="182" width="32" height="12" rx="2" fill="transparent" stroke="rgba(168,166,157,0.50)" stroke-width="0.8"/>
+  <text x="472" y="191" fill="#a8a69d" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">DISK</text>
+  <text x="504" y="212" fill="#f1efe7" font-size="12" font-weight="600" text-anchor="middle">microSD</text>
+  <text x="504" y="228" fill="#a8a69d" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">ext4 · backups</text>
+
+  <!-- ===== backup-sync (backend) ===== -->
+  <rect x="624" y="176" width="144" height="64" rx="6" fill="#1c1a17"/>
+  <rect x="624" y="176" width="144" height="64" rx="6" fill="#2a2723" stroke="#f1efe7" stroke-width="1"/>
+  <rect x="632" y="182" width="28" height="12" rx="2" fill="transparent" stroke="rgba(241,239,231,0.40)" stroke-width="0.8"/>
+  <text x="646" y="191" fill="#f1efe7" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">PY</text>
+  <text x="696" y="212" fill="#f1efe7" font-size="12" font-weight="600" text-anchor="middle">backup-sync</text>
+  <text x="696" y="228" fill="#a8a69d" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">rsync over SSH</text>
+
+  <!-- ===== Backup server (cloud) ===== -->
+  <rect x="832" y="176" width="144" height="64" rx="6" fill="#1c1a17"/>
+  <rect x="832" y="176" width="144" height="64" rx="6" fill="rgba(241,239,231,0.03)" stroke="rgba(241,239,231,0.30)" stroke-width="1"/>
+  <rect x="840" y="182" width="32" height="12" rx="2" fill="transparent" stroke="rgba(241,239,231,0.22)" stroke-width="0.8"/>
+  <text x="856" y="191" fill="#8e8c83" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">NFS</text>
+  <text x="904" y="212" fill="#f1efe7" font-size="12" font-weight="600" text-anchor="middle">Backup server</text>
+  <text x="904" y="228" fill="#a8a69d" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">Syncthing · NFS</text>
+
+  <!-- ===== Web UI (backend) ===== -->
+  <rect x="32" y="344" width="128" height="56" rx="6" fill="#1c1a17"/>
+  <rect x="32" y="344" width="128" height="56" rx="6" fill="#2a2723" stroke="#f1efe7" stroke-width="1"/>
+  <rect x="40" y="350" width="32" height="12" rx="2" fill="transparent" stroke="rgba(241,239,231,0.40)" stroke-width="0.8"/>
+  <text x="56" y="359" fill="#f1efe7" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">WEB</text>
+  <text x="96" y="378" fill="#f1efe7" font-size="12" font-weight="600" text-anchor="middle">Web UI</text>
+  <text x="96" y="392" fill="#a8a69d" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">webui.py · Flask</text>
+
+  <!-- ===== PiSugar (input) ===== -->
+  <rect x="32" y="416" width="128" height="56" rx="6" fill="#1c1a17"/>
+  <rect x="32" y="416" width="128" height="56" rx="6" fill="rgba(168,166,157,0.10)" stroke="#8e8c83" stroke-width="1"/>
+  <rect x="40" y="422" width="32" height="12" rx="2" fill="transparent" stroke="rgba(142,140,131,0.40)" stroke-width="0.8"/>
+  <text x="56" y="431" fill="#8e8c83" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">UPS</text>
+  <text x="96" y="450" fill="#f1efe7" font-size="12" font-weight="600" text-anchor="middle">PiSugar 3</text>
+  <text x="96" y="464" fill="#a8a69d" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">UPS · button</text>
+
+  <!-- ===== Status file (store / hub) ===== -->
+  <rect x="336" y="380" width="168" height="72" rx="6" fill="#1c1a17"/>
+  <rect x="336" y="380" width="168" height="72" rx="6" fill="rgba(241,239,231,0.05)" stroke="#a8a69d" stroke-width="1"/>
+  <rect x="344" y="386" width="36" height="12" rx="2" fill="transparent" stroke="rgba(168,166,157,0.50)" stroke-width="0.8"/>
+  <text x="362" y="395" fill="#a8a69d" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">JSON</text>
+  <text x="420" y="416" fill="#f1efe7" font-size="12" font-weight="600" text-anchor="middle">Status file</text>
+  <text x="420" y="432" fill="#a8a69d" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">backup_status.json</text>
+  <text x="420" y="446" fill="#a8a69d" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">atomic · shared</text>
+
+  <!-- ===== legend strip ===== -->
+  <line x1="32" y1="500" x2="968" y2="500" stroke="rgba(241,239,231,0.10)" stroke-width="0.8"/>
+  <text x="32" y="516" fill="#a8a69d" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.18em">LEGEND</text>
+
+  <rect x="32" y="532" width="14" height="10" rx="2" fill="rgba(255,106,48,0.08)" stroke="#ff6a30" stroke-width="1"/>
+  <text x="52" y="540" fill="#a8a69d" font-size="8.5">Display service (owns EPD)</text>
+
+  <rect x="232" y="532" width="14" height="10" rx="2" fill="#2a2723" stroke="#f1efe7" stroke-width="1"/>
+  <text x="252" y="540" fill="#a8a69d" font-size="8.5">Service</text>
+
+  <rect x="332" y="532" width="14" height="10" rx="2" fill="rgba(241,239,231,0.05)" stroke="#a8a69d" stroke-width="1"/>
+  <text x="352" y="540" fill="#a8a69d" font-size="8.5">Store / state</text>
+
+  <rect x="452" y="532" width="14" height="10" rx="2" fill="rgba(241,239,231,0.03)" stroke="rgba(241,239,231,0.30)" stroke-width="1"/>
+  <text x="472" y="540" fill="#a8a69d" font-size="8.5">Device / cloud</text>
+
+  <line x1="592" y1="538" x2="620" y2="538" stroke="#ff6a30" stroke-width="1.4" marker-end="url(#arrow-accent)"/>
+  <text x="628" y="540" fill="#a8a69d" font-size="8.5">Backup flow</text>
+
+  <line x1="744" y1="538" x2="772" y2="538" stroke="#5ba8eb" stroke-width="1.3" marker-end="url(#arrow-link)"/>
+  <text x="780" y="540" fill="#a8a69d" font-size="8.5">rsync · SSH</text>
+</svg>
