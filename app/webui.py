@@ -740,10 +740,13 @@ def settings_wireguard():
             cred_enc["passphrase_mode"] = request.form.get("passphrase_mode", "udid")
             cfg["credential_encryption"] = cred_enc
             save_config(cfg)
-            # Apply the full-tunnel routing right away if the VPN is already up
-            # (otherwise it takes effect on the next connect).
-            if wg["full_tunnel"] and wg_manager.is_interface_up(iface):
-                wg_manager.enforce_full_tunnel()
+            # Apply (or clear) the full-tunnel routing right away if the VPN is
+            # already up; otherwise it takes effect on the next connect.
+            if wg_manager.is_interface_up(iface):
+                if wg["full_tunnel"]:
+                    wg_manager.enforce_full_tunnel(iface)
+                else:
+                    wg_manager.clear_full_tunnel(iface)
             flash("WireGuard settings saved.", "success")
         elif action == "upload_config":
             wg_conf = request.form.get("wg_config", "")

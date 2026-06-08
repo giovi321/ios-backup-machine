@@ -91,8 +91,8 @@
         <div class="hint" style="margin-bottom:12px;">
             Forces <strong>every</strong> destination — including the local subnet — through the tunnel, re-applied on every connect.
             Use this when the remote sync server's IP overlaps the WiFi subnet.
+            SSH and the web UI <strong>remain reachable from the local network</strong> (replies to local connections are kept off the tunnel).
             Requires <code>AllowedIPs = 0.0.0.0/0</code> in the WireGuard config.
-            <strong>Warning:</strong> while connected, the device is only reachable over the VPN — local-network (WiFi) access to SSH / the web UI will stop.
         </div>
         <div class="form-group">
             <label for="interface_name">Interface Name</label>
