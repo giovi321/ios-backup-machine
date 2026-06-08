@@ -23,7 +23,7 @@ import yaml
 CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/iosbackupmachine/config.yaml")
 
 # Bump whenever the schema changes in a way that needs a migration step below.
-CONFIG_VERSION = 1
+CONFIG_VERSION = 2
 
 # Canonical defaults. Every key the app reads should appear here so a fresh or
 # partial config becomes a complete, valid tree after apply_defaults().
@@ -42,7 +42,9 @@ DEFAULTS = {
     "backup": {"auto_start": True, "notify_on_rejected": True},
     "backup_encryption": {"encryption_confirmed": False},
     "device_filter": {"enabled": False, "allowed_devices": []},
-    "wifi": {"enabled": False, "ssid": "", "password": ""},
+    # networks: list of {nickname, ssid, password}. The legacy single ssid/password
+    # are kept for backward-compat reads; the v2 migration seeds networks from them.
+    "wifi": {"enabled": False, "ssid": "", "password": "", "networks": []},
     "ntp": {"enabled": True, "servers": ["pool.ntp.org", "time.google.com"]},
     "webui": {"enabled": True, "port": 8080, "bind_interfaces": ["all"], "secret_key": "change-me"},
     "notifications": {
@@ -88,8 +90,25 @@ def _migrate_0_to_1(cfg):
     return cfg
 
 
+def _migrate_1_to_2(cfg):
+    # v2 introduces wifi.networks — a list of {nickname, ssid, password} so the
+    # device can roam between several configured WiFi networks. Seed it from the
+    # single legacy ssid/password so an existing setup keeps its network.
+    wifi = cfg.get("wifi")
+    if isinstance(wifi, dict) and not wifi.get("networks"):
+        ssid = (wifi.get("ssid") or "").strip()
+        if ssid:
+            wifi["networks"] = [{
+                "nickname": "",
+                "ssid": ssid,
+                "password": wifi.get("password", ""),
+            }]
+    return cfg
+
+
 _MIGRATIONS = {
     0: _migrate_0_to_1,
+    1: _migrate_1_to_2,
 }
 
 

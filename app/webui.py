@@ -107,6 +107,32 @@ def save_config(cfg):
     # truncate config.yaml.
     config_schema.atomic_save(cfg, CONFIG_PATH)
 
+
+# ---------------------------------------------------------------------------
+# WiFi multi-network helpers
+# ---------------------------------------------------------------------------
+def _wifi_networks(cfg):
+    """Return the configured WiFi networks as a list of {nickname, ssid, password}.
+    Falls back to the single legacy ssid/password if no networks list exists yet."""
+    wifi = cfg.get("wifi", {}) or {}
+    nets = wifi.get("networks")
+    if nets:
+        return nets
+    ssid = (wifi.get("ssid") or "").strip()
+    if ssid:
+        return [{"nickname": "", "ssid": ssid, "password": wifi.get("password", "")}]
+    return []
+
+
+def _wifi_nickname_for(cfg, ssid):
+    """Nickname configured for ``ssid`` (the live connected network), or ''."""
+    if not ssid:
+        return ""
+    for net in _wifi_networks(cfg):
+        if (net.get("ssid") or "") == ssid:
+            return (net.get("nickname") or "").strip()
+    return ""
+
 # ---------------------------------------------------------------------------
 # First-start / secret-key helpers
 # ---------------------------------------------------------------------------
@@ -172,13 +198,19 @@ def setup():
         cfg["owner_lines"] = owner
 
         # --- Step 2: WiFi ---
+        # The setup wizard collects a single network; it seeds wifi.networks so
+        # the rest of the app (and the WiFi settings page) use the same model.
         wifi = cfg.get("wifi", {})
         wifi["enabled"] = request.form.get("wifi_enabled") == "on"
-        wifi["ssid"] = request.form.get("wifi_ssid", "")
-        wifi["password"] = request.form.get("wifi_password", "")
+        wifi_ssid = request.form.get("wifi_ssid", "").strip()
+        wifi_password = request.form.get("wifi_password", "")
+        wifi["ssid"] = wifi_ssid
+        wifi["password"] = wifi_password
+        wifi["networks"] = ([{"nickname": "", "ssid": wifi_ssid, "password": wifi_password}]
+                            if wifi_ssid else [])
         cfg["wifi"] = wifi
-        if wifi["enabled"] and wifi["ssid"]:
-            _apply_wifi(wifi["ssid"], wifi["password"])
+        if wifi["enabled"] and wifi_ssid:
+            _apply_wifi_networks(wifi["networks"])
 
         # --- Step 3: Date/Time & NTP ---
         new_dt = request.form.get("setup_datetime", "").strip()
@@ -393,8 +425,10 @@ def index():
     wg_status = wg_manager.get_wireguard_status(cfg.get("wireguard", {}).get("interface_name", "wg0"))
     backup_status = _read_backup_status()
     storage = _get_storage_info()
+    wifi_ssid = netutil.get_wifi_ssid()
     return render_template("index.html", cfg=cfg, ip=ip, iface_type=iface_type,
-                           wg_status=wg_status, backup_status=backup_status, storage=storage)
+                           wg_status=wg_status, backup_status=backup_status, storage=storage,
+                           wifi_ssid=wifi_ssid, wifi_nickname=_wifi_nickname_for(cfg, wifi_ssid))
 
 @app.route("/favicon.ico")
 def favicon():
@@ -514,33 +548,101 @@ def settings_datetime():
 def settings_wifi():
     cfg = load_config()
     if request.method == "POST":
+        # Parse the dynamic rows. The three fields are parallel lists; a row is
+        # kept only if it has an SSID (nickname and password are optional).
+        nicknames = request.form.getlist("nickname")
+        ssids = request.form.getlist("ssid")
+        passwords = request.form.getlist("password")
+        networks = []
+        for i, ssid in enumerate(ssids):
+            ssid = (ssid or "").strip()
+            if not ssid:
+                continue
+            networks.append({
+                "nickname": (nicknames[i] if i < len(nicknames) else "").strip(),
+                "ssid": ssid,
+                "password": passwords[i] if i < len(passwords) else "",
+            })
         wifi = cfg.get("wifi", {})
         wifi["enabled"] = request.form.get("wifi_enabled") == "on"
-        wifi["ssid"] = request.form.get("ssid", "")
-        wifi["password"] = request.form.get("password", "")
+        wifi["networks"] = networks
+        # Keep the legacy single-network fields mirrored to the first entry so
+        # older readers (and a downgrade) still see a sane value.
+        wifi["ssid"] = networks[0]["ssid"] if networks else ""
+        wifi["password"] = networks[0]["password"] if networks else ""
         cfg["wifi"] = wifi
         save_config(cfg)
-        # Apply WiFi settings
-        if wifi["enabled"] and wifi["ssid"]:
-            _apply_wifi(wifi["ssid"], wifi["password"])
+        if wifi["enabled"] and networks:
+            _apply_wifi_networks(networks)
         flash("WiFi settings saved.", "success")
         return redirect(url_for("settings_wifi"))
     wifi_ip = netutil.get_wifi_ip()
-    return render_template("settings_wifi.html", cfg=cfg, wifi_ip=wifi_ip)
+    wifi_ssid = netutil.get_wifi_ssid()
+    return render_template("settings_wifi.html", cfg=cfg, wifi_ip=wifi_ip,
+                           wifi_ssid=wifi_ssid,
+                           wifi_nickname=_wifi_nickname_for(cfg, wifi_ssid),
+                           wifi_networks=_wifi_networks(cfg))
 
-def _apply_wifi(ssid, password):
-    """Apply WiFi settings using nmcli."""
+# NetworkManager connection profiles we own are named with this prefix, so we
+# can find and clear them without touching the user's other connections.
+_WIFI_CON_PREFIX = "iosbackup-wifi"
+
+def _clear_managed_wifi_connections():
+    """Delete every nmcli connection we manage (name starts with the prefix)."""
     try:
-        # Remove old connection if exists
-        subprocess.run(["nmcli", "con", "delete", "iosbackup-wifi"],
-                       capture_output=True, timeout=10)
-        cmd = ["nmcli", "dev", "wifi", "connect", ssid]
-        if password:
-            cmd += ["password", password]
-        cmd += ["name", "iosbackup-wifi"]
-        subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        out = subprocess.run(["nmcli", "-t", "-f", "NAME", "connection", "show"],
+                             capture_output=True, text=True, timeout=10).stdout
+        for name in out.splitlines():
+            name = name.strip().replace("\\:", ":")
+            if name.startswith(_WIFI_CON_PREFIX):
+                subprocess.run(["nmcli", "connection", "delete", name],
+                               capture_output=True, timeout=10)
     except Exception as e:
-        app.logger.error(f"WiFi apply error: {e}")
+        app.logger.error(f"WiFi clear error: {e}")
+
+def _apply_wifi_networks(networks):
+    """Create an autoconnect NetworkManager profile for each configured network,
+    then connect to the most-preferred one in range.
+
+    A profile per SSID (vs a single immediate `dev wifi connect`) is what lets
+    the device roam: NetworkManager auto-connects to whichever configured network
+    is available, following list order as the autoconnect priority."""
+    _clear_managed_wifi_connections()
+    n = len(networks)
+    for idx, net in enumerate(networks):
+        ssid = (net.get("ssid") or "").strip()
+        if not ssid:
+            continue
+        password = net.get("password") or ""
+        name = f"{_WIFI_CON_PREFIX}-{idx}"
+        # Earlier in the list -> higher autoconnect priority.
+        priority = str(n - idx)
+        try:
+            subprocess.run(
+                ["nmcli", "connection", "add", "type", "wifi",
+                 "con-name", name, "ssid", ssid,
+                 "connection.autoconnect", "yes",
+                 "connection.autoconnect-priority", priority],
+                capture_output=True, text=True, timeout=20)
+            if password:
+                subprocess.run(
+                    ["nmcli", "connection", "modify", name,
+                     "wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", password],
+                    capture_output=True, text=True, timeout=20)
+        except Exception as e:
+            app.logger.error(f"WiFi profile error for {ssid}: {e}")
+    # Connect now to the first configured network that's actually in range.
+    for idx, net in enumerate(networks):
+        if not (net.get("ssid") or "").strip():
+            continue
+        name = f"{_WIFI_CON_PREFIX}-{idx}"
+        try:
+            r = subprocess.run(["nmcli", "connection", "up", name],
+                               capture_output=True, text=True, timeout=30)
+            if r.returncode == 0:
+                break
+        except Exception as e:
+            app.logger.error(f"WiFi connect error for {name}: {e}")
 
 # --- Notifications ---
 @app.route("/settings/notifications", methods=["GET", "POST"])
@@ -1359,10 +1461,13 @@ def api_status():
     cfg = load_config()
     ip, iface_type = netutil.get_active_ip()
     wg = cfg.get("wireguard", {})
+    wifi_ssid = netutil.get_wifi_ssid()
     return jsonify({
         "ip": ip,
         "interface": iface_type,
         "wifi_ip": netutil.get_wifi_ip(),
+        "wifi_ssid": wifi_ssid,
+        "wifi_nickname": _wifi_nickname_for(cfg, wifi_ssid),
         "usb_iphone_ip": netutil.get_usb_iphone_ip(),
         "wireguard": wg_manager.get_wireguard_status(wg.get("interface_name", "wg0")),
         "time": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -1441,10 +1546,13 @@ def api_health():
     battery = power.get_battery()
     ip, iface_type = netutil.get_active_ip()
     wg = cfg.get("wireguard", {})
+    wifi_ssid = netutil.get_wifi_ssid()
     network = {
         "active_ip": ip,
         "interface": iface_type,
         "wifi_ip": netutil.get_wifi_ip(),
+        "wifi_ssid": wifi_ssid,
+        "wifi_nickname": _wifi_nickname_for(cfg, wifi_ssid),
         "usb_iphone_ip": netutil.get_usb_iphone_ip(),
         "internet": netutil.have_connectivity(timeout=2),
         "wireguard": wg_manager.get_wireguard_status(wg.get("interface_name", "wg0")),

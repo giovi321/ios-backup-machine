@@ -47,6 +47,33 @@ def get_usb_iphone_ip():
                     return ips[0]
     return None
 
+def get_wifi_ssid():
+    """Return the SSID of the currently associated WiFi network, or None.
+
+    Tries nmcli first (authoritative on a NetworkManager system), then falls
+    back to iwgetid. Returns None when not associated with any WiFi."""
+    try:
+        out = subprocess.run(
+            ["nmcli", "-t", "-f", "ACTIVE,SSID", "dev", "wifi"],
+            capture_output=True, text=True, timeout=5
+        ).stdout
+        for line in out.splitlines():
+            # Terse output is "ACTIVE:SSID"; literal colons in the SSID are
+            # backslash-escaped, so splitting on the first ':' is safe.
+            if line.startswith("yes:"):
+                ssid = line.split(":", 1)[1].strip().replace("\\:", ":")
+                if ssid:
+                    return ssid
+    except Exception:
+        pass
+    try:
+        ssid = subprocess.run(
+            ["iwgetid", "-r"], capture_output=True, text=True, timeout=5
+        ).stdout.strip()
+        return ssid or None
+    except Exception:
+        return None
+
 def get_wireguard_ip(iface="wg0"):
     """Return the WireGuard interface IP, or None."""
     ifaces = get_all_interfaces()

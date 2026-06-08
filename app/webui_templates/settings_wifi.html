@@ -2,11 +2,21 @@
 {% block title %}WiFi Settings - iOS Backup Machine{% endblock %}
 {% block content %}
 <h1>WiFi Settings</h1>
-<p class="subtitle">Configure wireless network connection</p>
+<p class="subtitle">Configure one or more wireless networks. The device connects to whichever is in range.</p>
 
 <div class="card">
     <h2>Status</h2>
     <div class="info-grid">
+        <div class="info-item">
+            <div class="label">Connected network</div>
+            <div class="value">
+                {% if wifi_ssid %}
+                    {% if wifi_nickname %}{{ wifi_nickname }} <small style="color:var(--text-muted);">({{ wifi_ssid }})</small>{% else %}{{ wifi_ssid }}{% endif %}
+                {% else %}
+                    <span class="badge badge-off"><span class="badge-dot"></span>Not connected</span>
+                {% endif %}
+            </div>
+        </div>
         <div class="info-item">
             <div class="label">WiFi IP</div>
             <div class="value">{{ wifi_ip or 'Not connected' }}</div>
@@ -31,18 +41,80 @@
             <input type="checkbox" id="wifi_enabled" name="wifi_enabled" {% if cfg.wifi.enabled %}checked{% endif %}>
             <label for="wifi_enabled">Enable WiFi</label>
         </div>
-        <div class="form-group">
-            <label for="ssid">SSID (Network Name)</label>
-            <input type="text" id="ssid" name="ssid" value="{{ cfg.wifi.ssid }}">
+
+        <div id="wifi-networks">
+            {% for net in wifi_networks %}
+            <div class="wifi-network-row" style="border:1px solid var(--border,#ddd); border-radius:8px; padding:12px; margin-bottom:12px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+                    <strong>Network</strong>
+                    <button type="button" class="btn btn-secondary btn-sm wifi-remove" style="background:var(--error-bg);color:var(--error);">Remove</button>
+                </div>
+                <div class="form-group">
+                    <label>Nickname</label>
+                    <input type="text" name="nickname" value="{{ net.nickname }}" placeholder="e.g. Home, Office">
+                </div>
+                <div class="form-group">
+                    <label>SSID (Network Name)</label>
+                    <input type="text" name="ssid" value="{{ net.ssid }}" placeholder="MyNetwork">
+                </div>
+                <div class="form-group">
+                    <label>Password</label>
+                    <input type="password" name="password" value="{{ net.password }}">
+                    <div class="hint">Leave empty for open networks</div>
+                </div>
+            </div>
+            {% endfor %}
         </div>
-        <div class="form-group">
-            <label for="password">Password</label>
-            <input type="password" id="password" name="password" value="{{ cfg.wifi.password }}">
-            <div class="hint">Leave empty for open networks</div>
-        </div>
+
         <div class="btn-group">
-            <button type="submit" class="btn btn-primary">Save & Apply</button>
+            <button type="button" class="btn btn-secondary" id="wifi-add">+ Add network</button>
         </div>
+        <div class="btn-group" style="margin-top:12px;">
+            <button type="submit" class="btn btn-primary">Save &amp; Apply</button>
+        </div>
+        <div class="hint" style="margin-top:8px;">Networks are tried in order — the first one listed is preferred when more than one is in range.</div>
     </div>
 </form>
+
+<template id="wifi-row-template">
+    <div class="wifi-network-row" style="border:1px solid var(--border,#ddd); border-radius:8px; padding:12px; margin-bottom:12px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+            <strong>Network</strong>
+            <button type="button" class="btn btn-secondary btn-sm wifi-remove" style="background:var(--error-bg);color:var(--error);">Remove</button>
+        </div>
+        <div class="form-group">
+            <label>Nickname</label>
+            <input type="text" name="nickname" value="" placeholder="e.g. Home, Office">
+        </div>
+        <div class="form-group">
+            <label>SSID (Network Name)</label>
+            <input type="text" name="ssid" value="" placeholder="MyNetwork">
+        </div>
+        <div class="form-group">
+            <label>Password</label>
+            <input type="password" name="password" value="">
+            <div class="hint">Leave empty for open networks</div>
+        </div>
+    </div>
+</template>
+
+<script>
+    (function () {
+        var list = document.getElementById('wifi-networks');
+        var tmpl = document.getElementById('wifi-row-template');
+
+        function bindRemove(row) {
+            var btn = row.querySelector('.wifi-remove');
+            if (btn) btn.addEventListener('click', function () { row.remove(); });
+        }
+
+        list.querySelectorAll('.wifi-network-row').forEach(bindRemove);
+
+        document.getElementById('wifi-add').addEventListener('click', function () {
+            var node = tmpl.content.firstElementChild.cloneNode(true);
+            list.appendChild(node);
+            bindRemove(node);
+        });
+    })();
+</script>
 {% endblock %}

@@ -150,8 +150,13 @@
         <div class="label">WiFi</div>
         <div class="value">
             {% if cfg.wifi.enabled %}
-                <span class="badge badge-on"><span class="badge-dot"></span>Enabled</span>
-                {% if cfg.wifi.ssid %}<br><small>{{ cfg.wifi.ssid }}</small>{% endif %}
+                {% if wifi_ssid %}
+                    <span class="badge badge-on"><span class="badge-dot"></span>Connected</span>
+                    <br><small>{% if wifi_nickname %}{{ wifi_nickname }} ({{ wifi_ssid }}){% else %}{{ wifi_ssid }}{% endif %}</small>
+                {% else %}
+                    <span class="badge badge-on"><span class="badge-dot"></span>Enabled</span>
+                    <br><small style="color:var(--text-muted);">Not connected</small>
+                {% endif %}
             {% else %}
                 <span class="badge badge-off"><span class="badge-dot"></span>Disabled</span>
             {% endif %}

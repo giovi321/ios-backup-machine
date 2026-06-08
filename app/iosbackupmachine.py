@@ -179,15 +179,43 @@ def get_vpn_status():
         return "VPN: off"
 
 
+def get_wifi_status_line():
+    """For the info screen: 'WiFi: <nickname> (<ssid>)' for the connected network
+    (just the SSID if it has no nickname), or None when not on WiFi."""
+    if netutil is None:
+        return None
+    try:
+        ssid = netutil.get_wifi_ssid()
+    except Exception:
+        ssid = None
+    if not ssid:
+        return None
+    nick = ""
+    try:
+        with open(CONFIG_PATH, "r") as f:
+            live = yaml.safe_load(f) or {}
+        for net in (live.get("wifi", {}).get("networks", []) or []):
+            if (net.get("ssid") or "") == ssid:
+                nick = (net.get("nickname") or "").strip()
+                break
+    except Exception:
+        pass
+    return f"WiFi: {nick} ({ssid})" if nick else f"WiFi: {ssid}"
+
+
 def build_button_info_lines():
     """Lines for the single-tap system-info screen: (text, big?)."""
     now = datetime.now()
     temp = get_soc_temp()
     free = get_free_disk_pct()
+    # Show the connected WiFi network where the layout's blank spacer normally
+    # sits, so the line count (and overall height) stays the same on the small
+    # panel whether or not WiFi is up.
+    wifi_line = get_wifi_status_line()
     return [
         (now.strftime("%d %b %Y"), True),
         (now.strftime("%H:%M"), True),
-        ("", False),
+        (wifi_line or "", False),
         (f"IP: {get_ip_addr()}", False),
         (get_vpn_status(), False),
         (f"Last: {get_last_backup_str()}", False),

@@ -210,10 +210,17 @@ device_filter:
     #   name: "John's iPhone 15"
 
 # --- WiFi ---
+# One or more networks; the device connects to whichever is in range (first =
+# preferred). ssid/password are the legacy single-network fields, mirrored to
+# networks[0] for back-compat.
 wifi:
   enabled: false
   ssid: ""
   password: ""
+  networks: []
+  #  - nickname: "Home"
+  #    ssid: "HomeNetwork"
+  #    password: "secret"
 
 # --- NTP time sync ---
 ntp:
@@ -452,7 +459,7 @@ The dashboard shows two live status cards and auto-refreshes every 5 seconds:
 - **Encryption**: enable/change backup encryption on connected iPhone (password never stored)
 - **General**: backup directory, display orientation, owner information
 - **Date & Time**: manual date setting, NTP sync configuration
-- **WiFi**: enable/disable, SSID and password
+- **WiFi**: enable/disable and configure one or more networks (each with an optional nickname); the device connects to whichever is in range, and the status shows the connected SSID + nickname
 - **Notifications**: webhook URLs and MQTT broker settings (separate test buttons for webhook, MQTT, and both)
 - **WireGuard**: upload and encrypt VPN config, start/stop interface, backup encryption key
 - **Remote Sync**: enable, configure SSH credentials (encrypted), test connection, trigger sync, set network restrictions

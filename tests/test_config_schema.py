@@ -48,3 +48,23 @@ def test_load_missing_file_returns_defaults(tmp_path):
     cfg = config_schema.load_config(str(tmp_path / "does-not-exist.yaml"))
     assert cfg["config_version"] == config_schema.CONFIG_VERSION
     assert cfg["setup_completed"] is False
+
+
+def test_wifi_migration_seeds_networks_from_legacy_single():
+    cfg = config_schema.apply_defaults(config_schema.migrate(
+        {"config_version": 1, "wifi": {"enabled": True, "ssid": "Home", "password": "pw"}}))
+    assert cfg["wifi"]["networks"] == [{"nickname": "", "ssid": "Home", "password": "pw"}]
+
+
+def test_wifi_migration_keeps_existing_networks():
+    nets = [{"nickname": "A", "ssid": "X", "password": "1"},
+            {"nickname": "B", "ssid": "Y", "password": "2"}]
+    cfg = config_schema.apply_defaults(config_schema.migrate(
+        {"config_version": 2, "wifi": {"enabled": True, "ssid": "X", "password": "1",
+                                       "networks": nets}}))
+    assert cfg["wifi"]["networks"] == nets
+
+
+def test_wifi_defaults_have_empty_networks_list():
+    cfg = config_schema.apply_defaults({})
+    assert cfg["wifi"]["networks"] == []
