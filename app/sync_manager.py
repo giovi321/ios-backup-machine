@@ -5,7 +5,7 @@ sync_manager.py - Remote backup sync via rsync over SSH.
 Supports SSH key and password authentication.
 Credentials are decrypted from the encrypted sync config store.
 """
-import os, sys, re, select, subprocess, tempfile, time, yaml
+import os, sys, re, select, socket, subprocess, tempfile, time, yaml
 
 import sync_crypto
 
@@ -68,6 +68,44 @@ def _check_network_allowed():
     return True, ""
 
 
+def _diagnose_unreachable(host, port):
+    """Best-effort reason the sync server can't be reached right now, so a
+    connection problem produces a clear, actionable message on the e-ink and
+    dashboard instead of a cryptic rsync exit code.
+
+    Returns a short reason string, or None if the server is reachable (or we
+    can't introspect) — in which case the caller proceeds and lets rsync run.
+    """
+    if not host:
+        return None
+    try:
+        import netutil
+    except ImportError:
+        netutil = None
+
+    # Is the sync host reachable on its SSH port? A fast success means there's no
+    # connectivity problem; only diagnose further when the connect actually fails
+    # (this also resolves the hostname, so DNS failures over a down VPN land here).
+    try:
+        socket.create_connection((host, int(port)), timeout=8).close()
+        return None
+    except OSError:
+        pass
+
+    if netutil is None:
+        return f"Sync server unreachable ({host})."
+
+    # Unreachable — report the most fundamental missing layer first.
+    wg = _load_config().get("wireguard", {})
+    if not (netutil.get_wifi_ip() or netutil.get_usb_iphone_ip()):
+        return "No network connection (no WiFi or iPhone hotspot)."
+    if wg.get("enabled") and not netutil.get_wireguard_ip(wg.get("interface_name", "wg0")):
+        return "VPN not connected (WireGuard is down)."
+    if not netutil.have_connectivity():
+        return "No internet connection."
+    return f"Sync server unreachable ({host})."
+
+
 def _prepare_sync(passphrase=None, backup_dir=None, progress=False):
     """Shared setup for run_sync and run_sync_with_progress.
     Returns (cmd, key_file, error_dict) — error_dict is set on failure."""
@@ -89,6 +127,14 @@ def _prepare_sync(passphrase=None, backup_dir=None, progress=False):
 
     if not host or not username or not remote_path:
         return None, None, {"success": False, "message": "Incomplete sync configuration (host/user/path).", "duration": 0}
+
+    # Pre-flight reachability: turn a would-be cryptic rsync connection failure
+    # into a clear cause (no network / VPN down / no internet). Both the manual
+    # and auto-sync paths funnel through here, so the message reaches the e-ink,
+    # the dashboard, and notifications.
+    reason = _diagnose_unreachable(host, port)
+    if reason:
+        return None, None, {"success": False, "message": reason, "duration": 0}
 
     if backup_dir is None:
         backup_dir = _load_backup_dir()
