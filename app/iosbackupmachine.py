@@ -35,6 +35,7 @@ STATUS_FILE = os.path.join(LOG_DIR, "backup_status.json")
 START_FILE = os.path.join(LOG_DIR, "start_requested")   # force a backup (auto-start off)
 STOP_FILE = os.path.join(LOG_DIR, "stop_requested")     # abort the current backup
 IDLE_REFRESH_SEC = 4
+WG_RECONCILE_SEC = 10   # how often the WireGuard auto-connect watcher re-checks
 TITLE = "iOS Backup Machine"
 
 def load_config(path):
@@ -1214,6 +1215,68 @@ def _pisugar_button_listener(ui):
         time.sleep(1)
 
 # ---------------------------------------------------------------------------
+# WireGuard auto-connect reconciler
+# ---------------------------------------------------------------------------
+def _wg_should_connect_for(triggers):
+    """Return True if a configured auto-connect trigger source is currently
+    reachable. 'wifi' -> a WiFi IP is present; 'iphone' -> a USB iPhone-hotspot
+    IP is present; 'boot' keeps its historical "any connectivity" meaning so a
+    boot-only user still reconnects when a link returns. An empty trigger list
+    means nothing auto-connects."""
+    if netutil is None:
+        return False
+    wifi = netutil.get_wifi_ip()
+    usb = netutil.get_usb_iphone_ip()
+    if "boot" in triggers and (wifi or usb):
+        return True
+    if "wifi" in triggers and wifi:
+        return True
+    if "iphone" in triggers and usb:
+        return True
+    return False
+
+
+def _wg_autoconnect_watcher(logf):
+    """Background reconciler: while auto-connect is enabled and WireGuard is
+    down, bring it up as soon as a selected connection source becomes available.
+
+    This is the reliable backstop for the event-driven paths (boot service +
+    NetworkManager dispatcher), which fire only on a connection 'up' event and
+    so miss the case the user hit: enabling the iPhone hotspot while the phone
+    is already plugged in emits no fresh 'up' event for the already-enumerated
+    USB interface (and on a non-NetworkManager image the dispatcher isn't even
+    installed). Polling every WG_RECONCILE_SEC catches connectivity whenever and
+    however it appears. Config is re-read each tick so web-UI changes apply live."""
+    import wg_manager as _wg
+    last_err = None   # dedupe repeated failure logs across a streak of attempts
+    while not SHUTDOWN.is_set():
+        try:
+            try:
+                with open(CONFIG_PATH, "r") as f:
+                    live = yaml.safe_load(f) or {}
+            except Exception:
+                live = {}
+            wg_cfg = live.get("wireguard", {})
+            iface = wg_cfg.get("interface_name", "wg0")
+            if not (wg_cfg.get("enabled") and wg_cfg.get("auto_connect")):
+                last_err = None
+            elif _wg.is_interface_up(iface):
+                last_err = None   # connected; reset so a later drop logs again
+            elif _wg_should_connect_for(wg_cfg.get("auto_connect_on", ["iphone"])):
+                ok, err = _wg.start_wireguard(iface)
+                if ok:
+                    last_err = None
+                    if logf: logf.write(f"[WG] Auto-connected {iface} (connectivity available)\n")
+                elif err != last_err:
+                    last_err = err
+                    if logf: logf.write(f"[WG] Auto-connect attempt failed: {err}\n")
+        except Exception as e:
+            if logf: logf.write(f"[WG] Watcher error: {e}\n")
+        if SHUTDOWN.wait(WG_RECONCILE_SEC):
+            return
+
+
+# ---------------------------------------------------------------------------
 # NTP sync attempt at startup
 # ---------------------------------------------------------------------------
 def _try_ntp_sync():
@@ -1263,27 +1326,10 @@ def main():
     # Try NTP sync in background
     _try_ntp_sync()
 
-    # Auto-connect WireGuard if enabled
-    try:
-        wg_cfg = CFG.get("wireguard", {})
-        if wg_cfg.get("enabled") and wg_cfg.get("auto_connect"):
-            import wg_manager as _wg
-            iface = wg_cfg.get("interface_name", "wg0")
-            if _wg.is_interface_up(iface):
-                if logf: logf.write(f"[WG] {iface} already up, skipping\n")
-            else:
-                from netutil import have_connectivity
-                for _attempt in range(15):
-                    if have_connectivity(timeout=2):
-                        break
-                    time.sleep(1)
-                ok, err = _wg.start_wireguard(iface)
-                if ok:
-                    if logf: logf.write(f"[WG] Auto-connected {iface}\n")
-                else:
-                    if logf: logf.write(f"[WG] Auto-connect failed: {err}\n")
-    except Exception as e:
-        if logf: logf.write(f"[WG] Auto-connect error: {e}\n")
+    # WireGuard auto-connect now runs in a background reconciler thread (started
+    # below) instead of a one-shot attempt here, so the VPN comes up whenever a
+    # connection appears — including the iPhone hotspot being toggled on after
+    # the phone is already plugged in, not just at boot.
 
     p = Panel()
     p.prepare_partial()  # enable partial for text screens
@@ -1296,6 +1342,11 @@ def main():
     # Single-tap → system-info screen (folded in from button-info.py).
     btn_thread = threading.Thread(target=_pisugar_button_listener, args=(ui,), daemon=True)
     btn_thread.start()
+
+    # WireGuard auto-connect reconciler: brings the VPN up as soon as a selected
+    # connection source is available, and re-checks every WG_RECONCILE_SEC.
+    wg_thread = threading.Thread(target=_wg_autoconnect_watcher, args=(logf,), daemon=True)
+    wg_thread.start()
 
     _last_reject_udid = None
     _sync_dead_logged = False     # so we don't spam the log
