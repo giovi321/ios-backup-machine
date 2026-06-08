@@ -587,62 +587,92 @@ def settings_wifi():
 # can find and clear them without touching the user's other connections.
 _WIFI_CON_PREFIX = "iosbackup-wifi"
 
+def _nmcli(args, timeout=30):
+    """Run an nmcli command. Returns (ok, output). Logs non-zero exits and errors
+    to webui.log so a WiFi problem is diagnosable instead of silently swallowed."""
+    try:
+        r = subprocess.run(["nmcli"] + args, capture_output=True, text=True, timeout=timeout)
+        if r.returncode != 0:
+            app.logger.error("nmcli %s failed (rc=%d): %s", " ".join(args),
+                             r.returncode, (r.stderr or r.stdout or "").strip())
+            return False, (r.stderr or r.stdout or "").strip()
+        return True, (r.stdout or "").strip()
+    except subprocess.TimeoutExpired:
+        app.logger.error("nmcli %s timed out after %ss", " ".join(args), timeout)
+        return False, "timed out"
+    except FileNotFoundError:
+        app.logger.error("nmcli not found — NetworkManager is required for WiFi")
+        return False, "nmcli not found"
+    except Exception as e:
+        app.logger.error("nmcli %s error: %s", " ".join(args), e)
+        return False, str(e)
+
 def _clear_managed_wifi_connections():
     """Delete every nmcli connection we manage (name starts with the prefix)."""
-    try:
-        out = subprocess.run(["nmcli", "-t", "-f", "NAME", "connection", "show"],
-                             capture_output=True, text=True, timeout=10).stdout
-        for name in out.splitlines():
-            name = name.strip().replace("\\:", ":")
-            if name.startswith(_WIFI_CON_PREFIX):
-                subprocess.run(["nmcli", "connection", "delete", name],
-                               capture_output=True, timeout=10)
-    except Exception as e:
-        app.logger.error(f"WiFi clear error: {e}")
+    ok, out = _nmcli(["-t", "-f", "NAME", "connection", "show"], timeout=10)
+    if not ok:
+        return
+    for name in out.splitlines():
+        name = name.strip().replace("\\:", ":")
+        if name.startswith(_WIFI_CON_PREFIX):
+            _nmcli(["connection", "delete", name], timeout=10)
+
+def _visible_ssids():
+    """SSIDs the WiFi radio can currently see, after forcing a rescan. Returns an
+    empty set if the scan can't be read — callers then fall back to trying every
+    profile. The rescan matters: without a fresh scan NetworkManager may not have
+    the AP's BSS, and both `connection up` and autoconnect then fail to associate."""
+    _nmcli(["device", "wifi", "rescan"], timeout=20)   # best-effort; may rate-limit
+    time.sleep(3)                                       # let the scan results populate
+    ok, out = _nmcli(["-t", "-f", "SSID", "device", "wifi", "list"], timeout=15)
+    ssids = set()
+    if ok:
+        for line in out.splitlines():
+            s = line.strip().replace("\\:", ":")
+            if s:
+                ssids.add(s)
+    return ssids
 
 def _apply_wifi_networks(networks):
     """Create an autoconnect NetworkManager profile for each configured network,
-    then connect to the most-preferred one in range.
+    then connect to the most-preferred one that's actually in range.
 
-    A profile per SSID (vs a single immediate `dev wifi connect`) is what lets
-    the device roam: NetworkManager auto-connects to whichever configured network
-    is available, following list order as the autoconnect priority."""
+    A profile per SSID (autoconnect priority = list order) lets NM roam to
+    whichever configured network is available. We turn the radio on, rescan, and
+    only activate an in-range SSID — so the call doesn't block ~30s on each
+    out-of-range profile, and NM has the BSS in its scan list (without which both
+    `up` and autoconnect can silently fail to associate)."""
+    _nmcli(["radio", "wifi", "on"], timeout=10)   # nothing connects if the radio is off
     _clear_managed_wifi_connections()
     n = len(networks)
+    created = []   # (ssid, profile_name) in priority order
     for idx, net in enumerate(networks):
         ssid = (net.get("ssid") or "").strip()
         if not ssid:
             continue
         password = net.get("password") or ""
         name = f"{_WIFI_CON_PREFIX}-{idx}"
-        # Earlier in the list -> higher autoconnect priority.
-        priority = str(n - idx)
-        try:
-            subprocess.run(
-                ["nmcli", "connection", "add", "type", "wifi",
-                 "con-name", name, "ssid", ssid,
-                 "connection.autoconnect", "yes",
-                 "connection.autoconnect-priority", priority],
-                capture_output=True, text=True, timeout=20)
-            if password:
-                subprocess.run(
-                    ["nmcli", "connection", "modify", name,
-                     "wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", password],
-                    capture_output=True, text=True, timeout=20)
-        except Exception as e:
-            app.logger.error(f"WiFi profile error for {ssid}: {e}")
-    # Connect now to the first configured network that's actually in range.
-    for idx, net in enumerate(networks):
-        if not (net.get("ssid") or "").strip():
+        # Build the profile in one shot so it never briefly exists as a secured
+        # network with no key (which NM would try, and fail, to autoconnect).
+        add = ["connection", "add", "type", "wifi", "con-name", name,
+               "ssid", ssid,
+               "connection.autoconnect", "yes",
+               "connection.autoconnect-priority", str(n - idx)]
+        if password:
+            add += ["wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", password]
+        ok, _ = _nmcli(add, timeout=20)
+        if ok:
+            created.append((ssid, name))
+    # Immediate connect: try the in-range networks in priority order. If we
+    # couldn't read a scan list (visible empty), fall back to trying all — NM
+    # autoconnect remains the backstop either way.
+    visible = _visible_ssids()
+    for ssid, name in created:
+        if visible and ssid not in visible:
             continue
-        name = f"{_WIFI_CON_PREFIX}-{idx}"
-        try:
-            r = subprocess.run(["nmcli", "connection", "up", name],
-                               capture_output=True, text=True, timeout=30)
-            if r.returncode == 0:
-                break
-        except Exception as e:
-            app.logger.error(f"WiFi connect error for {name}: {e}")
+        ok, _ = _nmcli(["connection", "up", name], timeout=45)
+        if ok:
+            break
 
 # --- Notifications ---
 @app.route("/settings/notifications", methods=["GET", "POST"])
