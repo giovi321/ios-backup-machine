@@ -583,6 +583,22 @@ def settings_wifi():
                            wifi_nickname=_wifi_nickname_for(cfg, wifi_ssid),
                            wifi_networks=_wifi_networks(cfg))
 
+@app.route("/settings/wifi/connect", methods=["POST"])
+@login_required
+def wifi_connect_inrange():
+    """Force a scan and connect to the highest-priority saved network in range."""
+    cfg = load_config()
+    if not cfg.get("wifi", {}).get("enabled"):
+        flash("Enable WiFi and save first.", "error")
+        return redirect(url_for("settings_wifi"))
+    networks = _wifi_networks(cfg)
+    if not networks:
+        flash("No WiFi networks configured yet.", "error")
+        return redirect(url_for("settings_wifi"))
+    ok, msg = _connect_inrange_wifi(networks)
+    flash(msg, "success" if ok else "error")
+    return redirect(url_for("settings_wifi"))
+
 # NetworkManager connection profiles we own are named with this prefix, so we
 # can find and clear them without touching the user's other connections.
 _WIFI_CON_PREFIX = "iosbackup-wifi"
@@ -633,15 +649,40 @@ def _visible_ssids():
                 ssids.add(s)
     return ssids
 
-def _apply_wifi_networks(networks):
-    """Create an autoconnect NetworkManager profile for each configured network,
-    then connect to the most-preferred one that's actually in range.
+def _add_wifi_profile(idx, net, total):
+    """Create the managed NM profile for one configured network. Built in a single
+    `add` (PSK inline) so it never briefly exists as a secured profile with no key.
+    autoconnect priority follows list order (first = highest). Returns (name, ok)."""
+    ssid = (net.get("ssid") or "").strip()
+    name = f"{_WIFI_CON_PREFIX}-{idx}"
+    add = ["connection", "add", "type", "wifi", "con-name", name,
+           "ssid", ssid,
+           "connection.autoconnect", "yes",
+           "connection.autoconnect-priority", str(total - idx)]
+    password = net.get("password") or ""
+    if password:
+        add += ["wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", password]
+    ok, _ = _nmcli(add, timeout=20)
+    return name, ok
 
-    A profile per SSID (autoconnect priority = list order) lets NM roam to
-    whichever configured network is available. We turn the radio on, rescan, and
-    only activate an in-range SSID — so the call doesn't block ~30s on each
-    out-of-range profile, and NM has the BSS in its scan list (without which both
-    `up` and autoconnect can silently fail to associate)."""
+def _wifi_profile_exists(name):
+    """True if an NM connection profile with this name exists. Uses a plain list
+    (not _nmcli) so a normal 'not found' doesn't get logged as an error."""
+    try:
+        r = subprocess.run(["nmcli", "-t", "-f", "NAME", "connection", "show"],
+                           capture_output=True, text=True, timeout=10)
+        return name in [ln.strip().replace("\\:", ":") for ln in r.stdout.splitlines()]
+    except Exception:
+        return False
+
+def _apply_wifi_networks(networks):
+    """Recreate an autoconnect NetworkManager profile for each configured network,
+    then connect to the most-preferred one that's actually in range. Used when the
+    WiFi settings are saved (a full re-apply so the profiles match the new config).
+
+    We turn the radio on, rescan, and only activate an in-range SSID — so the call
+    doesn't block ~30s on each out-of-range profile, and NM has the BSS in its scan
+    list (without which both `up` and autoconnect can silently fail to associate)."""
     _nmcli(["radio", "wifi", "on"], timeout=10)   # nothing connects if the radio is off
     _clear_managed_wifi_connections()
     n = len(networks)
@@ -650,22 +691,9 @@ def _apply_wifi_networks(networks):
         ssid = (net.get("ssid") or "").strip()
         if not ssid:
             continue
-        password = net.get("password") or ""
-        name = f"{_WIFI_CON_PREFIX}-{idx}"
-        # Build the profile in one shot so it never briefly exists as a secured
-        # network with no key (which NM would try, and fail, to autoconnect).
-        add = ["connection", "add", "type", "wifi", "con-name", name,
-               "ssid", ssid,
-               "connection.autoconnect", "yes",
-               "connection.autoconnect-priority", str(n - idx)]
-        if password:
-            add += ["wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", password]
-        ok, _ = _nmcli(add, timeout=20)
+        name, ok = _add_wifi_profile(idx, net, n)
         if ok:
             created.append((ssid, name))
-    # Immediate connect: try the in-range networks in priority order. If we
-    # couldn't read a scan list (visible empty), fall back to trying all — NM
-    # autoconnect remains the backstop either way.
     visible = _visible_ssids()
     for ssid, name in created:
         if visible and ssid not in visible:
@@ -673,6 +701,35 @@ def _apply_wifi_networks(networks):
         ok, _ = _nmcli(["connection", "up", name], timeout=45)
         if ok:
             break
+
+def _connect_inrange_wifi(networks):
+    """Scan, then connect to the highest-priority configured network in range —
+    creating its NM profile first if missing. Unlike _apply_wifi_networks this does
+    NOT tear down existing profiles, so pressing the button while already connected
+    only switches if a higher-priority network is now reachable. Powers the
+    'Scan & connect' button. Returns (ok, message)."""
+    _nmcli(["radio", "wifi", "on"], timeout=10)
+    visible = _visible_ssids()
+    if not visible:
+        return False, "Could not scan for WiFi networks (is the adapter available?)."
+    n = len(networks)
+    found_in_range = False
+    for idx, net in enumerate(networks):
+        ssid = (net.get("ssid") or "").strip()
+        if not ssid or ssid not in visible:
+            continue
+        found_in_range = True
+        name = f"{_WIFI_CON_PREFIX}-{idx}"
+        if not _wifi_profile_exists(name):
+            _add_wifi_profile(idx, net, n)
+        ok, _ = _nmcli(["connection", "up", name], timeout=45)
+        if ok:
+            nick = (net.get("nickname") or "").strip()
+            label = f"{nick} ({ssid})" if nick else ssid
+            return True, f"Connected to {label}."
+    if not found_in_range:
+        return False, "No saved network is in range."
+    return False, "A saved network is in range but the connection failed (check the password)."
 
 # --- Notifications ---
 @app.route("/settings/notifications", methods=["GET", "POST"])

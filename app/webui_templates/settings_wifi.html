@@ -32,6 +32,11 @@
             </div>
         </div>
     </div>
+    <form method="POST" action="{{ url_for('wifi_connect_inrange') }}" style="margin-top:14px;"
+          onsubmit="var b=this.querySelector('button'); if(b){b.disabled=true; b.textContent='Scanning…';}">
+        <button type="submit" class="btn btn-secondary"{% if not cfg.wifi.enabled %} disabled{% endif %}>Scan &amp; connect to a network in range</button>
+        <div class="hint" style="margin-top:6px;">Forces a WiFi scan and connects to the highest-priority saved network that's in range. This can take a few seconds.</div>
+    </form>
 </div>
 
 <form method="POST">
