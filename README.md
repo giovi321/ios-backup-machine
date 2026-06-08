@@ -1,5 +1,5 @@
 [![License](https://img.shields.io/github/license/giovi321/ios-backup-machine)](LICENSE)
-![Version](https://img.shields.io/badge/version-2.2-brightgreen)
+![Version](https://img.shields.io/badge/version-4.2.0-brightgreen)
 [![Python 3.13](https://img.shields.io/badge/Python-3.13-blue?logo=python&logoColor=white)](https://www.python.org/downloads/release/python-3130/)
 [![Armbian](https://img.shields.io/badge/OS-Armbian-orange?logo=armbian)](https://www.armbian.com/radxa-zero-3/)
 ![Offline](https://img.shields.io/badge/network-optional-blue.svg)
@@ -50,13 +50,14 @@ All backups stay local on the microSD card and can be restored anytime using too
 - **Offline and independent**: no Apple ID, no iTunes, no Internet required.
 - **Solid**: file corruption is prevented by a small UPS.
 - **Web UI**: configure all settings from a browser.
+- **Status icons**: every e-ink screen shows power, VPN, internet, WiFi and iPhone-hotspot indicators at a glance (crossed out when inactive).
+- **Multi-network WiFi**: configure several networks (each with a nickname); the device roams to whichever is in range, managed through netplan + wpa_supplicant.
 - **NTP sync**: auto-syncs clock when internet is available (WiFi or USB iPhone hotspot).
 - **Notifications**: webhook and MQTT alerts for backup events.
 - **Remote sync**: rsync backups to a remote server over SSH (manual or auto after backup).
-- **WireGuard VPN**: built-in client with encrypted config.
+- **WireGuard VPN**: built-in client with encrypted config, auto-connect on boot / WiFi / iPhone, and an optional full-tunnel mode that keeps local SSH/web-UI access.
 - **Credential encryption**: WireGuard and sync credentials are encrypted with AES-256-GCM. Choose between iPhone UDID (auto-decrypt when connected) or a custom password.
 - **Network-aware sync**: restrict remote sync to WiFi only, a specific SSID, or iPhone USB tethering.
-- 
 ## How it works
 
 ### Normal operation
@@ -74,11 +75,14 @@ All backups stay local on the microSD card and can be restored anytime using too
 **In case you unplug the iPhone** the process stops safely and the screen shows the interruption timestamp.
 
 ### Interactive functions
-- **Single-tap** PiSugar button: shows date, time, IP address, last backup time, disk free %, and SoC temperature for 30 seconds, then returns to the boot screen.
+- **Single-tap** PiSugar button: shows a system-info screen for 30 seconds (date/time, active network — WiFi / iPhone hotspot / Ethernet, IP, VPN state, last backup, last sync, SoC temperature, and disk free %), then returns to the boot screen.
 - **Double-tap** PiSugar button: starts an iPhone backup (same as the web UI **Start Backup** — needs an allowed iPhone connected; works even when auto-start is off).
 - **Long-press** PiSugar button: triggers remote sync to the configured server (rsync over SSH). The e-ink display shows transferred / total size, current speed, and a progress bar.
-- **Boot screen**: power icon + "iOS Backup Machine" title + owner info.
+- **Boot screen**: project icon + "iOS Backup Machine" title + owner info.
 - **Power-off screen**: owner info only (persists on e-paper after shutdown).
+
+### Status icons
+Every live screen (boot/idle, backup, sync, info, interrupted, complete) draws a row of status icons in the bottom-left corner: **power** (always on), **VPN**, **internet**, **WiFi**, and **iPhone hotspot**. Each network icon is crossed out with a "/" when that connection is inactive, so the device's connectivity is readable at a glance. The state is sampled in the background and never blocks or overlaps the screen text. (The power-off owner screen omits the row.)
 
 ### UPS integration
 - **Battery protection**: backup stops cleanly if battery <30%.  
@@ -127,8 +131,9 @@ The daemon renders these screens, with one full refresh on every screen-type tra
 | **Python 3.13** | Runtime for backup and display scripts |
 | **libimobiledevice** | iPhone communication (`idevicebackup2`, `idevicepair`) |
 | **udev + systemd** | Automation and event handling |
+| **netplan + systemd-networkd + wpa_supplicant** | WiFi management (no NetworkManager) |
 | **Flask** | Web UI for settings |
-| **WireGuard** | Optional VPN client |
+| **WireGuard** | Optional VPN client (auto-connect, optional full tunnel) |
 
 
 ## Directory layout
@@ -144,17 +149,18 @@ The daemon renders these screens, with one full refresh on every screen-type tra
 │   ├── config_schema.py             # Config defaults, versioned migration, atomic save
 │   ├── power.py                     # PiSugar UPS battery reader (power-aware sync)
 │   ├── ntp-sync.py, notifications.py, netutil.py
-│   ├── wg_crypto.py, wg_manager.py  # WireGuard encryption & management
+│   ├── wg_crypto.py, wg_manager.py  # WireGuard encryption, management & routing
+│   ├── wifi_manager.py              # WiFi config via netplan / wpa_supplicant
 │   ├── sync_crypto.py, sync_manager.py  # Remote sync encryption & execution
 │   ├── epdconfig.py                 # E-paper hardware config
 │   ├── webui_templates/             # HTML templates
 │   └── webui_static/                # Icon, favicon
 ├── config/                          # Configuration templates
 │   ├── config.yaml.example, [pisugar]config.json
-│   ├── armbianEnv.txt, 90-iosbackupmachine.rules
-├── services/                        # Systemd service files (9)
-├── scripts/                         # Shell scripts (launcher, shutdown, unplug)
-└── assets/                          # Font, 3D case STL, images
+│   ├── armbianEnv.txt, 90-iosbackupmachine.rules, 99-wg-autoconnect
+├── services/                        # Systemd service files (7)
+├── scripts/                         # Shell scripts (launcher, shutdown, unplug, wg-autoconnect)
+└── assets/                          # Font, 3D case STL, images, diagrams
 ```
 
 **Installed** (to `/root/iosbackupmachine/` — flat):
@@ -179,7 +185,7 @@ backup_dir: /media/iosbackup/
 marker_file: .foldermarker
 disk_device: /dev/mmcblk1
 orientation: landscape_right
-font_path: "/root/UbuntuMono-Regular.ttf"
+font_path: "/root/iosbackupmachine/UbuntuMono-Regular.ttf"
 owner_lines:
   - "Property of Titius Caius"
   - "+33 123 456 7890"
@@ -210,9 +216,9 @@ device_filter:
     #   name: "John's iPhone 15"
 
 # --- WiFi ---
-# One or more networks; the device connects to whichever is in range (first =
-# preferred). ssid/password are the legacy single-network fields, mirrored to
-# networks[0] for back-compat.
+# Configure one or more networks; the device joins whichever is in range.
+# Managed via netplan + wpa_supplicant (no NetworkManager). ssid/password are the
+# legacy single-network fields, mirrored to networks[0] for back-compat.
 wifi:
   enabled: false
   ssid: ""
@@ -221,6 +227,9 @@ wifi:
   #  - nickname: "Home"
   #    ssid: "HomeNetwork"
   #    password: "secret"
+  #  - nickname: "Office"
+  #    ssid: "CorpWiFi"
+  #    password: "another-secret"
 
 # --- NTP time sync ---
 ntp:
@@ -256,6 +265,9 @@ notifications:
 wireguard:
   enabled: false
   interface_name: "wg0"
+  auto_connect: false           # connect automatically
+  auto_connect_on: [iphone]     # triggers: iphone, wifi, boot (combinable)
+  full_tunnel: false            # route ALL traffic through the VPN (see WireGuard VPN)
 ```
 
 **Notes**
@@ -264,7 +276,7 @@ wireguard:
 - `disk_device` allows monitoring disk usage after backup.
 - Config is written **atomically** (tmp + `fsync` + rename), so a power loss mid-save can't truncate `config.yaml`.
 - `config_version` is managed automatically: on update, a single versioned migration step fills new defaults without overwriting your values. Don't edit it by hand.
-- **WireGuard config** is stored separately in `/root/wireguard.enc`, encrypted with the iPhone's UUID.
+- **WireGuard config** is stored separately in `/root/iosbackupmachine/wireguard.enc`, encrypted with the iPhone's UUID (or a custom passphrase).
 - **`secret_key`** is auto-generated on first start and persisted to `config.yaml`. Never needs manual editing.
 
 
@@ -302,7 +314,7 @@ The install script automatically performs all remaining setup steps:
 - Prepares the backup storage directory
 - Downloads and configures PiSugar UPS
 - Runs a post-install health check
-- Prompts to reboot if overlay changes were made
+- Prompts to reboot when overlay changes were made or a release sets a reboot flag (so the always-on display daemon reloads)
 
 After the script finishes, open the web UI at `http://<device-ip>:8080` to complete the first-start wizard.
 
@@ -321,7 +333,7 @@ The update process:
 - Pulls latest code from GitHub
 - Migrates config (adds new settings without overwriting your values)
 - Runs the installer with a post-install health check
-- Restarts services
+- Restarts services (and prompts for a reboot when the release requires one)
 
 If you prefer, you can install manually.
 <details>
@@ -342,8 +354,12 @@ Reboot.
 apt update
 apt install -y python3 python3-venv python3-pil python3-periphery \
   libimobiledevice-1.0-6 libimobiledevice-utils usbmuxd \
-  wireguard-tools
+  wireguard-tools iptables sshpass rsync netcat-traditional \
+  iw wireless-tools git
 ```
+WiFi is managed through the OS's existing **netplan + systemd-networkd + wpa_supplicant**
+stack (the device has no NetworkManager); `iw` / `wireless-tools` are used to read the
+connected SSID, and `iptables` is used by the WireGuard full-tunnel routing exception.
 
 ### 4. Create Python virtual environment
 ```bash
@@ -459,9 +475,9 @@ The dashboard shows two live status cards and auto-refreshes every 5 seconds:
 - **Encryption**: enable/change backup encryption on connected iPhone (password never stored)
 - **General**: backup directory, display orientation, owner information
 - **Date & Time**: manual date setting, NTP sync configuration
-- **WiFi**: enable/disable and configure one or more networks (each with an optional nickname); the device connects to whichever is in range, and the status shows the connected SSID + nickname
+- **WiFi**: enable/disable and configure one or more networks (each with an optional nickname); the device joins whichever is in range. Shows the connected SSID + nickname, and a **Scan & connect** button forces a rescan and connects to any saved network in range
 - **Notifications**: webhook URLs and MQTT broker settings (separate test buttons for webhook, MQTT, and both)
-- **WireGuard**: upload and encrypt VPN config, start/stop interface, backup encryption key
+- **WireGuard**: upload and encrypt VPN config, start/stop interface, auto-connect triggers (iPhone / WiFi / boot), and a full-tunnel toggle
 - **Remote Sync**: enable, configure SSH credentials (encrypted), test connection, trigger sync, set network restrictions
 - **Web UI**: select which network interfaces the web UI listens on
 - **Password**: protect the web UI with a password (set, change, or remove)
@@ -487,6 +503,25 @@ WireGuard and remote sync credentials are encrypted using AES-256-GCM with a key
 - **CLI**: `python3 wg_crypto.py decrypt` (auto-uses UDID if available, else prompts)
 - Encrypted files: `wireguard.enc`, `sync.enc` in the install directory
 
+## WiFi
+
+WiFi is managed through the OS's **netplan + systemd-networkd + wpa_supplicant** stack — the device has no NetworkManager. Saving networks in the web UI writes a managed netplan drop-in (`/etc/netplan/90-iosbackup-wifi.yaml`) and applies it; the OS's own netplan files are left untouched.
+
+- **Multiple networks**: configure several networks, each with an optional **nickname**. `wpa_supplicant` associates to whichever configured network is in range, so the device roams automatically as you move between them.
+- **iPhone-hotspot preference**: the WiFi route is given a higher metric than the iPhone USB tether's, so the **iPhone hotspot is used when it's plugged in** and **WiFi takes over automatically when it's unplugged** — and the WiFi connection is no longer dropped as the iPhone connects/disconnects.
+- **Scan & connect**: the WiFi settings page has a button that forces a rescan and connects to any saved network in range.
+- **Status**: the dashboard, the e-ink info screen, and `/api/status` show the connected SSID and its nickname (read via `iw` / `iwgetid` / `wpa_cli`).
+- The legacy single `ssid`/`password` fields are migrated into `networks[0]` automatically.
+
+## WireGuard VPN
+
+A built-in WireGuard client. The config is uploaded through the web UI and stored **encrypted** (`wireguard.enc`); it's decrypted with the connected iPhone's serial or a custom passphrase (see [Credential Encryption](#credential-encryption)).
+
+- **Auto-connect**: enable *Auto-connect* and pick the triggers — **iPhone plugged in**, **WiFi available**, and/or **on boot** (combinable). A background reconciler in the display daemon brings the tunnel up as soon as a selected connection source appears, so it connects reliably even after errors, reconnects, or a hotspot toggled on after the phone was already plugged in — not just on a one-off boot event.
+- **Full tunnel** (optional): routes **all** traffic through the VPN, re-applied on every connect. Use this when the **remote sync server's IP overlaps the local WiFi subnet** — a plain `wg-quick` full tunnel would send that same-subnet traffic out the WiFi instead of the tunnel. Requires `AllowedIPs = 0.0.0.0/0` in the WireGuard config.
+  - **Local access is preserved**: even with full tunnel on, **SSH and the web UI stay reachable from the local network**. Replies to connections that arrive on a non-VPN interface are kept off the tunnel via connection-mark policy routing (iptables `CONNMARK` + an `ip rule`), while everything the device *initiates* still goes through the VPN.
+- Status is shown on the dashboard, the e-ink VPN icon, and `/api/status`.
+
 ## Remote Sync
 
 Sync backups to a remote server via **rsync over SSH**. Supports SSH key and password authentication.
@@ -494,6 +529,7 @@ Sync backups to a remote server via **rsync over SSH**. Supports SSH key and pas
 - **Manual sync**: long-press the PiSugar button, or click **Sync Now** on the web UI dashboard or Remote Sync settings page.
 - **Auto-sync**: optionally trigger after each successful backup.
 - **Network restrictions**: limit sync to WiFi only, a specific SSID, or iPhone USB tethering.
+- **Clear connection errors**: if a sync can't reach the server, a pre-flight check reports the actual cause on both the e-ink and the dashboard — *No network connection*, *VPN not connected*, *No internet connection*, or *Sync server unreachable* — instead of a cryptic rsync exit code.
 - **Progress display**: the e-paper screen and the web dashboard show transferred / total size, current speed, percentage, and a progress bar. Sizes auto-scale (KB / MB / GB / TB). During the initial file-list scan (rsync `--no-inc-recursive`) you see "Building file list (Xs)" instead of fake progress.
 - **Stall detection**: if rsync produces no output for **2 minutes**, the dashboard shows a yellow "Stalled" badge and the e-ink switches to "Sync STALLED". After **15 minutes** without progress the sync is auto-aborted with a sync_error.
 - **Cancel button**: while a sync is in progress, a Cancel Sync button appears on the dashboard and Remote Sync settings page. It kills `rsync` + `backup-sync.py` immediately and reports `Cancelled by user.`. The end-state (complete / failed / cancelled) stays on the e-ink until another event (new sync, backup start, service restart).
@@ -512,13 +548,14 @@ Sync backups to a remote server via **rsync over SSH**. Supports SSH key and pas
 {
   "status": "ok",                       // ok | warning | error (rollup)
   "warnings": [],
-  "version": "4.0",
+  "version": "4.2.0",
   "time": "2026-05-30T11:13:31",
   "services": { "iosbackupmachine": "active", "webui": "active",
                 "pisugar-server": "active", "usbmuxd": "active" },
   "disk":     { "root": {...}, "backup": { "free": "...", "percent": 42.0 } },
   "battery":  { "percent": 62.0, "charging": false },
   "network":  { "active_ip": "192.168.1.50", "interface": "wifi",
+                "wifi_ssid": "HomeNetwork", "wifi_nickname": "Home",
                 "internet": true, "wireguard": {...} },
   "backup":   { "state": "complete", "last_backup_time": "..." },
   "sync":     { "state": "sync_complete", "timestamp": "..." }
@@ -566,8 +603,9 @@ Things I want to get to. PRs welcome. _(The architecture and reliability items �
 ## Development
 
 Unit tests cover the hardware-independent core (rsync progress parsing, sync/WireGuard
-credential crypto round-trips, the config schema/migration, and the power-aware battery
-logic). They import the flat app modules via a path shim and need no e-paper hardware.
+credential crypto round-trips, the config schema/migration including the WiFi-networks
+migration, the WiFi netplan generator, and the power-aware battery logic). They import the
+flat app modules via a path shim and need no e-paper hardware.
 
 ```bash
 pip install -r requirements.txt -r requirements-dev.txt

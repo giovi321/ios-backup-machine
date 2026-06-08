@@ -47,9 +47,9 @@ device_filter:
   #     name: "John's iPhone 15"
 
 # --- WiFi settings ---
-# Configure one or more networks; the device connects to whichever is in range.
-# Networks are tried in list order (first = preferred). ssid/password below are
-# the legacy single-network fields, kept mirrored to networks[0] for back-compat.
+# Configure one or more networks; the device joins whichever is in range.
+# Managed via netplan + wpa_supplicant (no NetworkManager). ssid/password below
+# are the legacy single-network fields, kept mirrored to networks[0] for back-compat.
 wifi:
   enabled: false
   ssid: ""
@@ -108,8 +108,16 @@ notifications:
 wireguard:
   enabled: false
   interface_name: "wg0"
+  auto_connect: false           # connect automatically when a trigger source appears
+  auto_connect_on:              # triggers (combinable): iphone, wifi, boot
+    - "iphone"
+  # full_tunnel: route ALL traffic — including the local subnet — through the VPN,
+  # re-applied on every connect. Use it when the remote sync server's IP overlaps
+  # the WiFi subnet. Requires AllowedIPs=0.0.0.0/0. SSH / web UI stay reachable from
+  # the local network (replies to local connections are kept off the tunnel).
+  full_tunnel: false
   # WireGuard config is stored encrypted in /root/iosbackupmachine/wireguard.enc
-  # The encryption key is derived from the connected iPhone's UUID
+  # The encryption key is derived from the connected iPhone's UUID (or a custom passphrase)
 
 # --- Credential encryption (WireGuard + remote sync) ---
 credential_encryption:
