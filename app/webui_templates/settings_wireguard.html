@@ -84,6 +84,16 @@
             </div>
             <div class="hint">Select when WireGuard should auto-connect. Multiple options can be combined.</div>
         </div>
+        <div class="form-check">
+            <input type="checkbox" id="full_tunnel" name="full_tunnel" {% if cfg.wireguard.get('full_tunnel') %}checked{% endif %}>
+            <label for="full_tunnel">Route all traffic through the VPN (full tunnel)</label>
+        </div>
+        <div class="hint" style="margin-bottom:12px;">
+            Forces <strong>every</strong> destination — including the local subnet — through the tunnel, re-applied on every connect.
+            Use this when the remote sync server's IP overlaps the WiFi subnet.
+            Requires <code>AllowedIPs = 0.0.0.0/0</code> in the WireGuard config.
+            <strong>Warning:</strong> while connected, the device is only reachable over the VPN — local-network (WiFi) access to SSH / the web UI will stop.
+        </div>
         <div class="form-group">
             <label for="interface_name">Interface Name</label>
             <input type="text" id="interface_name" name="interface_name" value="{{ cfg.wireguard.interface_name }}">

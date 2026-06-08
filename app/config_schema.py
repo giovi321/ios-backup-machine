@@ -53,8 +53,11 @@ DEFAULTS = {
         "mqtt": {"enabled": False, "broker": "", "port": 1883, "username": "", "password": "",
                  "topic_prefix": "iosbackupmachine", "events": ["backup_complete", "backup_error"]},
     },
+    # full_tunnel: route ALL traffic (incl. the local subnet) through the VPN, so a
+    # sync server whose IP overlaps the WiFi subnet is reachable over the tunnel.
+    # Requires AllowedIPs=0.0.0.0/0 in the WireGuard config. Enforced on every connect.
     "wireguard": {"enabled": False, "auto_connect": False, "auto_connect_on": ["iphone"],
-                  "interface_name": "wg0"},
+                  "interface_name": "wg0", "full_tunnel": False},
     "credential_encryption": {"passphrase_mode": "udid"},
     # min_battery_percent: power-aware sync refuses to start / auto-aborts below
     # this when not charging. Comfortably above PiSugar's 30% auto-shutdown.

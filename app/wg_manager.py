@@ -1,7 +1,48 @@
 #!/usr/bin/env python3
 """wg_manager.py - WireGuard client management."""
 import os, sys, subprocess
+import yaml
 import wg_crypto
+
+CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/iosbackupmachine/config.yaml")
+
+
+def _full_tunnel_enabled():
+    try:
+        with open(CONFIG_PATH) as f:
+            cfg = yaml.safe_load(f) or {}
+        return bool(cfg.get("wireguard", {}).get("full_tunnel"))
+    except Exception:
+        return False
+
+
+def enforce_full_tunnel():
+    """Route ALL traffic — including the local WiFi subnet — through the VPN.
+
+    For AllowedIPs=0.0.0.0/0, wg-quick installs an `ip rule ... suppress_prefixlength 0`
+    so destinations that match a specific main-table route (e.g. the local WiFi
+    subnet, or a sync server whose IP overlaps it) skip the tunnel. Deleting that
+    rule sends them through the tunnel too. wg's own (fwmark'd) handshake traffic
+    still uses the main table, so the link stays up.
+
+    Best-effort and idempotent: re-applied on every connect (called from
+    start_wireguard), so it survives reconnects after errors/disconnects. No-op if
+    the rule isn't present (e.g. a split-tunnel config). Returns rules removed."""
+    removed = 0
+    for base in (["ip", "rule", "del"], ["ip", "-6", "rule", "del"]):
+        for _ in range(8):   # there can be several instances; remove them all
+            try:
+                rc = subprocess.run(base + ["table", "main", "suppress_prefixlength", "0"],
+                                    capture_output=True, timeout=5).returncode
+            except Exception:
+                break
+            if rc != 0:
+                break
+            removed += 1
+    if removed:
+        print(f"[WG] Full tunnel: removed {removed} LAN-bypass rule(s)", flush=True)
+    return removed
+
 
 def is_interface_up(iface="wg0"):
     try:
@@ -39,6 +80,10 @@ def start_wireguard(iface="wg0", passphrase=None):
     try:
         r = subprocess.run(["wg-quick", "up", iface], capture_output=True, text=True, timeout=30)
         if r.returncode == 0:
+            # Force every connect (incl. reconnects after errors/disconnects) to
+            # route everything through the tunnel when full_tunnel is enabled.
+            if _full_tunnel_enabled():
+                enforce_full_tunnel()
             return True, None
         else:
             # wg-quick prints commands to stderr; the actual error is usually the last few lines

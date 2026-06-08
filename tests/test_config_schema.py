@@ -68,3 +68,11 @@ def test_wifi_migration_keeps_existing_networks():
 def test_wifi_defaults_have_empty_networks_list():
     cfg = config_schema.apply_defaults({})
     assert cfg["wifi"]["networks"] == []
+
+
+def test_wireguard_full_tunnel_defaults_off():
+    cfg = config_schema.apply_defaults({})
+    assert cfg["wireguard"]["full_tunnel"] is False
+    # existing value preserved
+    cfg2 = config_schema.apply_defaults({"wireguard": {"full_tunnel": True}})
+    assert cfg2["wireguard"]["full_tunnel"] is True
