@@ -17,6 +17,10 @@ def test_build_netplan_basic_structure():
     wlan = net["wifis"]["wlan0"]
     assert wlan["dhcp4"] is True
     assert wlan["optional"] is True
+    # WiFi gets a high (low-priority) route metric so the iPhone hotspot is
+    # preferred when present and WiFi isn't dropped on iPhone connect/disconnect.
+    assert wlan["dhcp4-overrides"]["route-metric"] == wifi_manager.WIFI_ROUTE_METRIC
+    assert wlan["dhcp4-overrides"]["route-metric"] > 1024   # above networkd's DHCP default
     aps = wlan["access-points"]
     assert aps["HomeNet"] == {"password": "secret"}
     assert aps["Corp"] == {}          # open network -> empty mapping (no password key)

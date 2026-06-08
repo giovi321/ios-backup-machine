@@ -106,6 +106,100 @@ def draw_project_icon(drw, cx, cy, size=36):
     drw.line((cx + arrow_w // 2, head_y, cx, y1 - margin), fill=0, width=2)
 
 
+# ---------------------------------------------------------------------------
+# Status icons (drawn on every live screen): power (always on) + vpn / internet
+# / wifi / iphone, each crossed out with a "/" when inactive. Connectivity is
+# sampled by a background thread (have_connectivity blocks on a socket test) and
+# cached, so the draw path never does network I/O.
+# ---------------------------------------------------------------------------
+STATUS_BAR_H = 14   # vertical space the icon row reserves at the bottom of a screen
+
+_icon_status = {"vpn": False, "internet": False, "wifi": False, "iphone": False}
+_icon_status_lock = threading.Lock()
+
+
+def _icon_slash(drw, x, y, sz):
+    """Diagonal '/' through an icon to mark it inactive."""
+    drw.line((x - 1, y + sz, x + sz, y - 1), fill=0, width=1)
+
+
+def draw_icon_vpn(drw, x, y, sz=10, on=True):
+    """Minimal padlock = VPN."""
+    drw.arc((x + 2, y, x + sz - 2, y + sz - 1), start=180, end=360, fill=0)        # shackle
+    drw.rectangle((x + 1, y + sz // 2, x + sz - 1, y + sz), outline=0, width=1)    # body
+    if not on:
+        _icon_slash(drw, x, y, sz)
+
+
+def draw_icon_internet(drw, x, y, sz=10, on=True):
+    """Minimal globe = internet."""
+    drw.ellipse((x, y, x + sz, y + sz), outline=0, width=1)
+    drw.line((x, y + sz // 2, x + sz, y + sz // 2), fill=0, width=1)               # equator
+    drw.ellipse((x + sz // 3, y, x + sz - sz // 3, y + sz), outline=0, width=1)    # meridian
+    if not on:
+        _icon_slash(drw, x, y, sz)
+
+
+def draw_icon_wifi(drw, x, y, sz=10, on=True):
+    """Minimal Wi-Fi = dot + two arcs."""
+    cx = x + sz // 2
+    drw.ellipse((cx - 1, y + sz - 2, cx + 1, y + sz), fill=0)                      # dot
+    drw.arc((x + 2, y + sz - 6, x + sz - 2, y + sz + 2), start=205, end=335, fill=0)
+    drw.arc((x, y + sz - 10, x + sz, y + sz - 2), start=215, end=325, fill=0)
+    if not on:
+        _icon_slash(drw, x, y, sz)
+
+
+def draw_icon_iphone(drw, x, y, sz=10, on=True):
+    """Minimal phone = iPhone."""
+    px0, px1 = x + 2, x + sz - 2
+    drw.rounded_rectangle((px0, y, px1, y + sz), radius=1, outline=0, width=1)
+    drw.line((px0 + 1, y + 2, px1 - 1, y + 2), fill=0, width=1)                    # speaker
+    cx = (px0 + px1) // 2
+    drw.ellipse((cx - 1, y + sz - 3, cx + 1, y + sz - 1), fill=0)                  # home dot
+    if not on:
+        _icon_slash(drw, x, y, sz)
+
+
+def _compute_icon_status():
+    """Sample VPN / internet / WiFi / iPhone-hotspot reachability (blocking)."""
+    vpn = internet = wifi = iphone = False
+    try:
+        iface = CFG.get("wireguard", {}).get("interface_name", "wg0")
+        vpn = subprocess.run(["ip", "link", "show", iface],
+                             capture_output=True, timeout=3).returncode == 0
+    except Exception:
+        pass
+    if netutil is not None:
+        try: wifi = netutil.get_wifi_ip() is not None
+        except Exception: pass
+        try: iphone = netutil.get_usb_iphone_ip() is not None
+        except Exception: pass
+        try: internet = bool(netutil.have_connectivity(timeout=2))
+        except Exception: pass
+    return {"vpn": vpn, "internet": internet, "wifi": wifi, "iphone": iphone}
+
+
+def get_icon_status():
+    with _icon_status_lock:
+        return dict(_icon_status)
+
+
+def draw_status_bar(drw, LW, LH):
+    """Bottom-left status row drawn on every live screen: power (always on) then
+    vpn / internet / wifi / iphone, each slashed when inactive. Reads the cached
+    status only — no network I/O on the draw path."""
+    st = get_icon_status()
+    sz, gap = 10, 4
+    y = LH - sz - 2
+    x = 3
+    draw_small_power_icon(drw, x, y, size=sz);            x += sz + gap
+    draw_icon_vpn(drw, x, y, sz, st["vpn"]);              x += sz + gap
+    draw_icon_internet(drw, x, y, sz, st["internet"]);    x += sz + gap
+    draw_icon_wifi(drw, x, y, sz, st["wifi"]);            x += sz + gap
+    draw_icon_iphone(drw, x, y, sz, st["iphone"]);        x += sz + gap
+
+
 def _normpath(p):
     if not p:
         return p
@@ -440,7 +534,6 @@ class Panel:
         LW, LH = self._logical_size()
         img = Image.new('1', (LW, LH), 255)
         drw = ImageDraw.Draw(img)
-        draw_small_power_icon(drw, 4, LH - 14, size=10)
         ICON = 36
         title = TITLE
         tw, th = self._text_wh(drw, title, F_14)
@@ -448,13 +541,14 @@ class Panel:
         oh = [self._text_wh(drw, l, F_SM)[1] for l in owner]
         gap_it, gap_to, ls = 8, 6, 4
         total = ICON + gap_it + th + gap_to + sum(oh) + max(0, len(owner) - 1) * ls
-        y = (LH - total) // 2
+        y = max(2, (LH - STATUS_BAR_H - total) // 2)   # leave room for the status row
         draw_project_icon(drw, LW // 2, y + ICON // 2, ICON)
         y += ICON + gap_it
         drw.text(((LW - tw) // 2, y), title, font=F_14, fill=0); y += th + gap_to
         for l in owner:
             w, h = self._text_wh(drw, l, F_SM)
             drw.text(((LW - w) // 2, y), l, font=F_SM, fill=0); y += h + ls
+        draw_status_bar(drw, LW, LH)
         self._show_full(img)
 
     def _draw_info(self, lines):
@@ -465,7 +559,7 @@ class Panel:
         spacing = 4
         heights = [self._text_wh(drw, t, F_14 if big else F_SM)[1] if t else 4 for t, big in lines]
         total = sum(heights) + spacing * (len(lines) - 1)
-        y = (LH - total) // 2
+        y = max(2, (LH - STATUS_BAR_H - total) // 2)   # leave room for the status row
         for t, big in lines:
             if t:
                 f = F_14 if big else F_SM
@@ -473,6 +567,7 @@ class Panel:
                 drw.text(((LW - w) // 2, y), t, font=f, fill=0); y += h + spacing
             else:
                 y += 4 + spacing
+        draw_status_bar(drw, LW, LH)
         self._show_full(img)
 
     def _draw_interrupted(self, when_str):
@@ -486,13 +581,14 @@ class Panel:
         spacing = 5
         heights = [self._text_wh(drw, t, f)[1] if t else 4 for t, f in lines]
         total = sum(heights) + spacing * (len(lines) - 1)
-        y = (LH - total) // 2
+        y = max(2, (LH - STATUS_BAR_H - total) // 2)   # leave room for the status row
         for t, f in lines:
             if t:
                 w, h = self._text_wh(drw, t, f)
                 drw.text(((LW - w) // 2, y), t, font=f, fill=0); y += h + spacing
             else:
                 y += 4 + spacing
+        draw_status_bar(drw, LW, LH)
         self._show_full(img)
 
     def draw_owner(self):
@@ -526,8 +622,8 @@ class Panel:
         img = Image.new('1', (LW, LH), 255)
         drw = ImageDraw.Draw(img)
 
-        # Power-on icon on every screen (bottom-left)
-        self._draw_power_icon(drw, 4, LH - 14, size=10)
+        # Status icons on every screen (bottom-left): power + vpn/internet/wifi/iphone
+        draw_status_bar(drw, LW, LH)
 
         if show_header:
             drw.text((4, 2), TITLE, font=F_LG, fill=0)
@@ -1300,6 +1396,25 @@ def _pisugar_button_listener(ui):
             pass
         time.sleep(1)
 
+
+def _status_icon_updater(ui):
+    """Refresh the connectivity status behind the on-screen icons every few
+    seconds, off the draw thread (have_connectivity blocks on a socket test).
+    On a change, force one refresh so even a static screen (idle) updates."""
+    prev = None
+    while not SHUTDOWN.is_set():
+        st = _compute_icon_status()
+        with _icon_status_lock:
+            _icon_status.update(st)
+        if prev is not None and st != prev:
+            try:
+                ui.request_full()
+            except Exception:
+                pass
+        prev = st
+        if SHUTDOWN.wait(5):
+            return
+
 # ---------------------------------------------------------------------------
 # WireGuard auto-connect reconciler
 # ---------------------------------------------------------------------------
@@ -1433,6 +1548,10 @@ def main():
     # connection source is available, and re-checks every WG_RECONCILE_SEC.
     wg_thread = threading.Thread(target=_wg_autoconnect_watcher, args=(logf,), daemon=True)
     wg_thread.start()
+
+    # Status-icon updater: samples VPN/internet/WiFi/iPhone for the on-screen icons.
+    status_thread = threading.Thread(target=_status_icon_updater, args=(ui,), daemon=True)
+    status_thread.start()
 
     _last_reject_udid = None
     _sync_dead_logged = False     # so we don't spam the log

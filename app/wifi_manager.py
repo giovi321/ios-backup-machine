@@ -57,6 +57,15 @@ def get_wifi_interface():
     return None
 
 
+# WiFi default-route metric. Higher = lower priority. We set it ABOVE the
+# iPhone USB tether's metric (systemd-networkd's DHCP default is 1024) so that:
+#   * when the iPhone hotspot is up, its route (1024) wins — traffic uses it;
+#   * when the iPhone is unplugged, WiFi's route is the only one and takes over;
+#   * WiFi keeps a stable, dedicated metric, so plugging/unplugging the iPhone
+#     no longer disturbs (and drops) the WiFi default route.
+WIFI_ROUTE_METRIC = 1500
+
+
 def build_netplan(networks, iface):
     """Build the YAML for the managed netplan file. Pure and unit-testable.
 
@@ -79,6 +88,9 @@ def build_netplan(networks, iface):
                 iface: {
                     "dhcp4": True,
                     "optional": True,   # don't block boot when WiFi is absent
+                    # Stable metric so the iPhone hotspot is preferred when present
+                    # and WiFi isn't dropped as the iPhone connects/disconnects.
+                    "dhcp4-overrides": {"route-metric": WIFI_ROUTE_METRIC},
                     "access-points": aps,
                 }
             },
