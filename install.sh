@@ -48,6 +48,7 @@ APP_FILES=(
     "app/epdconfig.py:epdconfig.py"
     "app/wg_crypto.py:wg_crypto.py"
     "app/wg_manager.py:wg_manager.py"
+    "app/wifi_manager.py:wifi_manager.py"
     "app/sync_crypto.py:sync_crypto.py"
     "app/sync_manager.py:sync_manager.py"
     "app/notify_crypto.py:notify_crypto.py"
@@ -312,6 +313,8 @@ PACKAGES=(
     sshpass
     rsync
     netcat-traditional
+    iw
+    wireless-tools
     git
 )
 

@@ -40,6 +40,7 @@ APP_FILES=(
     notifications.py
     wg_crypto.py
     wg_manager.py
+    wifi_manager.py
     sync_crypto.py
     sync_manager.py
     epdconfig.py
@@ -152,6 +153,14 @@ done
 udevadm control --reload-rules 2>/dev/null || true
 udevadm trigger 2>/dev/null || true
 info "Udev rules removed"
+
+# Remove the netplan WiFi drop-in we manage (the app configures WiFi by writing
+# /etc/netplan/90-iosbackup-wifi.yaml). The OS's own netplan files are untouched.
+if [ -f /etc/netplan/90-iosbackup-wifi.yaml ]; then
+    rm -f /etc/netplan/90-iosbackup-wifi.yaml
+    netplan apply 2>/dev/null || true
+    detail "Removed /etc/netplan/90-iosbackup-wifi.yaml"
+fi
 
 # ---------------------------------------------------------------------------
 # Step 3: Remove application files and install directory

@@ -23,13 +23,14 @@ from flask import (
 import netutil
 import wg_crypto
 import wg_manager
+import wifi_manager
 import sync_crypto
 import sync_manager
 import notify_crypto
 import config_schema
 import power
 
-VERSION = "4.1.1"
+VERSION = "4.1.2"
 
 CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/iosbackupmachine/config.yaml")
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webui_static")
@@ -573,8 +574,12 @@ def settings_wifi():
         cfg["wifi"] = wifi
         save_config(cfg)
         if wifi["enabled"] and networks:
-            _apply_wifi_networks(networks)
-        flash("WiFi settings saved.", "success")
+            ok, msg = _apply_wifi_networks(networks)
+            flash(f"WiFi settings saved. {msg}" if ok
+                  else f"Saved, but applying WiFi failed: {msg}",
+                  "success" if ok else "error")
+        else:
+            flash("WiFi settings saved.", "success")
         return redirect(url_for("settings_wifi"))
     wifi_ip = netutil.get_wifi_ip()
     wifi_ssid = netutil.get_wifi_ssid()
@@ -586,7 +591,7 @@ def settings_wifi():
 @app.route("/settings/wifi/connect", methods=["POST"])
 @login_required
 def wifi_connect_inrange():
-    """Force a scan and connect to the highest-priority saved network in range."""
+    """Force a scan and connect to any saved network that's in range."""
     cfg = load_config()
     if not cfg.get("wifi", {}).get("enabled"):
         flash("Enable WiFi and save first.", "error")
@@ -595,141 +600,25 @@ def wifi_connect_inrange():
     if not networks:
         flash("No WiFi networks configured yet.", "error")
         return redirect(url_for("settings_wifi"))
-    ok, msg = _connect_inrange_wifi(networks)
-    flash(msg, "success" if ok else "error")
+    ok, info = wifi_manager.scan_and_connect(networks)
+    if ok:
+        nick = _wifi_nickname_for(cfg, info)   # info is the connected SSID
+        label = f"{nick} ({info})" if nick else info
+        flash(f"Connected to {label}.", "success")
+    else:
+        app.logger.error("WiFi scan/connect failed: %s", info)
+        flash(info, "error")
     return redirect(url_for("settings_wifi"))
 
-# NetworkManager connection profiles we own are named with this prefix, so we
-# can find and clear them without touching the user's other connections.
-_WIFI_CON_PREFIX = "iosbackup-wifi"
-
-def _nmcli(args, timeout=30):
-    """Run an nmcli command. Returns (ok, output). Logs non-zero exits and errors
-    to webui.log so a WiFi problem is diagnosable instead of silently swallowed."""
-    try:
-        r = subprocess.run(["nmcli"] + args, capture_output=True, text=True, timeout=timeout)
-        if r.returncode != 0:
-            app.logger.error("nmcli %s failed (rc=%d): %s", " ".join(args),
-                             r.returncode, (r.stderr or r.stdout or "").strip())
-            return False, (r.stderr or r.stdout or "").strip()
-        return True, (r.stdout or "").strip()
-    except subprocess.TimeoutExpired:
-        app.logger.error("nmcli %s timed out after %ss", " ".join(args), timeout)
-        return False, "timed out"
-    except FileNotFoundError:
-        app.logger.error("nmcli not found — NetworkManager is required for WiFi")
-        return False, "nmcli not found"
-    except Exception as e:
-        app.logger.error("nmcli %s error: %s", " ".join(args), e)
-        return False, str(e)
-
-def _clear_managed_wifi_connections():
-    """Delete every nmcli connection we manage (name starts with the prefix)."""
-    ok, out = _nmcli(["-t", "-f", "NAME", "connection", "show"], timeout=10)
-    if not ok:
-        return
-    for name in out.splitlines():
-        name = name.strip().replace("\\:", ":")
-        if name.startswith(_WIFI_CON_PREFIX):
-            _nmcli(["connection", "delete", name], timeout=10)
-
-def _visible_ssids():
-    """SSIDs the WiFi radio can currently see, after forcing a rescan. Returns an
-    empty set if the scan can't be read — callers then fall back to trying every
-    profile. The rescan matters: without a fresh scan NetworkManager may not have
-    the AP's BSS, and both `connection up` and autoconnect then fail to associate."""
-    _nmcli(["device", "wifi", "rescan"], timeout=20)   # best-effort; may rate-limit
-    time.sleep(3)                                       # let the scan results populate
-    ok, out = _nmcli(["-t", "-f", "SSID", "device", "wifi", "list"], timeout=15)
-    ssids = set()
-    if ok:
-        for line in out.splitlines():
-            s = line.strip().replace("\\:", ":")
-            if s:
-                ssids.add(s)
-    return ssids
-
-def _add_wifi_profile(idx, net, total):
-    """Create the managed NM profile for one configured network. Built in a single
-    `add` (PSK inline) so it never briefly exists as a secured profile with no key.
-    autoconnect priority follows list order (first = highest). Returns (name, ok)."""
-    ssid = (net.get("ssid") or "").strip()
-    name = f"{_WIFI_CON_PREFIX}-{idx}"
-    add = ["connection", "add", "type", "wifi", "con-name", name,
-           "ssid", ssid,
-           "connection.autoconnect", "yes",
-           "connection.autoconnect-priority", str(total - idx)]
-    password = net.get("password") or ""
-    if password:
-        add += ["wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", password]
-    ok, _ = _nmcli(add, timeout=20)
-    return name, ok
-
-def _wifi_profile_exists(name):
-    """True if an NM connection profile with this name exists. Uses a plain list
-    (not _nmcli) so a normal 'not found' doesn't get logged as an error."""
-    try:
-        r = subprocess.run(["nmcli", "-t", "-f", "NAME", "connection", "show"],
-                           capture_output=True, text=True, timeout=10)
-        return name in [ln.strip().replace("\\:", ":") for ln in r.stdout.splitlines()]
-    except Exception:
-        return False
-
 def _apply_wifi_networks(networks):
-    """Recreate an autoconnect NetworkManager profile for each configured network,
-    then connect to the most-preferred one that's actually in range. Used when the
-    WiFi settings are saved (a full re-apply so the profiles match the new config).
-
-    We turn the radio on, rescan, and only activate an in-range SSID — so the call
-    doesn't block ~30s on each out-of-range profile, and NM has the BSS in its scan
-    list (without which both `up` and autoconnect can silently fail to associate)."""
-    _nmcli(["radio", "wifi", "on"], timeout=10)   # nothing connects if the radio is off
-    _clear_managed_wifi_connections()
-    n = len(networks)
-    created = []   # (ssid, profile_name) in priority order
-    for idx, net in enumerate(networks):
-        ssid = (net.get("ssid") or "").strip()
-        if not ssid:
-            continue
-        name, ok = _add_wifi_profile(idx, net, n)
-        if ok:
-            created.append((ssid, name))
-    visible = _visible_ssids()
-    for ssid, name in created:
-        if visible and ssid not in visible:
-            continue
-        ok, _ = _nmcli(["connection", "up", name], timeout=45)
-        if ok:
-            break
-
-def _connect_inrange_wifi(networks):
-    """Scan, then connect to the highest-priority configured network in range —
-    creating its NM profile first if missing. Unlike _apply_wifi_networks this does
-    NOT tear down existing profiles, so pressing the button while already connected
-    only switches if a higher-priority network is now reachable. Powers the
-    'Scan & connect' button. Returns (ok, message)."""
-    _nmcli(["radio", "wifi", "on"], timeout=10)
-    visible = _visible_ssids()
-    if not visible:
-        return False, "Could not scan for WiFi networks (is the adapter available?)."
-    n = len(networks)
-    found_in_range = False
-    for idx, net in enumerate(networks):
-        ssid = (net.get("ssid") or "").strip()
-        if not ssid or ssid not in visible:
-            continue
-        found_in_range = True
-        name = f"{_WIFI_CON_PREFIX}-{idx}"
-        if not _wifi_profile_exists(name):
-            _add_wifi_profile(idx, net, n)
-        ok, _ = _nmcli(["connection", "up", name], timeout=45)
-        if ok:
-            nick = (net.get("nickname") or "").strip()
-            label = f"{nick} ({ssid})" if nick else ssid
-            return True, f"Connected to {label}."
-    if not found_in_range:
-        return False, "No saved network is in range."
-    return False, "A saved network is in range but the connection failed (check the password)."
+    """Apply the configured WiFi networks via netplan (see wifi_manager). The
+    device has no NetworkManager, so WiFi is managed by writing a netplan drop-in
+    and letting wpa_supplicant associate to whichever configured network is in
+    range. Returns (ok, message); callers surface the message to the user."""
+    ok, msg = wifi_manager.apply_networks(networks)
+    if not ok:
+        app.logger.error("WiFi apply failed: %s", msg)
+    return ok, msg
 
 # --- Notifications ---
 @app.route("/settings/notifications", methods=["GET", "POST"])

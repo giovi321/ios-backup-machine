@@ -47,32 +47,60 @@ def get_usb_iphone_ip():
                     return ips[0]
     return None
 
+def _wireless_iface():
+    """First wireless interface name (e.g. wlan0), or None. Reads sysfs — no tool."""
+    import glob
+    try:
+        for path in sorted(glob.glob("/sys/class/net/*/wireless")):
+            return path.split("/")[-2]
+    except Exception:
+        pass
+    return None
+
 def get_wifi_ssid():
     """Return the SSID of the currently associated WiFi network, or None.
 
-    Tries nmcli first (authoritative on a NetworkManager system), then falls
-    back to iwgetid. Returns None when not associated with any WiFi."""
-    try:
-        out = subprocess.run(
-            ["nmcli", "-t", "-f", "ACTIVE,SSID", "dev", "wifi"],
-            capture_output=True, text=True, timeout=5
-        ).stdout
-        for line in out.splitlines():
-            # Terse output is "ACTIVE:SSID"; literal colons in the SSID are
-            # backslash-escaped, so splitting on the first ':' is safe.
-            if line.startswith("yes:"):
-                ssid = line.split(":", 1)[1].strip().replace("\\:", ":")
-                if ssid:
-                    return ssid
-    except Exception:
-        pass
+    Works without NetworkManager (this device uses netplan + wpa_supplicant):
+    tries iwgetid, then `iw dev <iface> link`, then `wpa_cli status` — whichever
+    is available wins. Returns None when not associated with any WiFi."""
     try:
         ssid = subprocess.run(
             ["iwgetid", "-r"], capture_output=True, text=True, timeout=5
         ).stdout.strip()
-        return ssid or None
+        if ssid:
+            return ssid
     except Exception:
+        pass
+
+    iface = _wireless_iface()
+    if not iface:
         return None
+
+    try:
+        out = subprocess.run(
+            ["iw", "dev", iface, "link"], capture_output=True, text=True, timeout=5
+        ).stdout
+        for line in out.splitlines():
+            line = line.strip()
+            if line.startswith("SSID:"):
+                ssid = line[len("SSID:"):].strip()
+                if ssid:
+                    return ssid
+    except Exception:
+        pass
+
+    try:
+        out = subprocess.run(
+            ["wpa_cli", "-i", iface, "status"], capture_output=True, text=True, timeout=5
+        ).stdout
+        for line in out.splitlines():
+            if line.startswith("ssid="):
+                ssid = line[len("ssid="):].strip()
+                if ssid:
+                    return ssid
+    except Exception:
+        pass
+    return None
 
 def get_wireguard_ip(iface="wg0"):
     """Return the WireGuard interface IP, or None."""

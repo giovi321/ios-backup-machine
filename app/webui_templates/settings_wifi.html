@@ -35,7 +35,7 @@
     <form method="POST" action="{{ url_for('wifi_connect_inrange') }}" style="margin-top:14px;"
           onsubmit="var b=this.querySelector('button'); if(b){b.disabled=true; b.textContent='Scanning…';}">
         <button type="submit" class="btn btn-secondary"{% if not cfg.wifi.enabled %} disabled{% endif %}>Scan &amp; connect to a network in range</button>
-        <div class="hint" style="margin-top:6px;">Forces a WiFi scan and connects to the highest-priority saved network that's in range. This can take a few seconds.</div>
+        <div class="hint" style="margin-top:6px;">Re-applies the WiFi config and connects to whichever saved network is in range. This can take a few seconds.</div>
     </form>
 </div>
 
@@ -77,7 +77,7 @@
         <div class="btn-group" style="margin-top:12px;">
             <button type="submit" class="btn btn-primary">Save &amp; Apply</button>
         </div>
-        <div class="hint" style="margin-top:8px;">Networks are tried in order — the first one listed is preferred when more than one is in range.</div>
+        <div class="hint" style="margin-top:8px;">Add every network the device may use. It automatically connects to whichever saved network is in range.</div>
     </div>
 </form>
 

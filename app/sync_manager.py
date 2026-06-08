@@ -54,8 +54,7 @@ def _check_network_allowed():
             return False, "Sync restricted to WiFi (not connected)."
         if required_ssid:
             try:
-                r = subprocess.run(["iwgetid", "-r"], capture_output=True, text=True, timeout=5)
-                current_ssid = r.stdout.strip()
+                current_ssid = netutil.get_wifi_ssid() or ""
                 if current_ssid != required_ssid:
                     return False, f"Sync restricted to SSID '{required_ssid}' (current: '{current_ssid}')."
             except Exception:
