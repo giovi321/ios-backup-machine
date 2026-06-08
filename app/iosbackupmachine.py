@@ -186,11 +186,18 @@ def get_icon_status():
 
 
 def draw_status_bar(drw, LW, LH):
-    """Bottom-left status row drawn on every live screen: power (always on) then
-    vpn / internet / wifi / iphone, each slashed when inactive. Reads the cached
-    status only — no network I/O on the draw path."""
+    """Bottom-left status row drawn LAST on every live screen: power (always on)
+    then vpn / internet / wifi / iphone, each slashed when inactive. Reads the
+    cached status only — no network I/O on the draw path.
+
+    The icon area is cleared to white first, so even if a screen's text strayed
+    into the bottom strip the icons can never end up overlapping it. Screens also
+    reserve STATUS_BAR_H of bottom space, so normally nothing is here to clear."""
     st = get_icon_status()
     sz, gap = 10, 4
+    n = 5
+    icon_end = 3 + n * (sz + gap)
+    drw.rectangle((0, LH - STATUS_BAR_H, icon_end, LH), fill=255)
     y = LH - sz - 2
     x = 3
     draw_small_power_icon(drw, x, y, size=sz);            x += sz + gap
@@ -357,9 +364,10 @@ def build_button_info_lines():
         free = get_free_disk_pct()
         tstr = f"{temp}C" if temp is not None else "n/a"
         fstr = f"{free}%" if free is not None else "n/a"
+        # Date + time share one line so the 6 status lines + the bottom icon strip
+        # all fit on the panel without overlapping.
         return [
-            (now.strftime("%d %b %Y"), True),
-            (now.strftime("%H:%M"), True),
+            (now.strftime("%d %b %Y  %H:%M"), True),
             (get_connection_line(), False),
             (f"IP: {get_ip_addr()}", False),
             (get_vpn_status(), False),
@@ -534,7 +542,7 @@ class Panel:
         LW, LH = self._logical_size()
         img = Image.new('1', (LW, LH), 255)
         drw = ImageDraw.Draw(img)
-        ICON = 36
+        ICON = 28   # leaves room for the status strip below the owner lines
         title = TITLE
         tw, th = self._text_wh(drw, title, F_14)
         owner = [str(l) for l in CFG.get("owner_lines", []) if str(l).strip()]
@@ -619,11 +627,9 @@ class Panel:
             return self.draw_owner()
         # screen in ("normal", "complete"): the header/percent/center-block layout below.
         LW, LH = self._logical_size()
+        content_bottom = LH - STATUS_BAR_H   # all text must stay above the status strip
         img = Image.new('1', (LW, LH), 255)
         drw = ImageDraw.Draw(img)
-
-        # Status icons on every screen (bottom-left): power + vpn/internet/wifi/iphone
-        draw_status_bar(drw, LW, LH)
 
         if show_header:
             drw.text((4, 2), TITLE, font=F_LG, fill=0)
@@ -691,7 +697,8 @@ class Panel:
                 if ln.strip():
                     lines.extend(self._wrap_text(drw, ln, F_SM, LW - 8))
             total_h = sum(self._text_wh(drw, ln, F_SM)[1] for ln in lines) + (len(lines)-1)*4
-            y_start = (LH - total_h) // 2
+            top = 24 if show_header else 4
+            y_start = top + max(0, ((content_bottom - top) - total_h) // 2)
             for ln in lines:
                 tw2, th2 = self._text_wh(drw, ln, F_SM)
                 drw.text(((LW - tw2)//2, y_start), ln, font=F_SM, fill=0); y_start += th2 + 4
@@ -699,7 +706,10 @@ class Panel:
         if show_tail_lines and show_header:
             y0 = 70 if percent is not None else 46
             for i, ln in enumerate(show_tail_lines[:3]):
-                drw.text((4, y0 + i*14), ln[:44], font=F_SM, fill=0)
+                ly = y0 + i*14
+                if ly + 12 > content_bottom:
+                    break   # keep tail output above the status strip
+                drw.text((4, ly), ln[:44], font=F_SM, fill=0)
 
         if animate and not center_block and show_header:
             base_y = LH - 11; base_x = LW - 50; sz, gap = 6, 6
@@ -708,6 +718,9 @@ class Panel:
                 if self.anim % 4 == i: drw.rectangle((x0, base_y, x0+sz, base_y+sz), fill=0)
                 else:                  drw.rectangle((x0, base_y, x0+sz, base_y+sz), outline=0, width=1)
             self.anim = (self.anim + 1) % 4
+
+        # Status icons drawn LAST so screen text can never paint over them.
+        draw_status_bar(drw, LW, LH)
 
         out = self._rotate_for_display(img)
         if out.size != (self.pw, self.ph):  # safety. try to avoid resize churn for partials.
