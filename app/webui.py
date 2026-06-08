@@ -30,7 +30,7 @@ import notify_crypto
 import config_schema
 import power
 
-VERSION = "4.1.2"
+VERSION = "4.2.0"
 
 CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/iosbackupmachine/config.yaml")
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webui_static")
