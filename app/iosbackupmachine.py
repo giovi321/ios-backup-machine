@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import os, re, sys, time, json, signal, subprocess, threading, socket
+import os, re, sys, time, json, glob, signal, subprocess, threading, socket
 from datetime import datetime
 from periphery.gpio import GPIOError
 
@@ -179,49 +179,107 @@ def get_vpn_status():
         return "VPN: off"
 
 
-def get_wifi_status_line():
-    """For the info screen: 'WiFi: <nickname> (<ssid>)' for the connected network
-    (just the SSID if it has no nickname), or None when not on WiFi."""
-    if netutil is None:
-        return None
-    try:
-        ssid = netutil.get_wifi_ssid()
-    except Exception:
-        ssid = None
+def _wifi_nickname_for_ssid(ssid):
+    """Nickname configured for ``ssid`` in config.yaml (read live), or ''."""
     if not ssid:
-        return None
-    nick = ""
+        return ""
     try:
         with open(CONFIG_PATH, "r") as f:
             live = yaml.safe_load(f) or {}
         for net in (live.get("wifi", {}).get("networks", []) or []):
             if (net.get("ssid") or "") == ssid:
-                nick = (net.get("nickname") or "").strip()
-                break
+                return (net.get("nickname") or "").strip()
     except Exception:
         pass
-    return f"WiFi: {nick} ({ssid})" if nick else f"WiFi: {ssid}"
+    return ""
+
+
+def get_connection_line():
+    """Active network for the info screen: WiFi (with nickname/SSID) vs iPhone
+    hotspot vs Ethernet vs none.
+
+    The type is decided from interface IPs (a single fast `ip addr` read), and the
+    WiFi SSID is queried ONLY when actually on WiFi — so the info screen never
+    spawns the wireless tools (iwgetid/iw/wpa_cli), which can each block for
+    seconds while on the iPhone hotspot, stalling the button."""
+    ip = typ = None
+    if netutil is not None:
+        try:
+            ip, typ = netutil.get_active_ip()
+        except Exception:
+            ip = typ = None
+    if typ == "wifi":
+        ssid = None
+        try:
+            ssid = netutil.get_wifi_ssid()
+        except Exception:
+            ssid = None
+        name = _wifi_nickname_for_ssid(ssid) or ssid
+        return f"Net: WiFi {name}" if name else "Net: WiFi"
+    if typ == "usb_iphone":
+        return "Net: iPhone hotspot"
+    if ip:
+        return "Net: Ethernet"
+    return "Net: none"
+
+
+def _ts_hhmm(iso):
+    try:
+        return datetime.fromisoformat(iso).strftime("%H:%M")
+    except Exception:
+        return ""
+
+
+def get_last_sync_str():
+    """Last/current remote-sync result for the info screen."""
+    try:
+        with open(STATUS_FILE, "r") as f:
+            st = json.load(f)
+        state = st.get("state")
+        if state == "syncing":
+            return "running"
+        if state == "sync_complete":
+            return ("OK " + _ts_hhmm(st.get("timestamp"))).strip()
+        if state == "sync_error":
+            return ("failed " + _ts_hhmm(st.get("timestamp"))).strip()
+    except Exception:
+        pass
+    try:
+        logs = glob.glob(os.path.join(LOG_DIR, "sync-*.log"))
+        if logs:
+            newest = max(logs, key=os.path.getmtime)
+            return time.strftime("%H:%M %d %b", time.localtime(os.path.getmtime(newest)))
+    except Exception:
+        pass
+    return "none"
 
 
 def build_button_info_lines():
-    """Lines for the single-tap system-info screen: (text, big?)."""
-    now = datetime.now()
-    temp = get_soc_temp()
-    free = get_free_disk_pct()
-    # Show the connected WiFi network where the layout's blank spacer normally
-    # sits, so the line count (and overall height) stays the same on the small
-    # panel whether or not WiFi is up.
-    wifi_line = get_wifi_status_line()
-    return [
-        (now.strftime("%d %b %Y"), True),
-        (now.strftime("%H:%M"), True),
-        (wifi_line or "", False),
-        (f"IP: {get_ip_addr()}", False),
-        (get_vpn_status(), False),
-        (f"Last: {get_last_backup_str()}", False),
-        (f"SD free: {free}%" if free is not None else "SD free: n/a", False),
-        (f"Temp: {temp}C" if temp is not None else "Temp: n/a", False),
-    ]
+    """Lines for the single-tap system-info screen: (text, big?). Fully guarded:
+    it must never raise or block, or the single-tap would silently do nothing."""
+    try:
+        now = datetime.now()
+        temp = get_soc_temp()
+        free = get_free_disk_pct()
+        tstr = f"{temp}C" if temp is not None else "n/a"
+        fstr = f"{free}%" if free is not None else "n/a"
+        return [
+            (now.strftime("%d %b %Y"), True),
+            (now.strftime("%H:%M"), True),
+            (get_connection_line(), False),
+            (f"IP: {get_ip_addr()}", False),
+            (get_vpn_status(), False),
+            (f"Backup: {get_last_backup_str()}", False),
+            (f"Sync: {get_last_sync_str()}", False),
+            (f"Temp {tstr}  SD {fstr}", False),
+        ]
+    except Exception:
+        now = datetime.now()
+        return [
+            (now.strftime("%d %b %Y"), True),
+            (now.strftime("%H:%M"), True),
+            ("Status unavailable", False),
+        ]
 
 
 class Panel:
