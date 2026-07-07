@@ -1,0 +1,7 @@
+[Unit]
+Description=Re-scan usbmuxd when an iPhone is plugged (libusb hotplug workaround)
+After=usbmuxd.service
+
+[Service]
+Type=oneshot
+ExecStart=/root/iosbackupmachine/usbmux-refresh.sh

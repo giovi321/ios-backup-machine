@@ -62,6 +62,7 @@ APP_FILES=(
     "scripts/shutdown.sh:shutdown.sh"
     "scripts/long-press-backup.sh:long-press-backup.sh"
     "scripts/wg-autoconnect.sh:wg-autoconnect.sh"
+    "scripts/usbmux-refresh.sh:usbmux-refresh.sh"
     "assets/UbuntuMono-Regular.ttf:UbuntuMono-Regular.ttf"
     "requirements.txt:requirements.txt"
 )
@@ -88,6 +89,7 @@ ALL_SERVICES=(
     button-info.service
     backup-sync.service
     wg-autoconnect.service
+    usbmux-refresh.service
 )
 
 # ---------------------------------------------------------------------------
@@ -465,6 +467,7 @@ chmod +x "${INSTALL_DIR}/unplug-notify.sh" 2>/dev/null || true
 chmod +x "${INSTALL_DIR}/shutdown.sh" 2>/dev/null || true
 chmod +x "${INSTALL_DIR}/long-press-backup.sh" 2>/dev/null || true
 chmod +x "${INSTALL_DIR}/wg-autoconnect.sh" 2>/dev/null || true
+chmod +x "${INSTALL_DIR}/usbmux-refresh.sh" 2>/dev/null || true
 
 info "Application files installed to ${INSTALL_DIR}"
 

@@ -10,3 +10,13 @@
 ACTION=="remove", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", \
   ENV{PRODUCT}=="5ac/*", \
   RUN+="/bin/systemctl --no-block start unplug-notify.service"
+
+# Plug-in fires a guarded one-shot that re-scans usbmuxd. usbmuxd runs
+# persistently here but doesn't get libusb hotplug events, so a device plugged
+# after boot stays invisible to idevice_* until usbmuxd restarts. The one-shot
+# restarts usbmuxd only when the kernel sees an Apple device that usbmux doesn't,
+# and never during a backup. It does NOT touch the display daemon (the reason
+# add-handling was dropped before), so the EPD owner is undisturbed.
+ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", \
+  ENV{PRODUCT}=="5ac/*", \
+  RUN+="/bin/systemctl --no-block start usbmux-refresh.service"
