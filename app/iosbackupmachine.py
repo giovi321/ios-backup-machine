@@ -1426,7 +1426,12 @@ def _status_icon_updater(ui):
         st = _compute_icon_status()
         with _icon_status_lock:
             _icon_status.update(st)
-        if prev is not None and st != prev:
+        # Repaint whenever the sampled state differs from what was last painted,
+        # INCLUDING the first sample (prev is None). Without the first-sample
+        # paint, a daemon (re)started while already connected keeps the boot
+        # screen's default all-off icons: every later sample matches the first,
+        # so no change is ever detected and the status bar never repaints.
+        if st != prev:
             try:
                 ui.request_full()
             except Exception:
