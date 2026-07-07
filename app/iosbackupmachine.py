@@ -28,14 +28,19 @@ except ImportError:
     _config_schema = None
 
 CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/iosbackupmachine/config.yaml")
-LOG_DIR = "/var/log/iosbackupmachine"
-STATUS_FILE = os.path.join(LOG_DIR, "backup_status.json")
+import logutil
+# Logs are persistent (rootfs); runtime IPC stays on the volatile zram /var/log.
+# See logutil.py for why they are split.
+LOG_DIR = logutil.LOG_DIR
+RUNTIME_DIR = logutil.RUNTIME_DIR
+STATUS_FILE = os.path.join(RUNTIME_DIR, "backup_status.json")
 # Sentinels the web UI drops to drive the always-on daemon (which can no longer
 # be started/stopped by restarting its service — that would kill the EPD owner).
-START_FILE = os.path.join(LOG_DIR, "start_requested")   # force a backup (auto-start off)
-STOP_FILE = os.path.join(LOG_DIR, "stop_requested")     # abort the current backup
+START_FILE = os.path.join(RUNTIME_DIR, "start_requested")   # force a backup (auto-start off)
+STOP_FILE = os.path.join(RUNTIME_DIR, "stop_requested")     # abort the current backup
 IDLE_REFRESH_SEC = 4
 WG_RECONCILE_SEC = 10   # how often the WireGuard auto-connect watcher re-checks
+WG_HANDSHAKE_GRACE_SEC = 45   # tolerate 'up but no handshake yet' this long before re-connecting
 TITLE = "iOS Backup Machine"
 
 def load_config(path):
@@ -873,7 +878,7 @@ def write_status(state, **extra):
     """Atomic status write — tmp file + rename so partial reads can't happen."""
     tmp = None
     try:
-        ensure_dir(LOG_DIR)
+        ensure_dir(RUNTIME_DIR)
         data = {"state": state, "timestamp": datetime.now().isoformat(), **extra}
         tmp = STATUS_FILE + f".tmp.{os.getpid()}"
         with open(tmp, "w") as f:
@@ -966,6 +971,7 @@ def log_open():
     path = os.path.join(LOG_DIR, f"backup-{ts}.log")
     f = open(path, "a", buffering=1)
     f.write(f"[{ts}] backup started\n")
+    logutil.prune_logs()   # trim old per-run logs (count + age)
     return f, path
 
 def check_backup_mount(logf, ui):
@@ -1288,6 +1294,7 @@ def run_backup(panel, logf, ui, _retry=0):
             try:
                 synclogf = open(sync_logpath, "a", buffering=1)
                 synclogf.write(f"[{sync_ts}] auto-sync after backup\n")
+                logutil.prune_logs()   # trim old per-run logs (count + age)
             except Exception:
                 synclogf = None
             if logf: logf.write(f"[SYNC] Auto-sync started; see {os.path.basename(sync_logpath)}\n")
@@ -1462,7 +1469,8 @@ def _wg_autoconnect_watcher(logf):
     installed). Polling every WG_RECONCILE_SEC catches connectivity whenever and
     however it appears. Config is re-read each tick so web-UI changes apply live."""
     import wg_manager as _wg
-    last_err = None   # dedupe repeated failure logs across a streak of attempts
+    last_err = None       # dedupe repeated failure logs across a streak of attempts
+    dead_since = None     # first time we saw the interface up but not yet handshaked
     while not SHUTDOWN.is_set():
         try:
             try:
@@ -1474,9 +1482,27 @@ def _wg_autoconnect_watcher(logf):
             iface = wg_cfg.get("interface_name", "wg0")
             if not (wg_cfg.get("enabled") and wg_cfg.get("auto_connect")):
                 last_err = None
+                dead_since = None
             elif _wg.is_interface_up(iface):
-                last_err = None   # connected; reset so a later drop logs again
+                # 'Interface exists' is not 'connected': a tunnel can be up but
+                # never handshake (endpoint unreachable, or a pre-NTP wrong clock
+                # the server rejects). Verify a handshake actually completed; if
+                # not within the grace window, tear it down so the next tick
+                # reconnects cleanly. A tunnel that handshaked at least once is
+                # left alone (its handshake time stays set even when idle).
+                if _wg.latest_handshake(iface) > 0:
+                    last_err = None
+                    dead_since = None
+                else:
+                    if dead_since is None:
+                        dead_since = time.time()
+                    elif time.time() - dead_since > WG_HANDSHAKE_GRACE_SEC:
+                        if logf: logf.write(f"[WG] {iface} up but no handshake after "
+                                            f"{WG_HANDSHAKE_GRACE_SEC}s — reconnecting\n")
+                        _wg.stop_wireguard(iface)
+                        dead_since = None
             elif _wg_should_connect_for(wg_cfg.get("auto_connect_on", ["iphone"])):
+                dead_since = None
                 ok, err = _wg.start_wireguard(iface)
                 if ok:
                     last_err = None

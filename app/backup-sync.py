@@ -7,13 +7,17 @@ import os, sys, time, json, subprocess, yaml, traceback
 from datetime import datetime
 
 CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/iosbackupmachine/config.yaml")
-LOG_DIR = "/var/log/iosbackupmachine"
-STATUS_FILE = os.path.join(LOG_DIR, "backup_status.json")
 
 # Make sibling modules importable when run via Popen from webui
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 if SCRIPT_DIR not in sys.path:
     sys.path.insert(0, SCRIPT_DIR)
+
+import logutil
+# Persistent logs on the rootfs; runtime status on the volatile zram /var/log.
+LOG_DIR = logutil.LOG_DIR
+RUNTIME_DIR = logutil.RUNTIME_DIR
+STATUS_FILE = os.path.join(RUNTIME_DIR, "backup_status.json")
 
 
 def load_config(path):
@@ -31,7 +35,7 @@ def load_config(path):
 def write_status(state, **extra):
     """Atomic status write: tmp file + rename, so concurrent readers never see partial JSON."""
     try:
-        os.makedirs(LOG_DIR, exist_ok=True)
+        os.makedirs(RUNTIME_DIR, exist_ok=True)
         data = {"state": state, "timestamp": datetime.now().isoformat(), **extra}
         tmp = STATUS_FILE + f".tmp.{os.getpid()}"
         with open(tmp, "w") as f:
@@ -118,6 +122,7 @@ ts = datetime.now().strftime("%Y%m%d-%H%M%S")
 logpath = os.path.join(LOG_DIR, f"sync-{ts}.log")
 try:
     logf = open(logpath, "a", buffering=1)
+    logutil.prune_logs()   # trim old per-run logs (count + age)
 except Exception as e:
     print(f"[FATAL] cannot open {logpath}: {e}", file=sys.stderr)
     write_status("sync_error", message=f"Cannot write log: {e}")

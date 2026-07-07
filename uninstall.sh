@@ -18,7 +18,8 @@ INSTALL_DIR="/root/iosbackupmachine"
 VENV_DIR="/root/iosbackupmachine"
 BACKUP_DIR="/media/iosbackup"
 EPAPER_DIR="/root/e-Paper"
-LOG_DIR="/var/log/iosbackupmachine"
+LOG_DIR="/var/lib/iosbackupmachine"
+RUNTIME_DIR="/var/log/iosbackupmachine"
 
 APP_FILES=(
     iosbackupmachine.py
@@ -239,13 +240,13 @@ fi
 echo ""
 echo -e "${BLUE}  [5/5] Optional cleanup...${NC}"
 
-if [ -d "${LOG_DIR}" ]; then
-    read -rp "  Remove log files in ${LOG_DIR}? [y/N] " rm_logs
+if [ -d "${LOG_DIR}" ] || [ -d "${RUNTIME_DIR}" ]; then
+    read -rp "  Remove log files in ${LOG_DIR} and ${RUNTIME_DIR}? [y/N] " rm_logs
     if [[ "${rm_logs}" =~ ^[Yy]$ ]]; then
-        rm -rf "${LOG_DIR}"
-        info "Removed log directory"
+        rm -rf "${LOG_DIR}" "${RUNTIME_DIR}"
+        info "Removed log directories"
     else
-        warn "Log directory kept: ${LOG_DIR}"
+        warn "Log directories kept: ${LOG_DIR}, ${RUNTIME_DIR}"
     fi
 fi
 

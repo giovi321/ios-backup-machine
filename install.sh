@@ -26,7 +26,10 @@ EPAPER_REPO="https://github.com/waveshareteam/e-Paper.git"
 EPAPER_DIR="/root/e-Paper"
 PISUGAR_SCRIPT_URL="https://cdn.pisugar.com/release/pisugar-power-manager.sh"
 ARMBIAN_ENV="/boot/armbianEnv.txt"
-LOG_DIR="/var/log/iosbackupmachine"
+# Persistent logs (rootfs, survive power loss). Runtime IPC stays on the volatile
+# zram-backed /var/log/iosbackupmachine (RUNTIME_DIR), created by the services.
+LOG_DIR="/var/lib/iosbackupmachine"
+RUNTIME_DIR="/var/log/iosbackupmachine"
 LOCK_FILE="/tmp/iosbackupmachine-install.lock"
 VERSION_FILE="${INSTALL_DIR}/.installed_version"
 BACKUP_ARCHIVE_DIR="/root/iosbackupmachine-backups"
@@ -54,6 +57,7 @@ APP_FILES=(
     "app/notify_crypto.py:notify_crypto.py"
     "app/config_schema.py:config_schema.py"
     "app/power.py:power.py"
+    "app/logutil.py:logutil.py"
     "scripts/unplug-notify.sh:unplug-notify.sh"
     "scripts/shutdown.sh:shutdown.sh"
     "scripts/long-press-backup.sh:long-press-backup.sh"
@@ -552,10 +556,26 @@ else
     info "Marker file already exists"
 fi
 
-mkdir -p "${LOG_DIR}"
+mkdir -p "${LOG_DIR}" "${RUNTIME_DIR}"
 info "Backup directory ready: ${BACKUP_DIR}"
 
-# Install logrotate config
+# Migrate logs out of the volatile zram /var/log (and its on-disk backing store
+# /var/log.hdd) into the persistent LOG_DIR, once. Older builds wrote logs to the
+# zram-backed /var/log, where a power cut wiped anything not yet synced to disk.
+# Copy without overwriting so re-running the installer is safe.
+for src in "${RUNTIME_DIR}" /var/log.hdd/iosbackupmachine; do
+    if [ -d "${src}" ] && [ "${src}" != "${LOG_DIR}" ]; then
+        for f in "${src}"/*.log; do
+            [ -e "${f}" ] || continue
+            dest="${LOG_DIR}/$(basename "${f}")"
+            [ -e "${dest}" ] || cp -p "${f}" "${dest}" 2>/dev/null || true
+        done
+    fi
+done
+info "Logs now persist in ${LOG_DIR}"
+
+# Install logrotate config. Remove any stale copy first: older versions rotated
+# the per-run logs under /var/log, which renamed them out of the web UI's view.
 if [ -f "${REPO_DIR}/config/logrotate-iosbackupmachine" ]; then
     cp "${REPO_DIR}/config/logrotate-iosbackupmachine" /etc/logrotate.d/iosbackupmachine
     info "Installed logrotate config"

@@ -7,7 +7,8 @@
 # daemon notices the unplug without waiting for the USB timeout. It must NOT
 # touch the EPD or the display daemon.
 
-LOG=/var/log/iosbackupmachine/autostart.log
+# Persistent log dir (rootfs), NOT the volatile zram /var/log.
+LOG=/var/lib/iosbackupmachine/autostart.log
 mkdir -p "$(dirname "$LOG")"
 echo "$(date '+%F %T') [unplug-notify] invoked" >>"$LOG"
 

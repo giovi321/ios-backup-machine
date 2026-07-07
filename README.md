@@ -1,5 +1,5 @@
 [![License](https://img.shields.io/github/license/giovi321/ios-backup-machine)](LICENSE)
-![Version](https://img.shields.io/badge/version-4.2.0-brightgreen)
+![Version](https://img.shields.io/badge/version-4.3.0-brightgreen)
 [![Python 3.13](https://img.shields.io/badge/Python-3.13-blue?logo=python&logoColor=white)](https://www.python.org/downloads/release/python-3130/)
 [![Armbian](https://img.shields.io/badge/OS-Armbian-orange?logo=armbian)](https://www.armbian.com/radxa-zero-3/)
 ![Offline](https://img.shields.io/badge/network-optional-blue.svg)
@@ -91,7 +91,7 @@ Every live screen (boot/idle, backup, sync, info, interrupted, complete) draws a
 
 ### General behavior
 - Errors appear directly on the display.  
-- Logs are written under `/var/log/iosbackupmachine/`.  
+- Logs persist under `/var/lib/iosbackupmachine/` (not the volatile zram `/var/log`).  
 - On boot, owner info is displayed.  
 - When idle, the screen shows last backup result, timestamp, disk usage, and owner info.
 
@@ -436,11 +436,25 @@ idevicebackup2 restore --password <your backup password> /media/sdcard/iosbackup
 ```
 
 ## Logs
-All logs are stored under `/var/log/iosbackupmachine/`.  
-Each run creates a file:  
+Logs are stored on the rootfs under `/var/lib/iosbackupmachine/`, so they survive
+reboots and power loss. They are deliberately kept off `/var/log`, which on this
+Armbian image is a zram RAM disk (`armbian-ramlog`) that loses anything not yet
+synced to disk when the device is cut abruptly — the exact failure mode of a
+power-loss shutdown. Volatile runtime state (`backup_status.json`,
+`start_requested`, `stop_requested`) stays on `/var/log/iosbackupmachine/`, where
+it belongs: it is rewritten constantly and regenerated every run, so keeping it in
+RAM avoids SD-card wear.
+
+Each run creates a file:
 ```
 backup-YYYYMMDD-HHMMSS.log
+sync-YYYYMMDD-HHMMSS.log
 ```
+Retention is managed by the app, not logrotate: the newest 50 backup logs and 50
+sync logs are kept, and anything older than 90 days is pruned (override with the
+`IOSBACKUP_LOG_KEEP` / `IOSBACKUP_LOG_MAX_AGE_DAYS` env vars). The continuous
+append logs (`ntp-sync.log`, `autostart.log`, `update.log`) are size-capped by
+logrotate; `webui.log` self-rotates.
 
 ## Web UI
 
@@ -517,7 +531,7 @@ WiFi is managed through the OS's **netplan + systemd-networkd + wpa_supplicant**
 
 A built-in WireGuard client. The config is uploaded through the web UI and stored **encrypted** (`wireguard.enc`); it's decrypted with the connected iPhone's serial or a custom passphrase (see [Credential Encryption](#credential-encryption)).
 
-- **Auto-connect**: enable *Auto-connect* and pick the triggers — **iPhone plugged in**, **WiFi available**, and/or **on boot** (combinable). A background reconciler in the display daemon brings the tunnel up as soon as a selected connection source appears, so it connects reliably even after errors, reconnects, or a hotspot toggled on after the phone was already plugged in — not just on a one-off boot event.
+- **Auto-connect**: enable *Auto-connect* and pick the triggers — **iPhone plugged in**, **WiFi available**, and/or **on boot** (combinable). A background reconciler in the display daemon brings the tunnel up as soon as a selected connection source appears, so it connects reliably even after errors, reconnects, or a hotspot toggled on after the phone was already plugged in — not just on a one-off boot event. It also verifies the tunnel actually **handshakes**, not just that the `wg0` interface exists: if the interface comes up but no handshake completes within a grace window (endpoint unreachable, or the clock not yet NTP-synced so the peer rejects the handshake), it tears it down and reconnects. In `udid` decryption mode the tunnel can only come up while the iPhone is readable, since the config is decrypted with the iPhone serial; the persisted WireGuard log lines show `Cannot decrypt: no iPhone connected` when it is waiting for the phone.
 - **Full tunnel** (optional): routes **all** traffic through the VPN, re-applied on every connect. Use this when the **remote sync server's IP overlaps the local WiFi subnet** — a plain `wg-quick` full tunnel would send that same-subnet traffic out the WiFi instead of the tunnel. Requires `AllowedIPs = 0.0.0.0/0` in the WireGuard config.
   - **Local access is preserved**: even with full tunnel on, **SSH and the web UI stay reachable from the local network**. Replies to connections that arrive on a non-VPN interface are kept off the tunnel via connection-mark policy routing (iptables `CONNMARK` + an `ip rule`), while everything the device *initiates* still goes through the VPN.
 - Status is shown on the dashboard, the e-ink VPN icon, and `/api/status`.
@@ -548,7 +562,7 @@ Sync backups to a remote server via **rsync over SSH**. Supports SSH key and pas
 {
   "status": "ok",                       // ok | warning | error (rollup)
   "warnings": [],
-  "version": "4.2.0",
+  "version": "4.3.0",
   "time": "2026-05-30T11:13:31",
   "services": { "iosbackupmachine": "active", "webui": "active",
                 "pisugar-server": "active", "usbmuxd": "active" },

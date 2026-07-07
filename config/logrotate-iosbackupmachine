@@ -1,10 +1,19 @@
-/var/log/iosbackupmachine/*.log {
+# Continuous append logs only.
+#
+# Per-run logs (backup-*.log / sync-*.log) are NOT listed here: they are one
+# file per run and are pruned by the app (logutil.prune_logs, by count + age),
+# so logrotate must not rename them — renaming is what used to make them vanish
+# from the web UI. webui.log is also omitted: it self-rotates via Python's
+# RotatingFileHandler, and letting logrotate touch it too would race.
+/var/lib/iosbackupmachine/ntp-sync.log
+/var/lib/iosbackupmachine/autostart.log
+/var/lib/iosbackupmachine/update.log {
     weekly
     rotate 4
     compress
     delaycompress
     missingok
     notifempty
-    maxsize 10M
+    maxsize 5M
     create 0644 root root
 }

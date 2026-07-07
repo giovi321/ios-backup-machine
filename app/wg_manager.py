@@ -114,6 +114,30 @@ def is_interface_up(iface="wg0"):
     except Exception:
         return False
 
+def latest_handshake(iface="wg0"):
+    """Newest peer handshake as a unix epoch (int), or 0 if none has completed.
+
+    A wg interface can exist ('up') without ever handshaking — e.g. brought up
+    while the endpoint is unreachable, or before the clock is NTP-synced (a wrong
+    clock makes the server reject the handshake). 0 means 'up but not actually
+    connected'; any positive value means at least one handshake succeeded."""
+    try:
+        r = subprocess.run(["wg", "show", iface, "latest-handshakes"],
+                           capture_output=True, text=True, timeout=5)
+        if r.returncode != 0:
+            return 0
+        best = 0
+        for line in r.stdout.splitlines():
+            parts = line.split()
+            if len(parts) >= 2:
+                try:
+                    best = max(best, int(parts[-1]))
+                except ValueError:
+                    pass
+        return best
+    except Exception:
+        return 0
+
 def start_wireguard(iface="wg0", passphrase=None):
     """Decrypt WireGuard config and bring up the interface.
     Returns (success: bool, error: str or None)."""

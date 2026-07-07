@@ -17,8 +17,9 @@ Environment=EPD_PIN_BUSY=10
 Environment=EPD_SPI_DEV=/dev/spidev3.0
 Environment=EPD_SPI_HZ=2000000
 Environment=IOSBACKUP_CONFIG=/root/iosbackupmachine/config.yaml
-# logs — per-session logs written by the app; stdout goes to journal only
-ExecStartPre=/bin/mkdir -p /var/log/iosbackupmachine
+# logs — persistent per-run logs in /var/lib (survive power loss); runtime IPC
+# in the volatile zram /var/log. stdout goes to the journal only.
+ExecStartPre=/bin/mkdir -p /var/lib/iosbackupmachine /var/log/iosbackupmachine
 StandardOutput=journal
 StandardError=journal
 # behavior — always-on single EPD owner.

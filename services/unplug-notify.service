@@ -5,7 +5,8 @@ Description=Stop a running backup when the iPhone is unplugged
 Type=oneshot
 User=root
 WorkingDirectory=/root/iosbackupmachine
+ExecStartPre=/bin/mkdir -p /var/lib/iosbackupmachine
 ExecStart=/root/iosbackupmachine/unplug-notify.sh
-StandardOutput=append:/var/log/iosbackupmachine/autostart.log
-StandardError=append:/var/log/iosbackupmachine/autostart.log
+StandardOutput=append:/var/lib/iosbackupmachine/autostart.log
+StandardError=append:/var/lib/iosbackupmachine/autostart.log
 Environment=IOSBACKUP_CONFIG=/root/iosbackupmachine/config.yaml

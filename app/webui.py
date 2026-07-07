@@ -29,8 +29,9 @@ import sync_manager
 import notify_crypto
 import config_schema
 import power
+import logutil
 
-VERSION = "4.2.0"
+VERSION = "4.3.0"
 
 CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/iosbackupmachine/config.yaml")
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webui_static")
@@ -47,10 +48,14 @@ app = Flask(
 def inject_version():
     return {"app_version": VERSION}
 
-LOG_DIR = "/var/log/iosbackupmachine"
+# Persistent logs on the rootfs; runtime status/flags on the volatile zram
+# /var/log. See logutil.py for the rationale.
+LOG_DIR = logutil.LOG_DIR
+RUNTIME_DIR = logutil.RUNTIME_DIR
 
 # --- Logging setup ---
 os.makedirs(LOG_DIR, exist_ok=True)
+os.makedirs(RUNTIME_DIR, exist_ok=True)
 _log_handler = RotatingFileHandler(
     os.path.join(LOG_DIR, "webui.log"), maxBytes=2*1024*1024, backupCount=3
 )
@@ -389,7 +394,7 @@ def logout():
 
 def _read_backup_status():
     """Read backup status from the status file written by iosbackupmachine.py."""
-    status_file = os.path.join(LOG_DIR, "backup_status.json")
+    status_file = os.path.join(RUNTIME_DIR, "backup_status.json")
     try:
         if os.path.exists(status_file):
             with open(status_file, "r") as f:
@@ -1411,8 +1416,8 @@ def system_update():
                 flash("update.sh not found in repo directory.", "error")
             else:
                 try:
-                    log_file = "/var/log/iosbackupmachine/update.log"
-                    os.makedirs("/var/log/iosbackupmachine", exist_ok=True)
+                    log_file = os.path.join(LOG_DIR, "update.log")
+                    os.makedirs(LOG_DIR, exist_ok=True)
                     with open(log_file, "w") as lf:
                         subprocess.Popen(
                             ["bash", update_script],
@@ -1635,15 +1640,15 @@ def sync_cancel():
         time.sleep(0.5)  # give the kernel a moment to reap
         # Mark the sync as cancelled so the dashboard / e-ink reflect it.
         try:
-            os.makedirs(LOG_DIR, exist_ok=True)
+            os.makedirs(RUNTIME_DIR, exist_ok=True)
             from datetime import datetime as _dt
             data = {"state": "sync_error",
                     "message": "Cancelled by user.",
                     "timestamp": _dt.now().isoformat()}
-            tmp = os.path.join(LOG_DIR, "backup_status.json.tmp")
+            tmp = os.path.join(RUNTIME_DIR, "backup_status.json.tmp")
             with open(tmp, "w") as f:
                 json.dump(data, f)
-            os.replace(tmp, os.path.join(LOG_DIR, "backup_status.json"))
+            os.replace(tmp, os.path.join(RUNTIME_DIR, "backup_status.json"))
         except Exception:
             pass
         flash("Sync cancelled.", "success")
@@ -1774,11 +1779,11 @@ def api_start_backup():
         flash("A sync is in progress. Wait for it to finish, then start the backup.", "error")
         return redirect(request.referrer or url_for("index"))
     try:
-        os.makedirs(LOG_DIR, exist_ok=True)
+        os.makedirs(RUNTIME_DIR, exist_ok=True)
         # Make sure the daemon is up (no-op if already running).
         subprocess.run(["systemctl", "start", "iosbackupmachine.service"],
                        capture_output=True, timeout=10)
-        open(os.path.join(LOG_DIR, "start_requested"), "w").close()
+        open(os.path.join(RUNTIME_DIR, "start_requested"), "w").close()
         flash("Backup requested. Make sure your iPhone is unlocked.", "success")
     except Exception as e:
         flash(f"Error: {e}", "error")
@@ -1790,13 +1795,13 @@ def api_stop_backup():
     """Abort the current backup. Signals the always-on display daemon (which owns
     the e-ink and renders the interrupted screen) instead of stopping its service."""
     try:
-        os.makedirs(LOG_DIR, exist_ok=True)
-        open(os.path.join(LOG_DIR, "stop_requested"), "w").close()
+        os.makedirs(RUNTIME_DIR, exist_ok=True)
+        open(os.path.join(RUNTIME_DIR, "stop_requested"), "w").close()
         subprocess.run(["pkill", "-f", "idevicebackup2"],
                        capture_output=True, timeout=5)
         # Reflect the stop on the dashboard immediately (atomic write).
         try:
-            status_file = os.path.join(LOG_DIR, "backup_status.json")
+            status_file = os.path.join(RUNTIME_DIR, "backup_status.json")
             tmp = status_file + ".tmp"
             with open(tmp, "w") as f:
                 json.dump({"state": "interrupted", "reason": "Stopped from web UI",

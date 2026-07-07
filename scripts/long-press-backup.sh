@@ -2,7 +2,8 @@
 # long-press-backup.sh — Long press: trigger remote sync
 # Safety checks prevent interference with running operations.
 
-LOG=/var/log/iosbackupmachine/autostart.log
+# Persistent log dir (rootfs), NOT the volatile zram /var/log.
+LOG=/var/lib/iosbackupmachine/autostart.log
 mkdir -p "$(dirname "$LOG")"
 
 log() { echo "$(date '+%F %T') [long-press] $1" >> "$LOG"; }
