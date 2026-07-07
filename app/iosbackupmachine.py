@@ -27,6 +27,11 @@ try:
 except ImportError:
     _config_schema = None
 
+try:
+    import wg_crypto as _wg_crypto   # iPhone presence / trust probe for the status icon
+except ImportError:
+    _wg_crypto = None
+
 CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/iosbackupmachine/config.yaml")
 import logutil
 # Logs are persistent (rootfs); runtime IPC stays on the volatile zram /var/log.
@@ -119,7 +124,7 @@ def draw_project_icon(drw, cx, cy, size=36):
 # ---------------------------------------------------------------------------
 STATUS_BAR_H = 14   # vertical space the icon row reserves at the bottom of a screen
 
-_icon_status = {"vpn": False, "internet": False, "wifi": False, "iphone": False}
+_icon_status = {"vpn": False, "internet": False, "wifi": False, "iphone": "absent"}
 _icon_status_lock = threading.Lock()
 
 
@@ -155,20 +160,62 @@ def draw_icon_wifi(drw, x, y, sz=10, on=True):
         _icon_slash(drw, x, y, sz)
 
 
-def draw_icon_iphone(drw, x, y, sz=10, on=True):
-    """Minimal phone = iPhone."""
+def draw_icon_iphone(drw, x, y, sz=10, state="absent"):
+    """iPhone presence, three states:
+       'absent'    -> phone, slashed (not plugged / not seen by usbmux)
+       'untrusted' -> phone + closed padlock (plugged, but Trust not granted or
+                      the phone is locked, so lockdown info can't be read)
+       'trusted'   -> phone + open padlock (Trust granted; the VPN config can be
+                      decrypted)."""
+    if state is True:
+        state = "trusted"
+    elif not state:
+        state = "absent"
     px0, px1 = x + 2, x + sz - 2
     drw.rounded_rectangle((px0, y, px1, y + sz), radius=1, outline=0, width=1)
     drw.line((px0 + 1, y + 2, px1 - 1, y + 2), fill=0, width=1)                    # speaker
     cx = (px0 + px1) // 2
-    drw.ellipse((cx - 1, y + sz - 3, cx + 1, y + sz - 1), fill=0)                  # home dot
-    if not on:
+    if state == "absent":
+        drw.ellipse((cx - 1, y + sz - 3, cx + 1, y + sz - 1), fill=0)              # home dot
         _icon_slash(drw, x, y, sz)
+        return
+    # Clear the screen so the glyph reads on white. untrusted -> a small closed
+    # padlock (locked); trusted -> a checkmark (Trust granted, config decryptable).
+    drw.rectangle((px0 + 1, y + 4, px1 - 1, y + sz - 1), fill=255)
+    if state == "trusted":
+        drw.line((px0 + 1, y + 6, px0 + 2, y + 8), fill=0, width=1)                # checkmark
+        drw.line((px0 + 2, y + 8, px1 - 1, y + 5), fill=0, width=1)
+    else:
+        drw.arc((cx - 1, y + 4, cx + 1, y + 6), start=180, end=360, fill=0)        # closed shackle
+        drw.rectangle((cx - 1, y + 6, cx + 1, y + 8), fill=0)                      # solid body (locked)
+
+
+def _iphone_presence():
+    """iPhone USB state for the status icon: 'absent' | 'untrusted' | 'trusted'.
+
+    'trusted' = lockdown info is readable (SerialNumber), which is exactly what
+    udid-mode decryption needs, so the VPN can come up. 'untrusted' = usbmux sees
+    the device (a UDID) but lockdown is not accessible: Trust not granted, or the
+    phone is locked. A running backup implies a present, trusted device, so skip
+    the probe then to avoid piling lockdown queries onto idevicebackup2."""
+    if _backup_running:
+        return "trusted"
+    if _wg_crypto is None:
+        return "absent"
+    try:
+        if not _wg_crypto.get_iphone_udid():
+            return "absent"
+    except Exception:
+        return "absent"
+    try:
+        return "trusted" if _wg_crypto.get_iphone_serial() else "untrusted"
+    except Exception:
+        return "untrusted"
 
 
 def _compute_icon_status():
-    """Sample VPN / internet / WiFi / iPhone-hotspot reachability (blocking)."""
-    vpn = internet = wifi = iphone = False
+    """Sample VPN / internet / WiFi reachability and iPhone presence (blocking)."""
+    vpn = internet = wifi = False
     try:
         iface = CFG.get("wireguard", {}).get("interface_name", "wg0")
         vpn = subprocess.run(["ip", "link", "show", iface],
@@ -178,11 +225,9 @@ def _compute_icon_status():
     if netutil is not None:
         try: wifi = netutil.get_wifi_ip() is not None
         except Exception: pass
-        try: iphone = netutil.get_usb_iphone_ip() is not None
-        except Exception: pass
         try: internet = bool(netutil.have_connectivity(timeout=2))
         except Exception: pass
-    return {"vpn": vpn, "internet": internet, "wifi": wifi, "iphone": iphone}
+    return {"vpn": vpn, "internet": internet, "wifi": wifi, "iphone": _iphone_presence()}
 
 
 def get_icon_status():

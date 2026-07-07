@@ -1,5 +1,5 @@
 [![License](https://img.shields.io/github/license/giovi321/ios-backup-machine)](LICENSE)
-![Version](https://img.shields.io/badge/version-4.3.1-brightgreen)
+![Version](https://img.shields.io/badge/version-4.4.0-brightgreen)
 [![Python 3.13](https://img.shields.io/badge/Python-3.13-blue?logo=python&logoColor=white)](https://www.python.org/downloads/release/python-3130/)
 [![Armbian](https://img.shields.io/badge/OS-Armbian-orange?logo=armbian)](https://www.armbian.com/radxa-zero-3/)
 ![Offline](https://img.shields.io/badge/network-optional-blue.svg)
@@ -50,7 +50,7 @@ All backups stay local on the microSD card and can be restored anytime using too
 - **Offline and independent**: no Apple ID, no iTunes, no Internet required.
 - **Solid**: file corruption is prevented by a small UPS.
 - **Web UI**: configure all settings from a browser.
-- **Status icons**: every e-ink screen shows power, VPN, internet, WiFi and iPhone-hotspot indicators at a glance (crossed out when inactive).
+- **Status icons**: every e-ink screen shows power, VPN, internet, WiFi and iPhone indicators at a glance. The iPhone icon is three-state (absent / plugged-but-untrusted / trusted).
 - **Multi-network WiFi**: configure several networks (each with a nickname); the device roams to whichever is in range, managed through netplan + wpa_supplicant.
 - **NTP sync**: auto-syncs clock when internet is available (WiFi or USB iPhone hotspot).
 - **Notifications**: webhook and MQTT alerts for backup events.
@@ -82,7 +82,12 @@ All backups stay local on the microSD card and can be restored anytime using too
 - **Power-off screen**: owner info only (persists on e-paper after shutdown).
 
 ### Status icons
-Every live screen (boot/idle, backup, sync, info, interrupted, complete) draws a row of status icons in the bottom-left corner: **power** (always on), **VPN**, **internet**, **WiFi**, and **iPhone hotspot**. Each network icon is crossed out with a "/" when that connection is inactive, so the device's connectivity is readable at a glance. The state is sampled in the background and never blocks or overlaps the screen text. (The power-off owner screen omits the row.)
+Every live screen (boot/idle, backup, sync, info, interrupted, complete) draws a row of status icons in the bottom-left corner: **power** (always on), **VPN**, **internet**, **WiFi**, and **iPhone**. The VPN / internet / WiFi icons are crossed out with a "/" when inactive. The **iPhone** icon has three states so the trust state (which udid-mode decryption depends on) is visible at a glance:
+- crossed out: no iPhone seen on USB
+- closed padlock: iPhone plugged but not readable yet (Trust not granted, or the phone is locked)
+- checkmark: iPhone plugged and trusted (lockdown readable, so the WireGuard config can be decrypted)
+
+The state is sampled in the background and never blocks or overlaps the screen text. (The power-off owner screen omits the row.)
 
 ### UPS integration
 - **Battery protection**: backup stops cleanly if battery <30%.  
@@ -562,7 +567,7 @@ Sync backups to a remote server via **rsync over SSH**. Supports SSH key and pas
 {
   "status": "ok",                       // ok | warning | error (rollup)
   "warnings": [],
-  "version": "4.3.1",
+  "version": "4.4.0",
   "time": "2026-05-30T11:13:31",
   "services": { "iosbackupmachine": "active", "webui": "active",
                 "pisugar-server": "active", "usbmuxd": "active" },
