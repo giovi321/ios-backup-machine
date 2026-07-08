@@ -1,2 +1,2 @@
 # Test-only dependencies. Runtime deps are in requirements.txt.
-pytest>=7
+pytest>=9.1.1
