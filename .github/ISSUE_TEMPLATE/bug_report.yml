@@ -1,0 +1,67 @@
+name: Bug report
+description: Something is broken or behaves unexpectedly.
+title: "[bug] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Do not include secrets, backup passwords,
+        or WireGuard/SSH credentials in this issue. If the problem is a
+        security vulnerability, report it via
+        [Security Advisories](https://github.com/giovi321/ios-backup-machine/security/advisories/new)
+        instead.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: A concise description of the problem.
+      placeholder: When I do X, Y happens instead of Z.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Numbered list of steps that trigger the problem.
+      placeholder: |
+        1. Go to ...
+        2. Plug in ...
+        3. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: The version shown in the web UI, or the git commit.
+      placeholder: "4.4.3 or git sha"
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Lines from /var/lib/iosbackupmachine/ or the web UI Logs page. Redact anything sensitive.
+      render: shell
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Confirmations
+      options:
+        - label: I searched existing issues and did not find a duplicate.
+          required: true
+        - label: This is not a security vulnerability (those go via Security Advisories).
+          required: true

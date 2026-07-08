@@ -1,0 +1,69 @@
+---
+import Default from '@astrojs/starlight/components/Head.astro';
+---
+
+<Default><slot /></Default>
+
+<script>
+  function openLightbox(sourceEl: HTMLElement) {
+    const svg = sourceEl.querySelector('svg');
+    if (!svg) return;
+
+    const existing = document.querySelector('.diagram-lightbox');
+    if (existing) existing.remove();
+
+    const lightbox = document.createElement('div');
+    lightbox.className = 'diagram-lightbox';
+
+    const content = document.createElement('div');
+    content.className = 'diagram-lightbox-content';
+
+    const clone = svg.cloneNode(true) as SVGElement;
+    clone.removeAttribute('width');
+    clone.removeAttribute('height');
+    if (!clone.hasAttribute('viewBox')) {
+      const w = svg.getAttribute('width') || svg.getBoundingClientRect().width || 1000;
+      const h = svg.getAttribute('height') || svg.getBoundingClientRect().height || 600;
+      clone.setAttribute('viewBox', `0 0 ${w} ${h}`);
+    }
+    clone.removeAttribute('style');
+    content.appendChild(clone);
+
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'diagram-lightbox-close';
+    closeBtn.textContent = '✕';
+    closeBtn.setAttribute('aria-label', 'Close');
+
+    lightbox.appendChild(content);
+    lightbox.appendChild(closeBtn);
+
+    const close = () => {
+      lightbox.remove();
+      document.body.classList.remove('diagram-lightbox-open');
+      document.removeEventListener('keydown', onKey);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') close();
+    };
+
+    lightbox.addEventListener('click', (e) => {
+      if (e.target === lightbox) close();
+    });
+    closeBtn.addEventListener('click', close);
+    document.addEventListener('keydown', onKey);
+    document.body.classList.add('diagram-lightbox-open');
+    document.body.appendChild(lightbox);
+  }
+
+  function wireLightbox() {
+    const targets = document.querySelectorAll<HTMLElement>('.diagram-frame');
+    targets.forEach((el) => {
+      if (el.dataset.lightboxReady) return;
+      el.dataset.lightboxReady = '1';
+      el.addEventListener('click', () => openLightbox(el));
+    });
+  }
+
+  wireLightbox();
+  document.addEventListener('astro:page-load', wireLightbox);
+</script>

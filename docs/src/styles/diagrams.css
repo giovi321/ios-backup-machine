@@ -1,0 +1,118 @@
+/* Diagram frame (inline SVGs) */
+.diagram-frame {
+  position: relative;
+  background: #efeee5;
+  border: 1px solid rgba(28, 25, 23, 0.12);
+  border-radius: 8px;
+  padding: 1rem;
+  margin: 1.5rem 0;
+  overflow: hidden;
+  cursor: zoom-in;
+  transition: border-color 0.15s ease;
+}
+
+.diagram-frame:hover {
+  border-color: rgba(28, 25, 23, 0.4);
+}
+
+.diagram-frame::after {
+  content: "⤢";
+  position: absolute;
+  top: 0.4rem;
+  right: 0.6rem;
+  font-size: 14px;
+  line-height: 1;
+  color: rgba(28, 25, 23, 0.45);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.diagram-frame:hover::after {
+  opacity: 1;
+}
+
+.diagram-frame svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-width: 100%;
+}
+
+html[data-theme="dark"] .diagram-frame {
+  background: #2a2520;
+  border-color: rgba(250, 247, 242, 0.15);
+}
+
+html[data-theme="dark"] .diagram-frame::after {
+  color: rgba(250, 247, 242, 0.5);
+}
+
+/* Lightbox overlay */
+.diagram-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  background: rgba(10, 8, 6, 0.96);
+  cursor: zoom-out;
+  animation: diagram-fade 0.15s ease;
+}
+
+.diagram-lightbox-content {
+  position: relative;
+  width: min(94vw, 1600px);
+  max-height: 92vh;
+  background: #efeee5;
+  border-radius: 8px;
+  padding: 1.5rem;
+  overflow: auto;
+  cursor: default;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.diagram-lightbox-content svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: calc(92vh - 3rem);
+}
+
+.diagram-lightbox-close {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 50%;
+  background: #efeee5;
+  border: 1px solid rgba(28, 25, 23, 0.2);
+  color: #1c1917;
+  font-size: 1.1rem;
+  font-family: inherit;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  z-index: 1;
+}
+
+.diagram-lightbox-close:hover {
+  background: #ffffff;
+}
+
+@keyframes diagram-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+body.diagram-lightbox-open {
+  overflow: hidden;
+}

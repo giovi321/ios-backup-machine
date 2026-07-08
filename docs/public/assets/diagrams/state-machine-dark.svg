@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 940 600" width="940" height="600" font-family="'Geist', system-ui, sans-serif">
+  <defs>
+    <pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse">
+      <circle cx="1" cy="1" r="0.9" fill="rgba(241,239,231,0.10)"/>
+    </pattern>
+    <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#a8a69d"/></marker>
+    <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#ff6a30"/></marker>
+    <marker id="arrow-start" markerWidth="8" markerHeight="6" refX="1" refY="3" orient="auto"><polygon points="8 0, 0 3, 8 6" fill="#a8a69d"/></marker>
+  </defs>
+
+  <rect width="100%" height="100%" fill="#1c1a17"/>
+  <rect width="100%" height="100%" fill="url(#dots)" opacity="0.55"/>
+
+  <text x="32" y="36" fill="#a8a69d" font-size="11" font-family="'Geist Mono', monospace" letter-spacing="0.18em">STATE MACHINE · DISPLAY SERVICE</text>
+
+  <!-- ===== transitions (behind boxes) ===== -->
+  <!-- start -->
+  <circle cx="470" cy="22" r="5" fill="#f1efe7"/>
+  <line x1="470" y1="28" x2="470" y2="52" stroke="#a8a69d" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <!-- idle -> connected -->
+  <line x1="408" y1="124" x2="246" y2="176" stroke="#a8a69d" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <!-- connected -> backing_up -->
+  <line x1="216" y1="240" x2="216" y2="296" stroke="#a8a69d" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <!-- backing_up -> backup result (coral) -->
+  <line x1="216" y1="368" x2="216" y2="424" stroke="#ff6a30" stroke-width="1.4" marker-end="url(#arrow-accent)"/>
+  <!-- idle -> syncing -->
+  <line x1="532" y1="124" x2="698" y2="176" stroke="#a8a69d" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <!-- syncing -> sync result -->
+  <line x1="724" y1="240" x2="724" y2="296" stroke="#a8a69d" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <!-- idle <-> button_info -->
+  <line x1="470" y1="124" x2="470" y2="200" stroke="#a8a69d" stroke-width="1.2" marker-start="url(#arrow-start)" marker-end="url(#arrow)"/>
+  <!-- idle -> power-off (skirts left of button_info) -->
+  <path d="M 432 124 C 356 200, 356 300, 390 340" fill="none" stroke="#a8a69d" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
+  <!-- backup result -> idle (far-left return) -->
+  <path d="M 140 456 C 48 456, 48 88, 390 88" fill="none" stroke="#a8a69d" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
+  <!-- sync result -> idle (far-right return) -->
+  <path d="M 808 328 C 892 328, 892 88, 550 88" fill="none" stroke="#a8a69d" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
+
+  <!-- ===== transition labels (masked) ===== -->
+  <rect x="300" y="142" width="52" height="12" rx="2" fill="#1c1a17"/><text x="326" y="152" fill="#a8a69d" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">DEVICE</text>
+  <rect x="192" y="262" width="48" height="12" rx="2" fill="#1c1a17"/><text x="216" y="272" fill="#a8a69d" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">PAIR</text>
+  <rect x="180" y="390" width="72" height="12" rx="2" fill="#1c1a17"/><text x="216" y="400" fill="#ff6a30" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">DONE / STOP</text>
+  <rect x="592" y="142" width="44" height="12" rx="2" fill="#1c1a17"/><text x="614" y="152" fill="#a8a69d" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">SYNC</text>
+  <rect x="690" y="262" width="68" height="12" rx="2" fill="#1c1a17"/><text x="724" y="272" fill="#a8a69d" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">DONE / FAIL</text>
+  <rect x="478" y="156" width="56" height="12" rx="2" fill="#1c1a17"/><text x="506" y="166" fill="#a8a69d" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">TAP · 30s</text>
+  <rect x="318" y="234" width="64" height="12" rx="2" fill="#1c1a17"/><text x="350" y="244" fill="#a8a69d" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">SHUTDOWN</text>
+  <rect x="58" y="262" width="52" height="12" rx="2" fill="#1c1a17"/><text x="84" y="272" fill="#a8a69d" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">UNPLUG</text>
+  <rect x="836" y="204" width="48" height="12" rx="2" fill="#1c1a17"/><text x="860" y="214" fill="#a8a69d" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">EVENT</text>
+
+  <!-- ===== Boot / idle (hub) ===== -->
+  <rect x="390" y="52" width="160" height="72" rx="8" fill="#2a2723" stroke="#f1efe7" stroke-width="1"/>
+  <rect x="398" y="58" width="40" height="12" rx="2" fill="transparent" stroke="rgba(241,239,231,0.40)" stroke-width="0.8"/>
+  <text x="418" y="67" fill="#f1efe7" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">STATE</text>
+  <text x="470" y="92" fill="#f1efe7" font-size="13" font-weight="600" text-anchor="middle">Boot / idle</text>
+  <text x="470" y="108" fill="#a8a69d" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">owner + status</text>
+
+  <!-- ===== Connected ===== -->
+  <rect x="140" y="176" width="152" height="64" rx="8" fill="#2a2723" stroke="#f1efe7" stroke-width="1"/>
+  <rect x="148" y="182" width="40" height="12" rx="2" fill="transparent" stroke="rgba(241,239,231,0.40)" stroke-width="0.8"/>
+  <text x="168" y="191" fill="#f1efe7" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">STATE</text>
+  <text x="216" y="212" fill="#f1efe7" font-size="13" font-weight="600" text-anchor="middle">Connected</text>
+  <text x="216" y="228" fill="#a8a69d" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">device detected</text>
+
+  <!-- ===== Backing up (FOCAL) ===== -->
+  <rect x="140" y="296" width="160" height="72" rx="8" fill="rgba(255,106,48,0.08)" stroke="#ff6a30" stroke-width="1"/>
+  <rect x="148" y="302" width="40" height="12" rx="2" fill="transparent" stroke="rgba(255,106,48,0.50)" stroke-width="0.8"/>
+  <text x="168" y="311" fill="#ff6a30" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">STATE</text>
+  <text x="220" y="336" fill="#f1efe7" font-size="13" font-weight="600" text-anchor="middle">Backing up</text>
+  <text x="220" y="352" fill="#a8a69d" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">idevicebackup2 · %</text>
+
+  <!-- ===== Backup result (transient) ===== -->
+  <rect x="140" y="424" width="160" height="64" rx="8" fill="rgba(241,239,231,0.05)" stroke="#a8a69d" stroke-width="1"/>
+  <rect x="148" y="430" width="40" height="12" rx="2" fill="transparent" stroke="rgba(168,166,157,0.50)" stroke-width="0.8"/>
+  <text x="168" y="439" fill="#a8a69d" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">STATE</text>
+  <text x="220" y="460" fill="#f1efe7" font-size="13" font-weight="600" text-anchor="middle">Backup result</text>
+  <text x="220" y="476" fill="#a8a69d" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">complete · interrupted</text>
+
+  <!-- ===== Syncing ===== -->
+  <rect x="648" y="176" width="152" height="64" rx="8" fill="#2a2723" stroke="#f1efe7" stroke-width="1"/>
+  <rect x="656" y="182" width="40" height="12" rx="2" fill="transparent" stroke="rgba(241,239,231,0.40)" stroke-width="0.8"/>
+  <text x="676" y="191" fill="#f1efe7" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">STATE</text>
+  <text x="724" y="212" fill="#f1efe7" font-size="13" font-weight="600" text-anchor="middle">Syncing</text>
+  <text x="724" y="228" fill="#a8a69d" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">rsync · % · stall</text>
+
+  <!-- ===== Sync result (transient) ===== -->
+  <rect x="648" y="296" width="160" height="64" rx="8" fill="rgba(241,239,231,0.05)" stroke="#a8a69d" stroke-width="1"/>
+  <rect x="656" y="302" width="40" height="12" rx="2" fill="transparent" stroke="rgba(168,166,157,0.50)" stroke-width="0.8"/>
+  <text x="676" y="311" fill="#a8a69d" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">STATE</text>
+  <text x="728" y="332" fill="#f1efe7" font-size="13" font-weight="600" text-anchor="middle">Sync result</text>
+  <text x="728" y="348" fill="#a8a69d" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">complete · error</text>
+
+  <!-- ===== System info (transient) ===== -->
+  <rect x="390" y="200" width="160" height="56" rx="8" fill="rgba(241,239,231,0.05)" stroke="#a8a69d" stroke-width="1"/>
+  <rect x="398" y="206" width="40" height="12" rx="2" fill="transparent" stroke="rgba(168,166,157,0.50)" stroke-width="0.8"/>
+  <text x="418" y="215" fill="#a8a69d" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">STATE</text>
+  <text x="470" y="232" fill="#f1efe7" font-size="12" font-weight="600" text-anchor="middle">System info</text>
+  <text x="470" y="246" fill="#a8a69d" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">single-tap · 30s</text>
+
+  <!-- ===== Power-off (terminal) ===== -->
+  <rect x="390" y="320" width="160" height="56" rx="8" fill="rgba(241,239,231,0.03)" stroke="rgba(241,239,231,0.30)" stroke-width="1"/>
+  <rect x="398" y="326" width="40" height="12" rx="2" fill="transparent" stroke="rgba(241,239,231,0.22)" stroke-width="0.8"/>
+  <text x="418" y="335" fill="#8e8c83" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">EXIT</text>
+  <text x="470" y="352" fill="#f1efe7" font-size="12" font-weight="600" text-anchor="middle">Power-off</text>
+  <text x="470" y="366" fill="#a8a69d" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">owner screen</text>
+
+  <!-- ===== legend strip ===== -->
+  <line x1="32" y1="528" x2="908" y2="528" stroke="rgba(241,239,231,0.10)" stroke-width="0.8"/>
+  <text x="32" y="544" fill="#a8a69d" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.18em">LEGEND</text>
+
+  <rect x="32" y="560" width="14" height="10" rx="2" fill="#2a2723" stroke="#f1efe7" stroke-width="1"/>
+  <text x="52" y="568" fill="#a8a69d" font-size="8.5">State</text>
+
+  <rect x="116" y="560" width="14" height="10" rx="2" fill="rgba(255,106,48,0.08)" stroke="#ff6a30" stroke-width="1"/>
+  <text x="136" y="568" fill="#a8a69d" font-size="8.5">Backing up (focal)</text>
+
+  <rect x="276" y="560" width="14" height="10" rx="2" fill="rgba(241,239,231,0.05)" stroke="#a8a69d" stroke-width="1"/>
+  <text x="296" y="568" fill="#a8a69d" font-size="8.5">Result / transient</text>
+
+  <rect x="424" y="560" width="14" height="10" rx="2" fill="rgba(241,239,231,0.03)" stroke="rgba(241,239,231,0.30)" stroke-width="1"/>
+  <text x="444" y="568" fill="#a8a69d" font-size="8.5">Power-off</text>
+
+  <line x1="528" y1="566" x2="556" y2="566" stroke="#a8a69d" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <text x="564" y="568" fill="#a8a69d" font-size="8.5">Transition</text>
+
+  <line x1="664" y1="566" x2="692" y2="566" stroke="#a8a69d" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
+  <text x="700" y="568" fill="#a8a69d" font-size="8.5">Return to idle</text>
+</svg>

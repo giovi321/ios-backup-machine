@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="256" height="256">
+  <!-- ios-backup-machine logo - https://github.com/giovi321/ios-backup-machine -->
+  <!-- Based on apple-juicer logo style with downward arrow instead of drop -->
+  <defs>
+    <clipPath id="rounded">
+      <rect x="0" y="0" width="100" height="100" rx="6" ry="6"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#rounded)">
+    <rect x="0" y="0"        width="100" height="16.6667" fill="#5EBD3E"/>
+    <rect x="0" y="16.6667"  width="100" height="16.6667" fill="#FFB900"/>
+    <rect x="0" y="33.3334"  width="100" height="16.6667" fill="#F78200"/>
+    <rect x="0" y="50"       width="100" height="16.6667" fill="#E23838"/>
+    <rect x="0" y="66.6667"  width="100" height="16.6667" fill="#973999"/>
+    <rect x="0" y="83.3334"  width="100" height="16.6666" fill="#009CDF"/>
+  </g>
+
+  <!-- centered white downward arrow -->
+  <line x1="50" y1="22" x2="50" y2="72" stroke="#FFFFFF" stroke-width="8" stroke-linecap="round"/>
+  <polyline points="32,56 50,76 68,56" stroke="#FFFFFF" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>
