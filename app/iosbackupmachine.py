@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import os, re, sys, time, json, glob, signal, subprocess, threading, socket
+import os, re, sys, time, json, glob, signal, subprocess, threading
 from datetime import datetime
 from periphery.gpio import GPIOError
 
@@ -43,6 +43,7 @@ STATUS_FILE = os.path.join(RUNTIME_DIR, "backup_status.json")
 # be started/stopped by restarting its service — that would kill the EPD owner).
 START_FILE = os.path.join(RUNTIME_DIR, "start_requested")   # force a backup (auto-start off)
 STOP_FILE = os.path.join(RUNTIME_DIR, "stop_requested")     # abort the current backup
+INFO_FILE = os.path.join(RUNTIME_DIR, "info_requested")     # single-tap -> show system-info screen
 IDLE_REFRESH_SEC = 4
 WG_RECONCILE_SEC = 10   # how often the WireGuard auto-connect watcher re-checks
 WG_HANDSHAKE_GRACE_SEC = 45   # tolerate 'up but no handshake yet' this long before re-connecting
@@ -956,6 +957,62 @@ def device_present():
     return bool(get_connected_udids())
 
 
+def _kernel_sees_apple_usb():
+    """True if the kernel has enumerated an Apple USB device (vendor 05ac),
+    regardless of whether usbmuxd has noticed it. Reads sysfs directly so it
+    doesn't depend on usbmux (which is exactly what may be stuck)."""
+    try:
+        for vid_path in glob.glob("/sys/bus/usb/devices/*/idVendor"):
+            try:
+                with open(vid_path) as f:
+                    if f.read().strip().lower() == "05ac":
+                        return True
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return False
+
+
+_last_usbmux_refresh = 0.0
+USBMUX_REFRESH_MIN_INTERVAL = 20   # never restart usbmuxd more often than this
+
+def _maybe_refresh_usbmux(logf=None, udids_seen=None):
+    """Work around the usbmuxd libusb-hotplug gap on this ARM image: usbmuxd runs
+    persistently but doesn't get hotplug events, so an iPhone plugged after boot
+    stays invisible to idevice_* (idevice_id -l empty) until usbmuxd is restarted.
+
+    When the kernel sees an Apple device (sysfs) but usbmux does not, restart
+    usbmuxd so the device becomes visible. Guarded so it can't misfire: never
+    during a backup, only when a device is genuinely present-but-invisible, and
+    rate-limited so a locked/again-empty poll can't cause a restart storm.
+
+    Pass udids_seen (from a device_allowed() call) to avoid a redundant
+    idevice_id -l spawn; omit it and this probes usbmux itself."""
+    global _last_usbmux_refresh
+    if _backup_running:
+        return
+    if udids_seen is None:
+        udids_seen = get_connected_udids()
+    if udids_seen:
+        return   # usbmux already sees a device
+    if not _kernel_sees_apple_usb():
+        return   # no Apple device plugged -> the empty list is correct
+    now = time.time()
+    if now - _last_usbmux_refresh < USBMUX_REFRESH_MIN_INTERVAL:
+        return
+    _last_usbmux_refresh = now
+    if logf:
+        logf.write("[USBMUX] Apple device in sysfs but idevice_id -l empty; "
+                   "restarting usbmuxd (hotplug re-scan)\n")
+        logf.flush()
+    try:
+        subprocess.run(["systemctl", "restart", "usbmuxd"],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)
+    except Exception:
+        pass
+
+
 def _sync_running():
     """True if a remote sync (backup-sync.py) is active — used to keep a backup
     and a sync mutually exclusive (never run both / show both)."""
@@ -1435,31 +1492,34 @@ _backup_running = False
 _button_info_until = 0.0    # while now() < this, the main loop leaves the info screen up
 
 def _pisugar_button_listener(ui):
-    """Listen for the PiSugar single-tap and show the system-info screen for 30s.
-    Skipped while a backup or sync is active so their progress isn't covered;
-    the main loop reverts to the boot/idle screen once the 30s window elapses."""
+    """Show the system-info screen for 30s on a PiSugar single-tap.
+
+    PiSugar signals the tap by running single_tap_shell, which touches INFO_FILE
+    (the same flag-file mechanism the double-tap uses for start_requested). We
+    watch for that flag here instead of polling the pisugar socket: pisugar-server
+    has no 'get button_press' query — it answers 'Invalid request.' — so the old
+    socket poll never fired. Skipped while a backup or sync is active so their
+    progress isn't covered; the main loop reverts to the idle screen after 30s."""
     global _button_info_until
     while True:
         try:
-            s = socket.create_connection(("127.0.0.1", 8423), timeout=5)
-            s.sendall(b"get button_press single\n")
-            time.sleep(0.3)
-            resp = s.recv(256).decode(errors="replace").strip()
-            s.close()
-            if "single" in resp.lower() and "true" in resp.lower():
+            if os.path.exists(INFO_FILE):
+                try:
+                    os.remove(INFO_FILE)   # consume the request
+                except Exception:
+                    pass
                 try:
                     with open(STATUS_FILE, "r") as _sf:
                         _state = json.load(_sf).get("state")
                 except Exception:
                     _state = None
-                if _state in ("syncing", "backing_up", "connected"):
-                    continue   # don't cover active backup/sync progress
-                _button_info_until = time.time() + 30
-                ui.set(screen="info", info_lines=build_button_info_lines(),
-                       percent=None, animate=False, show_header=False)
+                if _state not in ("syncing", "backing_up", "connected"):
+                    _button_info_until = time.time() + 30
+                    ui.set(screen="info", info_lines=build_button_info_lines(),
+                           percent=None, animate=False, show_header=False)
         except Exception:
             pass
-        time.sleep(1)
+        time.sleep(0.5)
 
 
 def _status_icon_updater(ui):
@@ -1753,6 +1813,13 @@ def main():
                 allowed, udid, reason = device_allowed()
             else:
                 allowed, udid, reason = False, None, "setup_pending"
+
+            # usbmuxd hotplug workaround: device_allowed() found no device, but the
+            # phone may be plugged and just invisible to usbmux (plugged after boot).
+            # Restart usbmuxd so it appears. Rate-limited, skipped during a backup;
+            # udids_seen=[] reuses the empty result above (no extra idevice_id spawn).
+            if reason == "no_device":
+                _maybe_refresh_usbmux(logf, udids_seen=[])
 
             # Manual start forces a backup when auto-start is off (still honours the
             # device filter — won't override a rejected device).

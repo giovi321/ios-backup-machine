@@ -7,7 +7,7 @@
   "auto_wake_time": null,
   "auto_wake_repeat": 0,
   "single_tap_enable": true,
-  "single_tap_shell": "",
+  "single_tap_shell": "/usr/bin/touch /var/log/iosbackupmachine/info_requested",
   "double_tap_enable": true,
   "double_tap_shell": "/usr/bin/touch /var/log/iosbackupmachine/start_requested",
   "long_tap_enable": true,

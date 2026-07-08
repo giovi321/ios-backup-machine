@@ -1,5 +1,5 @@
 [![License](https://img.shields.io/github/license/giovi321/ios-backup-machine)](LICENSE)
-![Version](https://img.shields.io/badge/version-4.4.1-brightgreen)
+![Version](https://img.shields.io/badge/version-4.4.2-brightgreen)
 [![Python 3.13](https://img.shields.io/badge/Python-3.13-blue?logo=python&logoColor=white)](https://www.python.org/downloads/release/python-3130/)
 [![Armbian](https://img.shields.io/badge/OS-Armbian-orange?logo=armbian)](https://www.armbian.com/radxa-zero-3/)
 ![Offline](https://img.shields.io/badge/network-optional-blue.svg)
@@ -567,7 +567,7 @@ Sync backups to a remote server via **rsync over SSH**. Supports SSH key and pas
 {
   "status": "ok",                       // ok | warning | error (rollup)
   "warnings": [],
-  "version": "4.4.1",
+  "version": "4.4.2",
   "time": "2026-05-30T11:13:31",
   "services": { "iosbackupmachine": "active", "webui": "active",
                 "pisugar-server": "active", "usbmuxd": "active" },
