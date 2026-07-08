@@ -375,15 +375,18 @@ def get_connection_line():
     return "Net: none"
 
 
-def _ts_hhmm(iso):
+def _ts_full(iso):
+    """Format an ISO timestamp exactly like the last-backup line ('%H:%M / %d %b
+    %Y'), so the Sync line matches the Backup line on the info screen."""
     try:
-        return datetime.fromisoformat(iso).strftime("%H:%M")
+        return datetime.fromisoformat(iso).strftime("%H:%M / %d %b %Y")
     except Exception:
         return ""
 
 
 def get_last_sync_str():
-    """Last/current remote-sync result for the info screen."""
+    """Last/current remote-sync result for the info screen. The timestamp is
+    formatted like get_last_backup_str() so both lines read consistently."""
     try:
         with open(STATUS_FILE, "r") as f:
             st = json.load(f)
@@ -391,16 +394,16 @@ def get_last_sync_str():
         if state == "syncing":
             return "running"
         if state == "sync_complete":
-            return ("OK " + _ts_hhmm(st.get("timestamp"))).strip()
+            return ("OK " + _ts_full(st.get("timestamp"))).strip()
         if state == "sync_error":
-            return ("failed " + _ts_hhmm(st.get("timestamp"))).strip()
+            return ("failed " + _ts_full(st.get("timestamp"))).strip()
     except Exception:
         pass
     try:
         logs = glob.glob(os.path.join(LOG_DIR, "sync-*.log"))
         if logs:
             newest = max(logs, key=os.path.getmtime)
-            return time.strftime("%H:%M %d %b", time.localtime(os.path.getmtime(newest)))
+            return time.strftime("%H:%M / %d %b %Y", time.localtime(os.path.getmtime(newest)))
     except Exception:
         pass
     return "none"
@@ -957,54 +960,84 @@ def device_present():
     return bool(get_connected_udids())
 
 
-def _kernel_sees_apple_usb():
-    """True if the kernel has enumerated an Apple USB device (vendor 05ac),
-    regardless of whether usbmuxd has noticed it. Reads sysfs directly so it
-    doesn't depend on usbmux (which is exactly what may be stuck)."""
+def _apple_usb_signature():
+    """Identity of the Apple USB device(s) the kernel has enumerated (vendor
+    05ac), read straight from sysfs so it doesn't depend on usbmux — which is
+    exactly what may be stuck. The signature folds in fields that change when the
+    phone re-enumerates (a fresh plug, or iOS bringing the data interface up when
+    you unlock a phone that was in USB Restricted Mode), so those transitions are
+    detected as a change. Empty string means no Apple device is plugged."""
+    sigs = []
     try:
         for vid_path in glob.glob("/sys/bus/usb/devices/*/idVendor"):
             try:
                 with open(vid_path) as f:
-                    if f.read().strip().lower() == "05ac":
-                        return True
+                    if f.read().strip().lower() != "05ac":
+                        continue
             except Exception:
                 continue
+            dev = os.path.dirname(vid_path)
+            parts = [os.path.basename(dev)]
+            for attr in ("devnum", "bNumInterfaces", "bConfigurationValue"):
+                try:
+                    with open(os.path.join(dev, attr)) as f:
+                        parts.append(f.read().strip())
+                except Exception:
+                    parts.append("?")
+            sigs.append(":".join(parts))
     except Exception:
         pass
-    return False
+    return ",".join(sorted(sigs))
 
 
 _last_usbmux_refresh = 0.0
-USBMUX_REFRESH_MIN_INTERVAL = 20   # never restart usbmuxd more often than this
+_last_apple_sig = None
+_usbmux_backoff = 0.0
+USBMUX_BACKOFF_MIN = 8      # first retry gap for a device that stays invisible
+USBMUX_BACKOFF_MAX = 120    # cap, so a phone left plugged+locked doesn't spam restarts/logs
 
 def _maybe_refresh_usbmux(logf=None, udids_seen=None):
     """Work around the usbmuxd libusb-hotplug gap on this ARM image: usbmuxd runs
     persistently but doesn't get hotplug events, so an iPhone plugged after boot
     stays invisible to idevice_* (idevice_id -l empty) until usbmuxd is restarted.
 
-    When the kernel sees an Apple device (sysfs) but usbmux does not, restart
-    usbmuxd so the device becomes visible. Guarded so it can't misfire: never
-    during a backup, only when a device is genuinely present-but-invisible, and
-    rate-limited so a locked/again-empty poll can't cause a restart storm.
+    Restart usbmuxd so the device becomes visible whenever the kernel sees an
+    Apple device but usbmux does not. Handles every plug/lock order:
+      - a fresh plug, or a re-enumeration (iOS bringing the data interface up when
+        you unlock a phone that was in USB Restricted Mode) changes the sysfs
+        signature -> restart immediately and reset the backoff.
+      - a device that stays invisible (still locked/restricted) is retried with
+        exponential backoff (8s, 16s, ... capped at 120s), so unlocking it later
+        is picked up quickly without a restart/log storm if it's left locked.
+    Once the device is visible we stop; never restarts during a backup (that
+    would drop idevicebackup2's usbmux session).
 
     Pass udids_seen (from a device_allowed() call) to avoid a redundant
     idevice_id -l spawn; omit it and this probes usbmux itself."""
-    global _last_usbmux_refresh
+    global _last_usbmux_refresh, _last_apple_sig, _usbmux_backoff
     if _backup_running:
         return
     if udids_seen is None:
         udids_seen = get_connected_udids()
     if udids_seen:
-        return   # usbmux already sees a device
-    if not _kernel_sees_apple_usb():
-        return   # no Apple device plugged -> the empty list is correct
-    now = time.time()
-    if now - _last_usbmux_refresh < USBMUX_REFRESH_MIN_INTERVAL:
+        return   # usbmux already sees a device -> nothing to do
+    sig = _apple_usb_signature()
+    if not sig:
+        _last_apple_sig = None    # no Apple device -> the empty list is correct
         return
+    now = time.time()
+    changed = (sig != _last_apple_sig)
+    if changed:
+        _usbmux_backoff = USBMUX_BACKOFF_MIN
+    elif (now - _last_usbmux_refresh) < _usbmux_backoff:
+        return   # same stuck device, still backing off
+    else:
+        _usbmux_backoff = min(_usbmux_backoff * 2, USBMUX_BACKOFF_MAX)
+    _last_apple_sig = sig
     _last_usbmux_refresh = now
     if logf:
-        logf.write("[USBMUX] Apple device in sysfs but idevice_id -l empty; "
-                   "restarting usbmuxd (hotplug re-scan)\n")
+        logf.write("[USBMUX] Apple device in sysfs but idevice_id -l empty "
+                   f"({'new/changed' if changed else 'retry'}); restarting usbmuxd\n")
         logf.flush()
     try:
         subprocess.run(["systemctl", "restart", "usbmuxd"],
