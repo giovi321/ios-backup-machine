@@ -18,6 +18,11 @@ updates:
       docs:
         patterns: ["*"]
         update-types: ["minor", "patch"]
+    # Major bumps of Astro or Starlight are deliberate migrations, not
+    # background updates, so leave them to a manual version bump.
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: github-actions
     directory: "/"
