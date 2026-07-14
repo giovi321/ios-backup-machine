@@ -21,6 +21,7 @@ autostart/update) are size-capped by logrotate, not by this module.
 import os
 import glob
 import time
+from datetime import datetime
 
 # Persistent: survives reboots and power loss.
 LOG_DIR = os.getenv("IOSBACKUP_LOG_DIR", "/var/lib/iosbackupmachine")
@@ -31,6 +32,66 @@ RUNTIME_DIR = os.getenv("IOSBACKUP_RUNTIME_DIR", "/var/log/iosbackupmachine")
 LOG_KEEP_PER_KIND = int(os.getenv("IOSBACKUP_LOG_KEEP", "50"))
 LOG_MAX_AGE_DAYS = int(os.getenv("IOSBACKUP_LOG_MAX_AGE_DAYS", "90"))
 _PRUNE_PREFIXES = ("backup-", "sync-")
+
+
+class TimestampedLog:
+    """Line-timestamping wrapper around a text log file.
+
+    Prefixes every complete line written to it with a wall-clock
+    ``[YYYY-MM-DD HH:MM:SS]`` stamp, so per-run logs (backup-*/sync-*) are
+    correlatable with each other and with the continuous logs
+    (autostart/ntp/webui) instead of carrying only rsync's elapsed-seconds
+    counter. Callers write whole lines (each ending in ``\\n``); the stamp is
+    applied per line, so a single multi-line write is handled too. A partial
+    trailing line, if any, is flushed with a stamp on close.
+    """
+
+    def __init__(self, fh):
+        self._fh = fh
+        self._buf = ""
+
+    @staticmethod
+    def _stamp():
+        return datetime.now().strftime("[%Y-%m-%d %H:%M:%S] ")
+
+    def write(self, text):
+        if not text:
+            return
+        self._buf += text
+        while "\n" in self._buf:
+            line, self._buf = self._buf.split("\n", 1)
+            self._fh.write(self._stamp() + line + "\n")
+
+    def flush(self):
+        try:
+            self._fh.flush()
+        except Exception:
+            pass
+
+    def close(self):
+        if self._buf:
+            try:
+                self._fh.write(self._stamp() + self._buf)
+            except Exception:
+                pass
+            self._buf = ""
+        try:
+            self._fh.close()
+        except Exception:
+            pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+
+def open_run_log(path, mode="a"):
+    """Open a per-run log line-buffered and wrap it so every written line is
+    wall-clock timestamped. Returns a TimestampedLog (write/flush/close, and
+    usable as a context manager)."""
+    return TimestampedLog(open(path, mode, buffering=1))
 
 
 def prune_logs(log_dir=None, keep_per_kind=None, max_age_days=None):

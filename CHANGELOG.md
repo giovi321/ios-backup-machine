@@ -4,6 +4,25 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses a
 single version constant in `app/webui.py`.
 
+## [4.4.4] - 2026-07-14
+
+### Fixed
+
+- A completed sync could be reported as failed with `rsync failed (exit None)`.
+  The read loop broke on the output pipe's EOF before it ever reaped rsync, so
+  the exit code was still unset when it was checked. rsync is now reaped after
+  the loop, so the real exit status is used and a clean exit-0 is no longer
+  misreported. This was a race, so it surfaced intermittently.
+
+### Changed
+
+- Sync logs are now wall-clock timestamped (`[YYYY-MM-DD HH:MM:SS]` per line),
+  matching the continuous logs, instead of carrying only rsync's elapsed-seconds
+  counter. Applies to both auto-sync and manual sync.
+- A failed sync names the reason: the log and status now read e.g. `rsync failed
+  (exit 255: SSH/connection error ...)` or `killed by signal 9`, instead of a
+  bare exit number.
+
 ## [4.4.3] - 2026-07-08
 
 ### Fixed

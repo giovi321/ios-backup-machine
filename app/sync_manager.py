@@ -192,6 +192,33 @@ def _cleanup_key(key_file):
 
 _PROGRESS_RE = re.compile(r"([\d,]+)\s+(\d+)%\s+([\d.]+[kKMGT]?B/s)")
 
+# rsync exit codes (see rsync(1)), mapped to a short human reason so the log's
+# failure line is self-explanatory instead of a bare number.
+_RSYNC_EXIT = {
+    1: "syntax or usage error",
+    2: "protocol incompatibility",
+    3: "errors selecting input/output files or dirs",
+    5: "error starting client-server protocol",
+    10: "error in socket I/O",
+    11: "error in file I/O",
+    12: "error in rsync protocol data stream (connection likely dropped)",
+    22: "error allocating core memory buffers",
+    23: "partial transfer due to error",
+    24: "partial transfer due to vanished source files",
+    30: "timeout in data send/receive",
+    35: "timeout waiting for daemon connection",
+    255: "SSH/connection error (host unreachable, auth, or link dropped)",
+}
+
+
+def _rsync_exit_detail(rc):
+    """Human-readable reason for an rsync return code (or signal / missing status)."""
+    if rc is None:
+        return "no exit status (rsync output closed before it was reaped)"
+    if rc < 0:
+        return f"killed by signal {-rc}"
+    return _RSYNC_EXIT.get(rc, "see rsync(1) exit codes")
+
 
 def parse_progress_line(text):
     """Parse an rsync ``--info=progress2`` chunk.
@@ -477,6 +504,17 @@ def run_sync_with_progress(passphrase=None, backup_dir=None, on_progress=None, l
             except Exception:
                 pass
 
+        # The read loop can break on EOF (os.read -> b"") or OSError before the
+        # top-of-loop proc.poll() ever observes the child's exit, leaving
+        # proc.returncode == None. Reap it here so we report the real exit status
+        # instead of a useless "exit None" — and so a clean exit-0 that happened
+        # to end via the EOF path isn't misreported as a failure.
+        if proc.returncode is None:
+            try:
+                proc.wait(timeout=10)
+            except Exception:
+                pass
+
         duration = time.time() - start
 
         if killed_for_battery:
@@ -505,8 +543,12 @@ def run_sync_with_progress(passphrase=None, backup_dir=None, on_progress=None, l
                 })
             return {"success": True, "message": f"Sync complete ({duration:.0f}s).", "duration": duration}
         else:
-            # stderr was merged into stdout and written to log_file already
-            return {"success": False, "message": f"rsync failed (exit {proc.returncode}). See sync log.", "duration": duration}
+            # stderr was merged into stdout and written to log_file already;
+            # the caller logs this message (with the code + reason) to the log.
+            rc = proc.returncode
+            return {"success": False,
+                    "message": f"rsync failed (exit {rc}: {_rsync_exit_detail(rc)}). See sync log.",
+                    "duration": duration}
     except subprocess.TimeoutExpired:
         proc.kill()
         return {"success": False, "message": "Sync timed out (1h limit).", "duration": time.time() - start}

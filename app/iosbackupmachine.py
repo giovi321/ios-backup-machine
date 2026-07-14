@@ -1427,8 +1427,8 @@ def run_backup(panel, logf, ui, _retry=0):
             sync_ts = datetime.now().strftime("%Y%m%d-%H%M%S")
             sync_logpath = os.path.join(LOG_DIR, f"sync-{sync_ts}.log")
             try:
-                synclogf = open(sync_logpath, "a", buffering=1)
-                synclogf.write(f"[{sync_ts}] auto-sync after backup\n")
+                synclogf = logutil.open_run_log(sync_logpath)
+                synclogf.write("auto-sync after backup\n")
                 logutil.prune_logs()   # trim old per-run logs (count + age)
             except Exception:
                 synclogf = None

@@ -121,14 +121,14 @@ os.makedirs(LOG_DIR, exist_ok=True)
 ts = datetime.now().strftime("%Y%m%d-%H%M%S")
 logpath = os.path.join(LOG_DIR, f"sync-{ts}.log")
 try:
-    logf = open(logpath, "a", buffering=1)
+    logf = logutil.open_run_log(logpath)
     logutil.prune_logs()   # trim old per-run logs (count + age)
 except Exception as e:
     print(f"[FATAL] cannot open {logpath}: {e}", file=sys.stderr)
     write_status("sync_error", message=f"Cannot write log: {e}")
     sys.exit(1)
 
-logf.write(f"[{ts}] backup-sync.py starting (pid={os.getpid()})\n")
+logf.write(f"backup-sync.py starting (pid={os.getpid()})\n")
 
 # ---------- Guards ----------
 if not CFG.get("sync", {}).get("enabled", False):
