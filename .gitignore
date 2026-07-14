@@ -41,3 +41,4 @@ sync-key-backup.txt
 
 # IDE / tool local data
 .claude/
+.impeccable/
