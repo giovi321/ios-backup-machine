@@ -71,7 +71,9 @@ During the initial file-list scan (rsync `--no-inc-recursive`) you see "Building
 
 ## Stall detection
 
-If rsync produces no output for 2 minutes, the dashboard shows a yellow "Stalled" badge and the e-ink switches to "Sync STALLED". After 15 minutes without progress the sync is auto-aborted with a `sync_error`.
+Once the transfer is running, rsync going quiet for 5 minutes puts a yellow "Stalled" badge on the dashboard and switches the e-ink to "Sync STALLED". After 30 minutes without output the sync is auto-aborted with a `sync_error` reading "Sync stalled 30 min, aborted.". The thresholds are deliberately generous: on a backup of many small files over SSH, rsync can legitimately go quiet for minutes at a time between bursts.
+
+The file-list scan has its own limit, because it produces no progress output at all: if rsync writes nothing for 30 minutes during that phase, the sync is aborted with "No progress 30 min, aborted.".
 
 ## Cancelling
 
