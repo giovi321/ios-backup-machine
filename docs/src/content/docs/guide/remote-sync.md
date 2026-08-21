@@ -67,7 +67,7 @@ If your sync depends on the tunnel, see [WireGuard VPN](../wireguard-vpn/); for 
 
 The e-paper screen and the web dashboard show transferred / total size, current speed, percentage, and a progress bar. Sizes auto-scale across KB, MB, GB, and TB.
 
-During the initial file-list scan (rsync `--no-inc-recursive`) you see "Building file list (Xs)" instead of fake progress, because rsync has not yet computed the total.
+During the initial file-list scan (rsync `--no-inc-recursive`) you see "Building file list (Xs)" instead of fake progress, because rsync has not yet computed the total. The total size is measured by walking the backup directory while that scan runs, so it is a real figure rather than one inferred from rsync's rounded percentage, and it does not drift during the transfer.
 
 ## Stall detection
 

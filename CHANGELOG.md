@@ -4,6 +4,28 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses a
 single version constant in `app/webui.py`.
 
+## [4.5.1] - 2026-08-21
+
+### Fixed
+
+- The sync screen showed a total size that kept moving up and down for the
+  whole transfer. rsync's `--info=progress2` reports only an integer
+  percentage, and the total was back-computed from it as `bytes * 100 / pct`,
+  so the figure climbed while the transferred bytes grew inside one percent
+  bucket and dropped again each time the percentage ticked over - an error of
+  up to `total/pct`, so roughly a factor of two at 1% and still a few percent
+  at half way. The real total is now measured by walking the backup directory
+  on a background thread while rsync builds its own file list, so it is
+  normally exact from the first progress update and never moves afterwards.
+  The old estimate is kept only as a fallback for the case where the walk
+  fails or has not finished yet.
+- Progress on the e-ink and the dashboard lagged behind the transfer. rsync
+  separates its progress samples with CR, not LF, so a single read of the pipe
+  holds a burst of ten or more of them; the parser took the first and dropped
+  the rest, then took the first of the next burst. It now takes the newest
+  sample in each burst, so the bytes, percentage and speed on screen are
+  current.
+
 ## [4.5.0] - 2026-08-21
 
 ### Added

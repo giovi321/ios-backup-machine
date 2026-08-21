@@ -7,7 +7,7 @@ Credentials are decrypted from the encrypted sync config store.
 When the config carries a host_key_fingerprint, the server's SSH host key is
 verified and pinned before anything is transferred (see host_key.py).
 """
-import os, sys, re, select, socket, subprocess, tempfile, time, yaml
+import fnmatch, os, sys, re, select, socket, subprocess, tempfile, threading, time, yaml
 
 import host_key
 import sync_crypto
@@ -18,6 +18,14 @@ except ImportError:
     power = None
 
 CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/iosbackupmachine/config.yaml")
+
+# Destination-managed metadata the source never has. Excluded from the transfer
+# so --delete doesn't try (and fail, noisily) to remove the remote's Syncthing
+# markers / lost+found, and excluded from local_tree_size() so the progress
+# denominator counts the same files rsync does.
+DEST_ONLY_EXCLUDES = (".stfolder", ".stignore", ".stversions", ".stglobalstate",
+                      ".stfolder/**", "~syncthing~*.tmp", ".syncthing.*.tmp",
+                      "lost+found")
 
 
 def _load_config():
@@ -171,8 +179,7 @@ def _prepare_sync(passphrase=None, backup_dir=None, progress=False):
     # Leave destination-managed metadata alone. The source never has these, so
     # without excluding them --delete tries (and fails, noisily) to remove the
     # remote's Syncthing markers / lost+found — e.g. a Syncthing-managed target.
-    for _pat in (".stfolder", ".stignore", ".stversions", ".stglobalstate",
-                 ".stfolder/**", "~syncthing~*.tmp", ".syncthing.*.tmp", "lost+found"):
+    for _pat in DEST_ONLY_EXCLUDES:
         rsync_flags += ["--exclude", _pat]
     if progress:
         # --outbuf=L line-buffers rsync's output. Without it, rsync block-buffers
@@ -243,18 +250,67 @@ def _rsync_exit_detail(rc):
 def parse_progress_line(text):
     """Parse an rsync ``--info=progress2`` chunk.
 
-    Returns ``{"bytes", "pct", "speed", "total"}`` for the first progress match
-    in ``text``, or ``None`` if there is none. Pure and stateless so it can be
-    unit-tested without spawning rsync.
+    Returns ``{"bytes", "pct", "speed", "total"}`` for the LAST progress match in
+    ``text``, or ``None`` if there is none. Last, not first: progress2 separates
+    its samples with CR rather than LF, so one 1024-byte read holds a whole
+    burst of them and only the newest is current — taking the first made the UI
+    lag a burst behind and derive its total from a stale bytes/percent pair. A
+    chunk cut mid-line can't match (the regex needs the full bytes/percent/speed
+    triple), so the tail is simply picked up on the next read. Pure and stateless
+    so it can be unit-tested without spawning rsync.
     """
-    m = _PROGRESS_RE.search(text or "")
-    if not m:
+    m = None
+    for m in _PROGRESS_RE.finditer(text or ""):
+        pass
+    if m is None:
         return None
     bytes_transferred = int(m.group(1).replace(",", ""))
     pct = int(m.group(2))
     speed = m.group(3)
     total = int(bytes_transferred * 100 / pct) if pct > 0 else 0
     return {"bytes": bytes_transferred, "pct": pct, "speed": speed, "total": total}
+
+
+def _excluded_name(name):
+    """True when ``name`` matches one of DEST_ONLY_EXCLUDES.
+
+    Only the basename patterns are tested: the single path pattern
+    (``.stfolder/**``) is already covered by skipping the ``.stfolder`` directory
+    itself, so nothing below it is ever walked.
+    """
+    return any(fnmatch.fnmatch(name, pat) for pat in DEST_ONLY_EXCLUDES if "/" not in pat)
+
+
+def local_tree_size(root):
+    """Total size in bytes of the files rsync will carry in its file list.
+
+    This is the denominator ``--info=progress2`` takes its percentage against:
+    with ``--no-inc-recursive`` rsync builds the whole list up front and counts
+    every regular file in it, including the ones that turn out to be up to date
+    (those just complete instantly). Symlinks are not followed, matching ``-a``.
+
+    Returns 0 when the tree can't be walked at all, which callers read as "no
+    exact total, fall back to the estimate". Iterative rather than recursive so a
+    pathologically deep backup tree can't blow the stack.
+    """
+    total = 0
+    stack = [root]
+    while stack:
+        try:
+            entries = list(os.scandir(stack.pop()))
+        except OSError:
+            continue
+        for e in entries:
+            try:
+                if _excluded_name(e.name) or e.is_symlink():
+                    continue
+                if e.is_dir(follow_symlinks=False):
+                    stack.append(e.path)
+                elif e.is_file(follow_symlinks=False):
+                    total += e.stat(follow_symlinks=False).st_size
+            except OSError:
+                continue
+    return total
 
 
 def _resolve_min_battery(min_battery):
@@ -311,6 +367,25 @@ def run_sync_with_progress(passphrase=None, backup_dir=None, on_progress=None, l
         return err
 
     min_battery = _resolve_min_battery(min_battery)
+
+    # Exact progress denominator, measured locally while rsync builds its own
+    # file list. progress2 reports only an integer percentage, so a total
+    # back-computed from it (bytes * 100 / pct) sawtooths by up to total/pct: it
+    # climbs while bytes grow inside one percent bucket, then drops each time the
+    # percentage ticks over. Walking the source gives the real number instead.
+    # On a thread because rsync's scan phase is at least as slow, so the total is
+    # normally ready before the first progress line; it stays 0 if the walk loses
+    # that race or fails, and the estimate covers until it lands.
+    src_dir = backup_dir if backup_dir is not None else _load_backup_dir()
+    known_total = {"bytes": 0}
+
+    def _measure_total():
+        try:
+            known_total["bytes"] = local_tree_size(src_dir)
+        except Exception:
+            known_total["bytes"] = 0
+
+    threading.Thread(target=_measure_total, daemon=True).start()
 
     # Two-phase watchdog:
     #   1. Initial scan phase — rsync is building the file list (--no-inc-recursive).
@@ -433,7 +508,7 @@ def run_sync_with_progress(passphrase=None, backup_dir=None, on_progress=None, l
                     bytes_transferred = parsed["bytes"]
                     pct = parsed["pct"]
                     speed = parsed["speed"]
-                    total = parsed["total"]
+                    total = known_total["bytes"] or parsed["total"]
                     if not seen_progress:
                         seen_progress = True
                         if log_file:
