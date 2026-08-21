@@ -4,9 +4,12 @@ sync_manager.py - Remote backup sync via rsync over SSH.
 
 Supports SSH key and password authentication.
 Credentials are decrypted from the encrypted sync config store.
+When the config carries a host_key_fingerprint, the server's SSH host key is
+verified and pinned before anything is transferred (see host_key.py).
 """
 import os, sys, re, select, socket, subprocess, tempfile, time, yaml
 
+import host_key
 import sync_crypto
 
 try:
@@ -107,14 +110,15 @@ def _diagnose_unreachable(host, port):
 
 def _prepare_sync(passphrase=None, backup_dir=None, progress=False):
     """Shared setup for run_sync and run_sync_with_progress.
-    Returns (cmd, key_file, error_dict) — error_dict is set on failure."""
+    Returns (cmd, temp_files, error_dict) — error_dict is set on failure.
+    temp_files is the list of paths the caller must pass to _cleanup_temp()."""
     net_ok, net_reason = _check_network_allowed()
     if not net_ok:
-        return None, None, {"success": False, "message": net_reason, "duration": 0}
+        return None, [], {"success": False, "message": net_reason, "duration": 0}
 
     cfg = sync_crypto.decrypt_sync_config(passphrase=passphrase)
     if not cfg:
-        return None, None, {"success": False, "message": "Cannot decrypt sync credentials.", "duration": 0}
+        return None, [], {"success": False, "message": "Cannot decrypt sync credentials.", "duration": 0}
 
     host = cfg.get("host", "")
     port = cfg.get("port", 22)
@@ -123,9 +127,10 @@ def _prepare_sync(passphrase=None, backup_dir=None, progress=False):
     ssh_key = cfg.get("ssh_key", "")
     password = cfg.get("password", "")
     remote_path = cfg.get("remote_path", "")
+    expected_fp = cfg.get("host_key_fingerprint", "")
 
     if not host or not username or not remote_path:
-        return None, None, {"success": False, "message": "Incomplete sync configuration (host/user/path).", "duration": 0}
+        return None, [], {"success": False, "message": "Incomplete sync configuration (host/user/path).", "duration": 0}
 
     # Pre-flight reachability: turn a would-be cryptic rsync connection failure
     # into a clear cause (no network / VPN down / no internet). Both the manual
@@ -133,7 +138,19 @@ def _prepare_sync(passphrase=None, backup_dir=None, progress=False):
     # the dashboard, and notifications.
     reason = _diagnose_unreachable(host, port)
     if reason:
-        return None, None, {"success": False, "message": reason, "duration": 0}
+        return None, [], {"success": False, "message": reason, "duration": 0}
+
+    # Optional host key pinning. Runs before a single byte is transferred, and
+    # fails closed: a mismatch or an unreadable key aborts the sync rather than
+    # falling back to trusting whatever the server offered.
+    temp_files = []
+    known_hosts = None
+    if expected_fp:
+        known_hosts, hk_err = host_key.verify_and_write_known_hosts(host, port, expected_fp)
+        if hk_err:
+            return None, [], {"success": False, "message": hk_err, "duration": 0}
+        if known_hosts:
+            temp_files.append(known_hosts)
 
     if backup_dir is None:
         backup_dir = _load_backup_dir()
@@ -142,9 +159,8 @@ def _prepare_sync(passphrase=None, backup_dir=None, progress=False):
 
     # ServerAliveInterval/CountMax detects dead connections in ~90s instead of
     # waiting for the TCP-level keepalive (default 2h).
-    ssh_opts = (f"ssh -p {port} -o StrictHostKeyChecking=accept-new "
+    ssh_opts = (f"ssh -p {port} {' '.join(host_key.strict_host_key_opts(known_hosts))} "
                 f"-o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=3")
-    key_file = None
 
     # -a (archive) but NOT -z: iOS backups are encrypted / already-compressed, so
     # gzip gains ~nothing and just burns the Radxa's weak CPU (and can bottleneck
@@ -172,22 +188,26 @@ def _prepare_sync(passphrase=None, backup_dir=None, progress=False):
             if not clean_key.endswith("\n"):
                 f.write("\n")
         os.chmod(key_file, 0o600)
+        temp_files.append(key_file)
         ssh_opts += f" -i {key_file}"
         cmd = ["/usr/bin/rsync"] + rsync_flags + ["-e", ssh_opts, backup_dir, f"{username}@{host}:{remote_path}/"]
     elif auth_method == "password" and password:
         cmd = ["sshpass", "-p", password, "/usr/bin/rsync"] + rsync_flags + ["-e", ssh_opts, backup_dir, f"{username}@{host}:{remote_path}/"]
     else:
-        return None, None, {"success": False, "message": "No SSH key or password configured.", "duration": 0}
+        _cleanup_temp(temp_files)
+        return None, [], {"success": False, "message": "No SSH key or password configured.", "duration": 0}
 
-    return cmd, key_file, None
+    return cmd, temp_files, None
 
 
-def _cleanup_key(key_file):
-    if key_file and os.path.exists(key_file):
-        try:
-            os.remove(key_file)
-        except Exception:
-            pass
+def _cleanup_temp(paths):
+    """Remove the temp SSH key / pinned known_hosts created by _prepare_sync."""
+    for path in paths or []:
+        if path and os.path.exists(path):
+            try:
+                os.remove(path)
+            except Exception:
+                pass
 
 
 _PROGRESS_RE = re.compile(r"([\d,]+)\s+(\d+)%\s+([\d.]+[kKMGT]?B/s)")
@@ -252,7 +272,7 @@ def run_sync(passphrase=None, backup_dir=None):
     Run rsync to sync backups to remote server (blocking, no progress).
     Returns dict: {success: bool, message: str, duration: float}
     """
-    cmd, key_file, err = _prepare_sync(passphrase=passphrase, backup_dir=backup_dir)
+    cmd, temp_files, err = _prepare_sync(passphrase=passphrase, backup_dir=backup_dir)
     if err:
         return err
 
@@ -274,7 +294,7 @@ def run_sync(passphrase=None, backup_dir=None):
     except Exception as e:
         return {"success": False, "message": f"Sync error: {e}", "duration": time.time() - start}
     finally:
-        _cleanup_key(key_file)
+        _cleanup_temp(temp_files)
 
 
 def run_sync_with_progress(passphrase=None, backup_dir=None, on_progress=None, log_file=None,
@@ -286,7 +306,7 @@ def run_sync_with_progress(passphrase=None, backup_dir=None, on_progress=None, l
     min_battery: power-aware abort threshold (percent). None → config default (35); 0 disables.
     Returns dict: {success: bool, message: str, duration: float}
     """
-    cmd, key_file, err = _prepare_sync(passphrase=passphrase, backup_dir=backup_dir, progress=True)
+    cmd, temp_files, err = _prepare_sync(passphrase=passphrase, backup_dir=backup_dir, progress=True)
     if err:
         return err
 
@@ -558,7 +578,7 @@ def run_sync_with_progress(passphrase=None, backup_dir=None, on_progress=None, l
     except Exception as e:
         return {"success": False, "message": f"Sync error: {e}", "duration": time.time() - start}
     finally:
-        _cleanup_key(key_file)
+        _cleanup_temp(temp_files)
 
 
 def test_connection(passphrase=None):
@@ -576,15 +596,24 @@ def test_connection(passphrase=None):
     auth_method = cfg.get("auth_method", "key")
     ssh_key = cfg.get("ssh_key", "")
     password = cfg.get("password", "")
+    expected_fp = cfg.get("host_key_fingerprint", "")
 
     if not host or not username:
         return {"success": False, "message": "Incomplete configuration (host/user)."}
 
-    key_file = None
+    temp_files = []
+    known_hosts = None
+    if expected_fp:
+        known_hosts, hk_err = host_key.verify_and_write_known_hosts(host, port, expected_fp)
+        if hk_err:
+            return {"success": False, "message": hk_err}
+        if known_hosts:
+            temp_files.append(known_hosts)
+
     try:
         ssh_base = [
             "ssh", "-p", str(port),
-            "-o", "StrictHostKeyChecking=accept-new",
+        ] + host_key.strict_host_key_opts(known_hosts) + [
             "-o", "ConnectTimeout=10",
             "-o", "BatchMode=yes",
         ]
@@ -597,6 +626,7 @@ def test_connection(passphrase=None):
                 if not clean_key.endswith("\n"):
                     f.write("\n")
             os.chmod(key_file, 0o600)
+            temp_files.append(key_file)
             ssh_base += ["-i", key_file]
             cmd = ssh_base + [f"{username}@{host}", "echo ok"]
         elif auth_method == "password" and password:
@@ -619,4 +649,4 @@ def test_connection(passphrase=None):
     except Exception as e:
         return {"success": False, "message": f"Error: {e}"}
     finally:
-        _cleanup_key(key_file)
+        _cleanup_temp(temp_files)

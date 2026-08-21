@@ -16,11 +16,17 @@ The tests live under `tests/`, one file per area:
 - Config schema and migration (`test_config_schema.py`): defaults filling, existing values winning while sibling defaults still fill, input not mutated, atomic save/load round-trip, and the WiFi-networks migration that seeds `networks` from the legacy single `ssid`/`password` fields
 - WiFi netplan generator (`test_wifi_manager.py`): `wifi_manager.build_netplan` producing valid netplan YAML, skipping blank SSIDs, quoting special characters, and setting the high WiFi route metric so the iPhone hotspot is preferred
 - Power-aware battery logic (`test_power.py`): PiSugar reply parsing and `power.sync_allowed`, covering fail-open on an unreadable UPS, charging bypassing the threshold, and low battery refusing
+- SSH host key pinning (`test_host_key.py`): `host_key` fingerprint normalization across the forms a user might paste (canonical, bare base64, padded, mixed case, a whole `ssh-keygen -lf` line), rejection of MD5 and malformed values, `ssh-keygen -lf` output parsing, match selection among several offered keys, the pinned `known_hosts` being owner-only and holding only the matching key, and the fail-closed mismatch / no-key / missing-tool paths
+- Host key pinning wired into sync (`test_sync_host_key.py`): `_prepare_sync` and `test_connection` leaving the ssh options untouched when no fingerprint is configured, pinning `StrictHostKeyChecking=yes` against the verified file when one is, aborting before rsync or ssh runs on a mismatch, and cleaning up both temp files afterwards
+- Screen-handover policy (`test_uipolicy.py`): `uipolicy.should_release_hold` deciding when the post-backup result screen may be given up, and the `InfoWindow` lifetime, single-shot restore, re-tap extension, cancellation, and resume merge
+- Display wiring (`test_display_wiring.py`): the daemon's actual info-screen paths — updates held back and queued while a tap is showing, the queued screen landing on resume, a backup cancelling the window and its queue, and a tap during a sync showing info then handing the sync screen back. This is the one module that imports `iosbackupmachine.py`; it stubs `waveshare_epd` (ships with the panel) and `python-periphery` only when the real package cannot import, and skips entirely if the import still fails
 - Log retention and handshake parsing (`test_logutil.py`): `logutil.prune_logs` keeping the newest N per kind, dropping files past max age, leaving non-per-run logs alone, and never raising on a missing directory, plus `wg_manager.latest_handshake` parsing the newest WireGuard handshake timestamp
 
 ## Hardware-independent by design
 
 The app ships flat to `/root/iosbackupmachine/` on the device and imports its siblings by bare name (for example `import sync_manager`). The tests mirror that layout with a path shim in `tests/conftest.py`, which puts `app/` on `sys.path` so the same bare-name imports resolve. Nothing in the suite touches the e-paper display, the PiSugar UPS, or a connected iPhone, so the tests run unchanged on a developer machine or in CI.
+
+Most modules are import-safe by design so they can be tested this way: logic that would otherwise sit inline in the display daemon lives in `config_schema.py`, `logutil.py`, `power.py`, `host_key.py`, and `uipolicy.py`, which depend only on the standard library. `test_display_wiring.py` is the exception — it imports the daemon itself to cover the screen-handover wiring, substituting the two dependencies that may not import off-device.
 
 ## Run the tests
 

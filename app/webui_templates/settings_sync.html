@@ -140,6 +140,31 @@
             <label for="sync_remote_path">Remote Path</label>
             <input type="text" id="sync_remote_path" name="remote_path" placeholder="/backups/ios" value="{{ saved_cred.remote_path if saved_cred else '' }}">
         </div>
+        <div class="form-group">
+            <label for="verify_host_key" style="display:flex; align-items:center; gap:8px;">
+                <input type="checkbox" id="verify_host_key" name="verify_host_key" onchange="toggleHostKeyField()"
+                       {% if saved_cred and saved_cred.host_key_fingerprint %}checked{% endif %}>
+                Verify the server's SSH host key
+            </label>
+            <div class="hint">
+                Off by default: the first host key seen is trusted (<code>accept-new</code>). Turn this on to
+                pin the server's key, so a sync is refused if the key ever changes.
+            </div>
+        </div>
+        <div class="form-group" id="host_key_field" style="display:{% if saved_cred and saved_cred.host_key_fingerprint %}block{% else %}none{% endif %};">
+            <label for="sync_host_key_fingerprint">Host Key Fingerprint (SHA256)</label>
+            <input type="text" id="sync_host_key_fingerprint" name="host_key_fingerprint"
+                   placeholder="SHA256:..." value="{{ saved_cred.host_key_fingerprint if saved_cred else '' }}">
+            <div class="hint">
+                Confirm this on the server itself with
+                <code>ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub</code>. Fetching it below reads it over
+                the network, which is convenient but not proof on its own.
+            </div>
+            <div class="btn-group" style="margin-top:8px;">
+                <button type="button" class="btn btn-secondary btn-sm" id="btn_scan_host_key" onclick="scanHostKey()">Fetch from server</button>
+            </div>
+            <div id="host_key_results" style="margin-top:8px;"></div>
+        </div>
         {% if passphrase_mode == 'custom' %}
         <div class="form-group">
             <label for="master_password_cred">Password</label>
@@ -203,6 +228,53 @@ function toggleAuthFields() {
     document.getElementById('key_field').style.display = method === 'key' ? '' : 'none';
     document.getElementById('password_field').style.display = method === 'password' ? '' : 'none';
 }
+function toggleHostKeyField() {
+    var on = document.getElementById('verify_host_key').checked;
+    document.getElementById('host_key_field').style.display = on ? '' : 'none';
+}
+function scanHostKey() {
+    var btn = document.getElementById('btn_scan_host_key');
+    var out = document.getElementById('host_key_results');
+    var host = document.getElementById('sync_host').value.trim();
+    if (!host) { showToast('Enter the host first.'); return; }
+    btn.disabled = true;
+    btn.textContent = 'Fetching...';
+    out.textContent = '';
+    fetch('{{ url_for("api_sync_host_key_scan") }}', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({host: host, port: document.getElementById('sync_port').value})
+    })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (d.error) { showToast(d.error); return; }
+            out.innerHTML = '';
+            d.keys.forEach(function(k) {
+                var row = document.createElement('div');
+                row.style.cssText = 'display:flex; align-items:center; gap:8px; margin-bottom:6px; flex-wrap:wrap;';
+                var label = document.createElement('code');
+                label.style.cssText = 'font-size:12px; word-break:break-all;';
+                label.textContent = k.fingerprint + (k.type ? ' (' + k.type + ' ' + k.bits + ')' : '');
+                var use = document.createElement('button');
+                use.type = 'button';
+                use.className = 'btn btn-secondary btn-sm';
+                use.textContent = 'Use';
+                use.onclick = function() {
+                    document.getElementById('sync_host_key_fingerprint').value = k.fingerprint;
+                    showToast('Fingerprint filled in. Confirm it on the server before saving.', 4000);
+                };
+                row.appendChild(label);
+                row.appendChild(use);
+                out.appendChild(row);
+            });
+            var note = document.createElement('div');
+            note.className = 'hint';
+            note.textContent = d.confirm_hint;
+            out.appendChild(note);
+        })
+        .catch(function() { showToast('Failed to read the host key.'); })
+        .finally(function() { btn.disabled = false; btn.textContent = 'Fetch from server'; });
+}
 function decryptCredentials() {
     var btn = document.getElementById('btn_decrypt');
     btn.disabled = true;
@@ -218,6 +290,9 @@ function decryptCredentials() {
             var sel = document.getElementById('auth_method');
             sel.value = d.auth_method || 'key';
             toggleAuthFields();
+            document.getElementById('sync_host_key_fingerprint').value = d.host_key_fingerprint || '';
+            document.getElementById('verify_host_key').checked = !!d.host_key_fingerprint;
+            toggleHostKeyField();
             if (d.has_key) {
                 document.getElementById('sync_ssh_key').placeholder = 'Key is configured. Leave empty to keep it.';
             }

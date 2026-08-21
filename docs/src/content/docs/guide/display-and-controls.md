@@ -20,7 +20,7 @@ The daemon renders these screens from state:
 - Boot / idle: on boot it shows the project icon, the "iOS Backup Machine" title, and owner info. When idle it shows the last backup result, timestamp, disk usage, and owner info
 - Backup progress: prompts to unlock the phone if needed, shows encryption status and progress percentage, then a success confirmation with timestamp at the end
 - Sync progress: transferred / total size, current speed, and a progress bar (see [Remote sync](../remote-sync/))
-- System info: shown for 30 seconds after a single button tap (see below), then returns to the boot screen
+- System info: shown for 30 seconds after a single button tap (see below), then returns to whatever was on screen before the tap
 - Unplug / interrupted: if you unplug the iPhone mid-backup the process stops safely and the screen shows the interruption timestamp
 - Power-off owner screen: owner info only. The daemon paints it on shutdown and sleeps the panel, so the image persists on e-paper after power-off or power loss
 
@@ -44,7 +44,7 @@ The iPhone icon has three states, so the trust state (which udid-mode decryption
 
 The daemon's button listener handles the PiSugar power button. Three gestures:
 
-- Single tap: shows the system-info screen for 30 seconds, then returns to the boot screen. It lists date/time, active network (WiFi / iPhone hotspot / Ethernet), IP, VPN state, last backup, last sync, SoC temperature, and disk free %
+- Single tap: shows the system-info screen for 30 seconds, then returns to whatever was on screen before. It works whatever the device is doing, including mid-backup and mid-sync. It lists date/time, active network (WiFi / iPhone hotspot / Ethernet), IP, VPN state, last backup, last sync, SoC temperature, and disk free %
 - Double tap: starts an iPhone backup, the same action as the web UI Start Backup. It needs an allowed iPhone connected and works even when auto-start is off (see [Backups](../backups/))
 - Long press: triggers a remote sync to the configured server over rsync-over-SSH. The display then shows transferred / total size, current speed, and a progress bar (see [Remote sync](../remote-sync/))
 

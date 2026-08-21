@@ -32,9 +32,19 @@ Because the login is basic and has no rate limiting or lockout, treat it as a co
 
 The appliance is designed to run offline or on a network you control:
 
-- Backups never leave the device unless you enable remote sync, and remote sync goes over SSH (optionally inside the VPN full tunnel)
+- Backups never leave the device unless you enable remote sync, and remote sync goes over SSH (optionally inside the VPN full tunnel), with optional host key pinning (below)
 - The health endpoint at `GET /api/health` is login-exempt on purpose, but it contains no secrets: no owner info, credentials, or keys
 - Config is written atomically (temp file, `fsync`, rename), so a power loss during a save cannot truncate `config.yaml`
+
+## SSH host key verification
+
+By default the sync trusts the first host key it sees (`StrictHostKeyChecking=accept-new`). That protects every later sync, but not the first one, and it accepts a new key silently if the server is ever replaced.
+
+Turning on host key verification in Remote Sync settings pins a specific key instead. You store the server's SHA256 fingerprint; before any data moves, the device reads the keys the server offers, fingerprints each one, and only the key that matches is written to a throwaway `known_hosts` that ssh then checks strictly against. Pinning the key rather than only comparing the fingerprint means a substitution part-way through the connection is rejected by ssh itself.
+
+It fails closed. A mismatch, an unreadable host key, or a corrupt stored fingerprint aborts the sync with a message naming the expected and offered fingerprints, rather than falling back to trusting the server. If you rebuild the server or rotate its host key, update the stored fingerprint; until you do, syncs stay blocked. The fingerprint is kept in the encrypted `sync.enc` alongside the host and credentials, though it is not itself a secret.
+
+The **Fetch from server** button reads the offered fingerprints over the network, which is a convenience for filling the field, not proof of anything: confirm the value on the server itself with `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` before saving.
 
 ## Config integrity
 

@@ -52,6 +52,7 @@ Full flashing steps, the manual install, and updating are in the [Installation g
 - Shows progress, status, and errors on the e-ink display, with a status icon row for power, VPN, internet, WiFi, and a three-state iPhone icon
 - Keeps running on a UPS so a power cut does not corrupt a backup or the filesystem
 - Ships backups to a remote server over rsync and SSH, with a WireGuard client for off-LAN transfers
+- Optionally verifies the sync server's SSH host key against a fingerprint you pin
 - Configures everything from a web UI, with a health endpoint for external monitoring
 - Encrypts WireGuard and remote sync credentials at rest with AES-256-GCM
 

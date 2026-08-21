@@ -4,6 +4,40 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses a
 single version constant in `app/webui.py`.
 
+## [4.5.0] - 2026-08-21
+
+### Added
+
+- Optional SSH host key verification for the sync server. Remote Sync settings
+  gains a `Verify the server's SSH host key` switch and a SHA256 fingerprint
+  field; when set, the device pins that key and refuses to sync if the server
+  presents a different one. Verification runs before any data moves, on both
+  Test Connection and every sync, and fails closed - a mismatch or an
+  unreadable key aborts rather than falling back to trusting the server.
+  `Fetch from server` reads the offered fingerprints so they can be compared
+  against a value obtained out-of-band. Leaving the switch off keeps the
+  previous `accept-new` behaviour unchanged.
+
+### Fixed
+
+- The e-ink could sit on a stale `Sync failed` (or other result) screen through
+  an entire following sync or backup. After a backup the daemon holds the result
+  screen until the iPhone is unplugged, but that wait watched only the cable, so
+  it never re-read the status file - a sync started from the web UI while the
+  phone was still plugged in, or a fresh backup request, stayed invisible for its
+  whole run. The wait now also releases the screen for a live sync or an explicit
+  start request. An idle plugged-in phone still holds the result, so the same
+  device is not immediately backed up again.
+- The single-tap system-info screen did nothing in the cases it was most wanted.
+  A tap was discarded outright while a backup or sync was running - and the
+  request flag was consumed anyway, so the tap vanished - and even when it was
+  allowed, the next sync tick repainted over it about half a second later. A tap
+  now always shows the info screen for 30s whatever the device is doing, and the
+  screen that was up beforehand comes back when the window closes, along with
+  anything the daemon drew meanwhile (so a backup result raised during those 30s
+  is not lost). The rule is enforced once, in the display's single drawing owner,
+  instead of at each call site.
+
 ## [4.4.4] - 2026-07-14
 
 ### Fixed

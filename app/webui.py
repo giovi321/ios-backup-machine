@@ -24,6 +24,7 @@ import netutil
 import wg_crypto
 import wg_manager
 import wifi_manager
+import host_key
 import sync_crypto
 import sync_manager
 import notify_crypto
@@ -31,7 +32,7 @@ import config_schema
 import power
 import logutil
 
-VERSION = "4.4.4"
+VERSION = "4.5.0"
 
 CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/iosbackupmachine/config.yaml")
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webui_static")
@@ -813,6 +814,8 @@ def settings_sync():
             ssh_key = request.form.get("ssh_key", "").replace("\r\n", "\n").replace("\r", "\n")
             password = request.form.get("password", "")
             remote_path = request.form.get("remote_path", "").strip()
+            verify_host_key = request.form.get("verify_host_key") == "on"
+            fingerprint_input = request.form.get("host_key_fingerprint", "").strip()
             if not pw:
                 flash("Connect iPhone first." if mode == "udid" else "Password required.", "error")
             elif not host or not username or not remote_path:
@@ -824,16 +827,30 @@ def settings_sync():
                     port_int = 22
                 existing_key = ""
                 existing_pw = ""
-                if not ssh_key.strip() or not password:
+                existing_fp = ""
+                if not ssh_key.strip() or not password or not fingerprint_input:
                     try:
                         prev = sync_crypto.decrypt_sync_config(passphrase=pw)
                         if prev:
                             existing_key = prev.get("ssh_key", "")
                             existing_pw = prev.get("password", "")
+                            existing_fp = prev.get("host_key_fingerprint", "")
                     except Exception:
                         pass
                 final_key = ssh_key if ssh_key.strip() else existing_key
                 final_pw = password if password else existing_pw
+                # Unticking the checkbox is the only way to turn verification
+                # off, so a blank field can safely mean "keep what's stored".
+                final_fp = ""
+                if verify_host_key:
+                    try:
+                        final_fp = host_key.normalize_fingerprint(fingerprint_input or existing_fp)
+                    except ValueError as e:
+                        flash(str(e), "error")
+                        return redirect(url_for("settings_sync"))
+                    if not final_fp:
+                        flash("Enter the server's SHA256 host key fingerprint, or untick host key verification.", "error")
+                        return redirect(url_for("settings_sync"))
                 if auth_method == "key" and not final_key.strip():
                     flash("SSH private key is required for key authentication.", "error")
                     return redirect(url_for("settings_sync"))
@@ -846,6 +863,7 @@ def settings_sync():
                     "ssh_key": final_key if auth_method == "key" else "",
                     "password": final_pw if auth_method == "password" else "",
                     "remote_path": remote_path,
+                    "host_key_fingerprint": final_fp,
                 }
                 if sync_crypto.encrypt_sync_config(cred, passphrase=pw):
                     flash("Sync credentials encrypted and saved.", "success")
@@ -892,6 +910,7 @@ def settings_sync():
                         "username": dec.get("username", ""),
                         "auth_method": dec.get("auth_method", "key"),
                         "remote_path": dec.get("remote_path", ""),
+                        "host_key_fingerprint": dec.get("host_key_fingerprint", ""),
                     }
         except Exception:
             pass
@@ -918,8 +937,42 @@ def api_sync_decrypt():
         "username": dec.get("username", ""),
         "auth_method": dec.get("auth_method", "key"),
         "remote_path": dec.get("remote_path", ""),
+        "host_key_fingerprint": dec.get("host_key_fingerprint", ""),
         "has_key": bool(dec.get("ssh_key", "").strip()),
         "has_password": bool(dec.get("password", "")),
+    })
+
+@app.route("/api/sync/host-key-scan", methods=["POST"])
+@login_required
+def api_sync_host_key_scan():
+    """Report the SSH host keys a server currently offers, for the settings form.
+
+    This is an *unauthenticated* view of the server — it is only a convenience
+    for filling the field, so the response also carries the command to confirm
+    the value out-of-band. Host and port come from the form rather than the
+    stored credentials, so the fingerprint can be fetched before saving.
+    """
+    data = request.get_json(silent=True) or {}
+    host = str(data.get("host", "")).strip()
+    try:
+        port = int(data.get("port") or 22)
+    except (TypeError, ValueError):
+        port = 22
+    if not host:
+        return jsonify({"error": "Enter the host first."}), 400
+    try:
+        entries = host_key.fetch_fingerprints(host, port)
+    except host_key.HostKeyError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"error": f"Cannot read the host key: {e}"}), 400
+    if not entries:
+        return jsonify({"error": f"{host} returned no host key."}), 400
+    return jsonify({
+        "keys": [{"type": e["type"], "bits": e["bits"], "fingerprint": e["fingerprint"]}
+                 for e in entries],
+        "confirm_hint": "Confirm on the server with: "
+                        "ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub",
     })
 
 # --- Web UI Interface Binding ---

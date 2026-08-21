@@ -32,6 +32,8 @@ try:
 except ImportError:
     _wg_crypto = None
 
+import uipolicy
+
 CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/iosbackupmachine/config.yaml")
 import logutil
 # Logs are persistent (rootfs); runtime IPC stays on the volatile zram /var/log.
@@ -838,10 +840,41 @@ class Animator:
         self._last = None
         self._last_layout = None     # screen-type signature of the last drawn frame
         self._force_full = False     # one-shot: next draw is a clean full refresh
+        self._pending = {}           # updates made while the info screen holds the panel
 
-    def set(self, **kwargs):
+    def set(self, _force=False, **kwargs):
+        """Update what the next tick draws.
+
+        Held back while the single-tap info screen is up, so that screen
+        survives its window no matter who tries to draw over it — this is the
+        one place the rule is enforced, instead of at every call site (where it
+        was previously missed, letting a sync tick wipe the info screen half a
+        second after the tap). The button listener passes _force to place and
+        later restore the screen. Held-back updates are queued, not dropped, so
+        resume() can still land a one-shot screen (a backup result) that was
+        drawn while the panel was busy showing info."""
+        if not _force and _info_window.active(_now()):
+            with self.lock:
+                self._pending.update(kwargs)
+            return
         with self.lock:
             self.state.update(kwargs)
+
+    def cancel_info(self):
+        """Give up the info screen without restoring anything, for an operation
+        that takes the panel for minutes (a backup). Queued updates go with it,
+        so a later resume() can't apply state that is by then stale."""
+        _info_window.cancel()
+        with self.lock:
+            self._pending = {}
+
+    def resume(self, fallback):
+        """Leave the info screen: go back to `fallback`, then apply whatever was
+        drawn while it was up (see uipolicy.merge_resume)."""
+        with self.lock:
+            self.state.update(uipolicy.merge_resume(fallback, self._pending))
+            self._pending = {}
+        self.request_full()
 
     def request_full(self):
         """Make the next rendered frame a full refresh (clears ghosting on a
@@ -1054,6 +1087,19 @@ def _sync_running():
                               capture_output=True).returncode == 0
     except Exception:
         return False
+
+def _manual_start_requested():
+    """True if a fresh 'start backup' request (web UI / double-tap) is pending.
+
+    The sentinel only counts for 15s so it can't silently fire a backup minutes
+    later when a phone is next plugged in. Peeks only — the main loop consumes
+    the file when it acts on it."""
+    try:
+        return (os.path.exists(START_FILE)
+                and time.time() - os.path.getmtime(START_FILE) <= 15)
+    except Exception:
+        return False
+
 
 def device_allowed():
     """
@@ -1522,37 +1568,57 @@ def run_backup(panel, logf, ui, _retry=0):
 # PiSugar button listener (single-tap → system-info screen for 30s)
 # ---------------------------------------------------------------------------
 _backup_running = False
-_button_info_until = 0.0    # while now() < this, the main loop leaves the info screen up
+# The single authority on whether the single-tap info screen is up. Enforced in
+# Animator.set(), so no drawing path has to remember to check it.
+_info_window = uipolicy.InfoWindow()
+
+
+def _now():
+    """Clock for the info-screen window. One indirection so its timing can be
+    driven deterministically in tests instead of with sleeps."""
+    return time.time()
 
 def _pisugar_button_listener(ui):
-    """Show the system-info screen for 30s on a PiSugar single-tap.
+    """Show the system-info screen on a PiSugar single-tap.
 
     PiSugar signals the tap by running single_tap_shell, which touches INFO_FILE
     (the same flag-file mechanism the double-tap uses for start_requested). We
     watch for that flag here instead of polling the pisugar socket: pisugar-server
     has no 'get button_press' query — it answers 'Invalid request.' — so the old
-    socket poll never fired. Skipped while a backup or sync is active so their
-    progress isn't covered; the main loop reverts to the idle screen after 30s."""
-    global _button_info_until
+    socket poll never fired.
+
+    The tap always wins, whatever the device is doing. It used to be dropped
+    outright while a backup or sync was running (and the flag was consumed
+    anyway, so the tap vanished), and even when allowed the next sync tick
+    repainted over it within half a second — either way the button looked dead.
+    The screen that was up beforehand is restored when the window closes."""
     while True:
         try:
-            if os.path.exists(INFO_FILE):
-                try:
-                    os.remove(INFO_FILE)   # consume the request
-                except Exception:
-                    pass
-                try:
-                    with open(STATUS_FILE, "r") as _sf:
-                        _state = json.load(_sf).get("state")
-                except Exception:
-                    _state = None
-                if _state not in ("syncing", "backing_up", "connected"):
-                    _button_info_until = time.time() + 30
-                    ui.set(screen="info", info_lines=build_button_info_lines(),
-                           percent=None, animate=False, show_header=False)
+            _handle_info_tap(ui)
         except Exception:
             pass
         time.sleep(0.5)
+
+
+def _handle_info_tap(ui):
+    """One poll of the single-tap info screen.
+
+    Raises it on a fresh tap, and puts the previous screen back once the window
+    has closed — actively, rather than waiting for a passive redraw that may
+    never come (during a sync, or while a post-backup result is being held)."""
+    now = _now()
+    if os.path.exists(INFO_FILE):
+        try:
+            os.remove(INFO_FILE)   # consume the request
+        except Exception:
+            pass
+        _info_window.open(now, ui.get_state())
+        ui.set(_force=True, screen="info", info_lines=build_button_info_lines(),
+               percent=None, animate=False, show_header=False)
+        ui.request_full()
+    prev = _info_window.take_restore(now)
+    if prev is not None:
+        ui.resume(prev)
 
 
 def _status_icon_updater(ui):
@@ -1692,7 +1758,7 @@ def _setup_completed():
 
 
 def main():
-    global _backup_running, _button_info_until
+    global _backup_running
 
     # Single EPD owner: on shutdown the Animator paints the owner screen and sleeps
     # the panel so the image persists after PiSugar cuts power.
@@ -1751,10 +1817,8 @@ def main():
             write_status("waiting")
 
         def show(**kw):
-            # Passive redraw — skipped while the single-tap info screen is up, so
-            # it isn't clobbered. Active screens (backup/sync) call ui.set directly.
-            if time.time() < _button_info_until:
-                return
+            # Passive redraw. Animator.set() is what holds the info screen back,
+            # so this no longer needs its own guard.
             ui.set(**kw)
 
         while True:
@@ -1822,8 +1886,9 @@ def main():
                 # ALWAYS set the ui state every iteration during a sync. ui.set just
                 # updates a dict (cheap) and guarantees the Animator's next 1Hz tick
                 # draws current sync state — protects against external overrides
-                # (button info, rejected device, etc.) reverting the display.
-                _button_info_until = 0   # a live sync takes priority over the info screen
+                # (rejected device, etc.) reverting the display. The one thing it
+                # deliberately loses to is the single-tap info screen, which
+                # Animator.set() holds for its window and then hands back.
                 ui.set(screen="normal", subtitle=sub, percent=pct, animate=True, show_header=True)
                 time.sleep(0.5)
                 continue
@@ -1831,15 +1896,13 @@ def main():
             # Web UI / double-tap "Start Backup" sentinel. Short 15s window so it
             # only takes effect if an iPhone is connected right around the request
             # — it won't silently fire a backup minutes later when one is plugged.
-            manual_start = False
-            try:
-                if os.path.exists(START_FILE):
-                    if time.time() - os.path.getmtime(START_FILE) > 15:
-                        os.remove(START_FILE)
-                    else:
-                        manual_start = True
-            except Exception:
-                manual_start = False
+            manual_start = _manual_start_requested()
+            if not manual_start:
+                try:
+                    if os.path.exists(START_FILE):
+                        os.remove(START_FILE)   # stale; don't fire it later
+                except Exception:
+                    pass
 
             # --- Device handling (only once first-time setup is complete) ---
             if _setup_completed():
@@ -1872,7 +1935,7 @@ def main():
                         os.remove(START_FILE)   # consume the request
                 except Exception:
                     pass
-                _button_info_until = 0          # a backup takes priority over the info screen
+                ui.cancel_info()   # a backup owns the panel from here
                 _backup_running = True
                 write_status("connected", udid=udid)
                 send_notification("device_connected", {"udid": udid})
@@ -1884,8 +1947,19 @@ def main():
                 run_backup(p, logf, ui)
                 _backup_running = False
                 # Keep the result screen (complete/interrupted/error) up until the
-                # iPhone is unplugged, so we don't immediately re-back-up the same device.
-                while device_present() and not SHUTDOWN.is_set():
+                # iPhone is unplugged, so we don't immediately re-back-up the same
+                # device — but let go for work the user asked for meanwhile. This
+                # wait used to watch only the cable, so a sync started from the web
+                # UI (or a fresh backup request) stayed invisible for its whole run
+                # and the panel sat on the previous result. Breaking out is safe:
+                # the mutual-exclusion check above still refuses to re-backup a
+                # device while a sync is live.
+                while not SHUTDOWN.is_set():
+                    if uipolicy.should_release_hold(
+                            device_present=device_present(),
+                            sync_running=_sync_running(),
+                            manual_start=_manual_start_requested()):
+                        break
                     time.sleep(1)
                 _last_reject_udid = None
                 continue

@@ -15,6 +15,30 @@ Install rsync on the remote with `sudo apt install rsync`. Without it the sync c
 
 Sync uses rsync over SSH and supports both SSH key and password authentication. Configure the server and credentials in the web UI under Remote Sync; credentials are stored encrypted.
 
+## Host key verification
+
+By default the device trusts the first host key it sees (`StrictHostKeyChecking=accept-new`), which
+protects later syncs but not the first one. Tick **Verify the server's SSH host key** on the Remote
+Sync settings page to pin the server's key instead: the sync then refuses to run unless the server
+presents exactly the key you configured.
+
+Get the fingerprint from the server itself:
+
+```sh
+ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
+```
+
+Paste the `SHA256:...` value into **Host Key Fingerprint**. **Fetch from server** fills it in for you,
+but it reads the key over the same network you are trying to protect, so treat it as a convenience and
+confirm the value out-of-band before saving.
+
+Verification runs before any data is transferred, on both Test Connection and every sync. A mismatch
+fails the sync with `Host key mismatch - refusing to connect`, naming the expected and offered
+fingerprints. If you legitimately rebuilt the server or rotated its host key, update the stored
+fingerprint; until then, syncs stay blocked.
+
+Untick the checkbox to go back to accept-new.
+
 ## Triggering a sync
 
 - Manual: long-press the PiSugar button, or click Sync Now on the web UI dashboard or the Remote Sync settings page
