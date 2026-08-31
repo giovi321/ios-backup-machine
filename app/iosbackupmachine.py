@@ -46,6 +46,13 @@ STATUS_FILE = os.path.join(RUNTIME_DIR, "backup_status.json")
 START_FILE = os.path.join(RUNTIME_DIR, "start_requested")   # force a backup (auto-start off)
 STOP_FILE = os.path.join(RUNTIME_DIR, "stop_requested")     # abort the current backup
 INFO_FILE = os.path.join(RUNTIME_DIR, "info_requested")     # single-tap -> show system-info screen
+# Dropped by the web UI before it launches the updater. The installer stops this
+# daemon partway through, so the "Updating" screen has to be the LAST thing painted:
+# e-ink holds it with no power to the panel, right through the reboot. The file
+# lives on the volatile runtime dir, so a reboot clears it by itself.
+UPDATING_FILE = os.path.join(RUNTIME_DIR, "updating")       # system update in progress -> reboot pending
+UPDATING_MAX_SEC = 1800   # safety valve: an update that dies without rebooting
+                          # must not strand the panel on "Updating" forever
 IDLE_REFRESH_SEC = 4
 WG_RECONCILE_SEC = 10   # how often the WireGuard auto-connect watcher re-checks
 WG_HANDSHAKE_GRACE_SEC = 45   # tolerate 'up but no handshake yet' this long before re-connecting
@@ -669,6 +676,25 @@ class Panel:
             drw.text(((LW - w) // 2, y), l, font=F_14, fill=0); y += h + 6
         self._show_full(img)
 
+    def draw_updating(self):
+        """System-update screen: the last frame before the installer stops this
+        daemon and reboots. No status icons — they would freeze mid-update and
+        read as live. E-ink holds this image with the panel asleep, so it is what
+        the user sees for the whole update and the reboot that follows."""
+        LW, LH = self._logical_size()
+        img = Image.new('1', (LW, LH), 255)
+        drw = ImageDraw.Draw(img)
+        lines = [("Updating", F_14), ("Device will reboot", F_SM),
+                 ("Web UI back shortly", F_SM)]
+        spacing = 6
+        heights = [self._text_wh(drw, t, f)[1] for t, f in lines]
+        total = sum(heights) + spacing * (len(lines) - 1)
+        y = max(2, (LH - total) // 2)
+        for t, f in lines:
+            w, h = self._text_wh(drw, t, f)
+            drw.text(((LW - w) // 2, y), t, font=f, fill=0); y += h + spacing
+        self._show_full(img)
+
     def draw(self, subtitle="", percent=None, animate=True, center_block=None,
              show_tail_lines=None, show_header=True, screen="normal", info_lines=None,
              full=False):
@@ -681,6 +707,8 @@ class Panel:
             return self._draw_interrupted(subtitle)
         if screen == "owner":
             return self.draw_owner()
+        if screen == "updating":
+            return self.draw_updating()
         # screen in ("normal", "complete"): the header/percent/center-block layout below.
         LW, LH = self._logical_size()
         content_bottom = LH - STATUS_BAR_H   # all text must stay above the status strip
@@ -886,10 +914,17 @@ class Animator:
             return dict(self.state)
 
     def _do_shutdown(self):
-        # Paint the owner screen one last time, crisp full refresh, then sleep
+        # Paint the final screen one last time, crisp full refresh, then sleep
         # the panel so the e-paper holds the image after PiSugar cuts power.
+        # A system update stops this daemon partway through, so it gets the
+        # "Updating" screen rather than the power-off owner screen — painting it
+        # here rather than relying on a tick landing first removes the race with
+        # the installer's `systemctl stop`.
         try:
-            self.panel.draw_owner()
+            if _updating_requested():
+                self.panel.draw_updating()
+            else:
+                self.panel.draw_owner()
         except Exception:
             pass
         try:
@@ -978,6 +1013,37 @@ def write_status(state, **extra):
                     os.remove(tmp)
             except Exception:
                 pass
+
+def _boot_time():
+    """Wall-clock time the kernel booted, from /proc/uptime. 0 if unreadable,
+    which makes every sentinel look post-boot (fail towards showing the screen)."""
+    try:
+        with open("/proc/uptime") as f:
+            return time.time() - float(f.read().split()[0])
+    except Exception:
+        return 0.0
+
+def _updating_requested():
+    """True while a system update is running (web UI drops UPDATING_FILE).
+
+    Two ways the sentinel stops counting:
+
+    - It predates this boot. The update ends in a reboot, and RUNTIME_DIR is
+      meant to go with it — but armbian-ramlog syncs zram /var/log back to disk
+      and restores it, so the file can outlive the reboot it was supposed to
+      die in. Comparing against boot time is what actually retires it, while
+      still keeping the screen up across the daemon restart the installer does
+      mid-update (same boot).
+    - It is older than UPDATING_MAX_SEC. Backstop for an update that dies
+      without ever rebooting, so the panel isn't stranded on "Updating".
+    """
+    try:
+        mtime = os.stat(UPDATING_FILE).st_mtime
+    except Exception:
+        return False
+    if mtime < _boot_time():
+        return False
+    return (time.time() - mtime) < UPDATING_MAX_SEC
 
 def get_connected_udids():
     """Return list of currently connected iPhone UDIDs."""
@@ -1635,7 +1701,10 @@ def _status_icon_updater(ui):
         # paint, a daemon (re)started while already connected keeps the boot
         # screen's default all-off icons: every later sample matches the first,
         # so no change is ever detected and the status bar never repaints.
-        if st != prev:
+        # A full refresh flashes the panel. During an update the icons churn as
+        # the network drops, and the "Updating" screen would strobe for no gain,
+        # so leave it painted exactly once.
+        if st != prev and not _updating_requested():
             try:
                 ui.request_full()
             except Exception:
@@ -1816,6 +1885,14 @@ def main():
         if _initial.get("state") != "syncing":
             write_status("waiting")
 
+        # Tidy up a sentinel left by an update that has already ended (see
+        # _updating_requested); leaving it would keep re-testing it every tick.
+        if not _updating_requested():
+            try:
+                os.remove(UPDATING_FILE)
+            except OSError:
+                pass
+
         def show(**kw):
             # Passive redraw. Animator.set() is what holds the info screen back,
             # so this no longer needs its own guard.
@@ -1825,6 +1902,17 @@ def main():
             # The Animator owns the EPD; this loop only decides what state to show.
             if SHUTDOWN.is_set():
                 time.sleep(0.2); continue   # Animator paints owner + exits
+
+            # A system update preempts everything: the installer is about to stop
+            # this daemon and reboot, so nothing else on screen is worth showing.
+            if _updating_requested():
+                if _prev_state != "updating":
+                    ui.request_full()
+                    _prev_state = "updating"
+                ui.cancel_info()   # the update owns the panel; don't hand it back
+                ui.set(_force=True, screen="updating")
+                time.sleep(1)
+                continue
 
             # External sync (backup-sync.py) writes the status file with state=syncing/...
             # We own the EPD, so draw its UI from here.

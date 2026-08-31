@@ -232,3 +232,102 @@ def test_a_stale_start_request_is_ignored():
 def test_no_start_request_at_all():
     assert not os.path.exists(ibm.START_FILE)
     assert ibm._manual_start_requested() is False
+
+
+# --- system-update screen ----------------------------------------------------
+
+class RecordingPanel:
+    """Records which final screen the Animator painted on its way out."""
+    def __init__(self):
+        self.painted = []
+        self.slept = False
+
+    def draw(self, **kw):
+        self.painted.append(kw.get("screen"))
+
+    def draw_owner(self):
+        self.painted.append("owner")
+
+    def draw_updating(self):
+        self.painted.append("updating")
+
+    def sleep(self):
+        self.slept = True
+
+
+@pytest.fixture
+def updating_flag():
+    open(ibm.UPDATING_FILE, "w").close()
+    yield
+    try:
+        os.remove(ibm.UPDATING_FILE)
+    except OSError:
+        pass
+
+
+@pytest.fixture
+def no_exit(monkeypatch):
+    """_do_shutdown ends in os._exit; keep the test process alive."""
+    monkeypatch.setattr(ibm.os, "_exit", lambda code: None)
+
+
+def test_the_sentinel_is_what_marks_an_update_in_progress(updating_flag):
+    assert ibm._updating_requested() is True
+
+
+def test_no_sentinel_means_no_update_in_progress():
+    assert not os.path.exists(ibm.UPDATING_FILE)
+    assert ibm._updating_requested() is False
+
+
+def test_shutting_down_mid_update_leaves_the_updating_screen_on_the_panel(
+        updating_flag, no_exit):
+    # The installer stops this daemon partway through. The last frame has to be
+    # "Updating", not the power-off owner screen - e-ink holds it through the
+    # reboot, so painting owner here would tell the user the device is off.
+    panel = RecordingPanel()
+    ibm.Animator(panel)._do_shutdown()
+    assert panel.painted == ["updating"]
+    assert panel.slept is True
+
+
+def test_an_ordinary_shutdown_still_leaves_the_owner_screen(no_exit):
+    panel = RecordingPanel()
+    ibm.Animator(panel)._do_shutdown()
+    assert panel.painted == ["owner"]
+    assert panel.slept is True
+
+
+def test_draw_routes_the_updating_screen_to_its_renderer():
+    """The 1 Hz tick reaches the screen through Panel.draw's dispatch, so the
+    'updating' branch has to be wired there too, not only on the shutdown path."""
+    class Stub:
+        called = False
+
+        def draw_updating(self):
+            Stub.called = True
+            return "painted"
+
+    assert ibm.Panel.draw(Stub(), screen="updating") == "painted"
+    assert Stub.called is True
+
+
+def test_a_stale_updating_sentinel_expires_so_the_panel_is_not_stranded(updating_flag):
+    # An update that dies without rebooting leaves the file behind; the volatile
+    # runtime dir only clears it on the reboot that never came.
+    old = ibm.time.time() - ibm.UPDATING_MAX_SEC - 60
+    os.utime(ibm.UPDATING_FILE, (old, old))
+    assert ibm._updating_requested() is False
+
+
+def test_a_sentinel_from_before_this_boot_no_longer_counts(updating_flag, monkeypatch):
+    # armbian-ramlog restores zram /var/log across a reboot, so the file can
+    # outlive the reboot that ends the update. Boot time is what retires it.
+    monkeypatch.setattr(ibm, "_boot_time", lambda: ibm.time.time() + 1)
+    assert ibm._updating_requested() is False
+
+
+def test_a_sentinel_written_after_boot_still_counts(updating_flag, monkeypatch):
+    # The installer restarts this daemon mid-update; the screen has to survive it.
+    monkeypatch.setattr(ibm, "_boot_time", lambda: ibm.time.time() - 3600)
+    assert ibm._updating_requested() is True

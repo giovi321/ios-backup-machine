@@ -4,6 +4,49 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses a
 single version constant in `app/webui.py`.
 
+## [4.6.0] - 2026-08-31
+
+### Fixed
+
+- An update started from the web UI killed itself partway through and took the
+  device off the VPN. The updater ran as a plain child of `webui.service`;
+  `install.sh` restarts that unit midway, and since the unit does not set
+  `KillMode=process`, systemd tore down its whole control group - the updater
+  with it. `start_new_session` had put the updater in its own session but not
+  its own cgroup, so it was no protection. The kill landed after the installer
+  had stopped every service and before it restarted any, leaving the display
+  daemon down and, with it, the WireGuard reconciler that keeps the VPN up. The
+  updater now runs in its own transient systemd unit (`systemd-run
+  --unit=iosbackup-update --collect`), outside the web UI's cgroup, so
+  restarting the web UI cannot touch it.
+- A web-triggered update never rebooted, even when the release required one.
+  Both `update.sh` and `install.sh` asked with `read -rp`, which reads EOF
+  without a tty and takes the "no" branch - so "Re-install anyway?" silently
+  cancelled a re-install and "Reboot now?" silently skipped the reboot. Both
+  prompts now honour `IOSBACKUP_NONINTERACTIVE=1`.
+
+### Changed
+
+- An update started from the web UI now always reboots the device when it
+  finishes (`IOSBACKUP_AUTO_REBOOT=1`), rather than only when the release bumps
+  `REBOOT_EPOCH`. The installer stops every service up front and restarts only
+  some of them, so a reboot is what guarantees the display daemon, the
+  WireGuard reconciler and usbmuxd all come back. Updates run over SSH are
+  unchanged and still prompt.
+
+### Added
+
+- An `Updating - device will reboot` screen on the e-ink for the duration of a
+  web-triggered update. The web UI drops a sentinel before it launches the
+  updater; the display daemon shows the screen while it exists and paints it as
+  its final frame on the way down, so the e-ink holds it with the daemon
+  stopped and through the reboot. Without this the daemon's shutdown handler
+  painted the power-off owner screen, which reads as "the device is off" for
+  the whole update. The sentinel is retired once it predates the current boot
+  (armbian-ramlog restores zram `/var/log` across a reboot, so it cannot be
+  assumed to vanish with it), and in any case after 30 minutes, so an update
+  that dies without rebooting cannot strand the panel.
+
 ## [4.5.1] - 2026-08-21
 
 ### Fixed

@@ -11,7 +11,7 @@ Provides a web interface to configure:
 - Web UI interface binding
 All configuration is saved directly to config.yaml.
 """
-import os, sys, time, subprocess, json, secrets, yaml, copy, hashlib, glob, plistlib, logging
+import os, sys, time, subprocess, json, secrets, yaml, copy, hashlib, glob, plistlib, logging, shlex, shutil
 from functools import wraps
 from logging.handlers import RotatingFileHandler
 
@@ -32,7 +32,7 @@ import config_schema
 import power
 import logutil
 
-VERSION = "4.5.1"
+VERSION = "4.6.0"
 
 CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/iosbackupmachine/config.yaml")
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webui_static")
@@ -1411,6 +1411,72 @@ def purge_logs():
 # --- System Update ---
 REPO_DIR = os.getenv("IOSBACKUP_REPO", "/root/ios-backup-machine")
 VERSION_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".installed_version")
+# Watched by the display daemon: while it exists the e-ink shows "Updating /
+# Device will reboot", including on the daemon's way down. It lives on the
+# volatile runtime dir, so the reboot at the end of the update clears it.
+UPDATING_FILE = os.path.join(RUNTIME_DIR, "updating")
+
+# Env the updater runs with. NONINTERACTIVE skips the two `read -rp` prompts in
+# update.sh / install.sh (they get EOF from a non-tty and would otherwise answer
+# "no" to both the re-install and the reboot). AUTO_REBOOT makes install.sh
+# reboot when it finishes: the installer stops every service up front and only
+# restarts some of them, so a web-triggered update that does not reboot can
+# leave the display daemon and the WireGuard reconciler down — which is exactly
+# how the device used to drop off the VPN mid-update.
+UPDATE_ENV = {
+    "DEBIAN_FRONTEND": "noninteractive",
+    "IOSBACKUP_SKIP_VERSION_CHECK": "1",
+    "IOSBACKUP_NONINTERACTIVE": "1",
+    "IOSBACKUP_AUTO_REBOOT": "1",
+}
+
+
+def _mark_updating(marker=None):
+    """Drop the sentinel the display daemon watches. Best-effort: a missing
+    e-ink notice must not stop the update."""
+    path = marker or UPDATING_FILE
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write(str(int(time.time())))
+        return True
+    except Exception:
+        return False
+
+
+def _clear_updating(marker=None):
+    try:
+        os.remove(marker or UPDATING_FILE)
+    except Exception:
+        pass
+
+
+def _update_launch_command(script, log_file, have_systemd_run=None):
+    """argv that runs the updater detached from webui.service.
+
+    install.sh restarts webui.service partway through. webui.service does not set
+    KillMode=process, so systemd tears down its entire cgroup on that restart —
+    and a Popen(start_new_session=True) child is still inside that cgroup, only
+    in a different session. So the updater used to be SIGTERMed mid-run, after
+    it had stopped every service but before it restarted them or rebooted.
+
+    systemd-run puts the updater in its own transient unit, outside the webui
+    cgroup, so the restart cannot touch it. --collect reaps the unit afterwards,
+    which also clears a failed unit of the same name from a previous attempt.
+    Redirection is done by the inner shell rather than StandardOutput=append: so
+    this does not depend on the systemd version.
+    """
+    if have_systemd_run is None:
+        have_systemd_run = shutil.which("systemd-run") is not None
+    if not have_systemd_run:
+        # No systemd-run: run it in-cgroup as before. The update still applies,
+        # but it can be cut short at the webui restart.
+        return ["bash", script]
+    inner = f"exec bash {shlex.quote(script)} > {shlex.quote(log_file)} 2>&1"
+    argv = ["systemd-run", "--unit=iosbackup-update", "--collect"]
+    argv += [f"--setenv={k}={v}" for k, v in sorted(UPDATE_ENV.items())]
+    argv += ["bash", "-c", inner]
+    return argv
 
 @app.route("/update", methods=["GET", "POST"])
 @login_required
@@ -1462,26 +1528,40 @@ def system_update():
                 flash(f"Failed to check for updates: {e}", "error")
 
         elif action == "update":
-            # Run update.sh in background — the web UI will be restarted
-            # by the installer, so we can't wait for it to finish.
+            # Run update.sh detached — the installer restarts the web UI and
+            # then reboots the device, so we can't wait for it to finish.
             update_script = os.path.join(REPO_DIR, "update.sh")
             if not os.path.isfile(update_script):
                 flash("update.sh not found in repo directory.", "error")
             else:
+                log_file = os.path.join(LOG_DIR, "update.log")
                 try:
-                    log_file = os.path.join(LOG_DIR, "update.log")
                     os.makedirs(LOG_DIR, exist_ok=True)
-                    with open(log_file, "w") as lf:
-                        subprocess.Popen(
-                            ["bash", update_script],
-                            stdout=lf, stderr=lf,
-                            env={**os.environ, "DEBIAN_FRONTEND": "noninteractive",
-                                 "IOSBACKUP_SKIP_VERSION_CHECK": "1"},
-                            start_new_session=True
-                        )
-                    flash("Update started in background. The web UI will restart shortly. "
-                          "Refresh the page in about 60 seconds.", "success")
+                    # Paint the e-ink notice before anything is stopped, so the
+                    # panel is already showing "Updating" when the daemon dies.
+                    _mark_updating()
+                    argv = _update_launch_command(update_script, log_file)
+                    if argv[0] == "systemd-run":
+                        # systemd-run returns as soon as the unit is started, so
+                        # this can be waited on. Without the wait a refused start
+                        # (e.g. iosbackup-update already active) would be silent
+                        # and the e-ink would sit on "Updating" until a reboot.
+                        r = subprocess.run(argv, capture_output=True, text=True,
+                                           timeout=30,
+                                           env={**os.environ, **UPDATE_ENV})
+                        if r.returncode != 0:
+                            raise RuntimeError(
+                                (r.stderr or r.stdout or "").strip()
+                                or f"systemd-run exited {r.returncode}")
+                    else:
+                        with open(log_file, "w") as lf:
+                            subprocess.Popen(argv, stdout=lf, stderr=lf,
+                                             env={**os.environ, **UPDATE_ENV},
+                                             start_new_session=True)
+                    flash("Update started. The device will reboot when it finishes — "
+                          "the web UI is back about a minute later.", "success")
                 except Exception as e:
+                    _clear_updating()
                     flash(f"Failed to start update: {e}", "error")
 
         return render_template("system_update.html",

@@ -58,7 +58,7 @@
             <input type="hidden" name="action" value="check">
             <button type="submit" class="btn btn-secondary">Check for Updates</button>
         </form>
-        <form method="POST" style="display:inline;" onsubmit="return confirm('This will stop all services, update the software, and restart. The web UI will be briefly unavailable. Continue?');">
+        <form method="POST" style="display:inline;" onsubmit="return confirm('This will stop all services, update the software, and reboot the device. The web UI and the VPN come back about a minute later. Continue?');">
             <input type="hidden" name="action" value="update">
             <button type="submit" class="btn btn-primary" id="update-btn">
                 Install Update
@@ -66,6 +66,10 @@
         </form>
     </div>
     <p class="hint" style="margin-top:12px;">
+        The device reboots when the update finishes. The display shows
+        &ldquo;Updating &mdash; device will reboot&rdquo; for the whole run.
+    </p>
+    <p class="hint" style="margin-top:8px;">
         You can also update via SSH: <code>bash /root/ios-backup-machine/update.sh</code>
     </p>
 </div>

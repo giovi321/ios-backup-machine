@@ -40,6 +40,14 @@ REQUIRED_OVERLAYS="rk3568-spi3-m1-cs0-spidev rk3568-i2c3-m0"
 # Get version from repo
 REPO_VERSION=$(sed -n 's/^VERSION *= *"\([^"]*\)".*/\1/p' "${REPO_DIR}/app/webui.py" 2>/dev/null || echo "unknown")
 
+# Set by the web UI, which runs this with no tty. NONINTERACTIVE skips the reboot
+# prompt (it would read EOF and answer "no"); AUTO_REBOOT reboots regardless of
+# REBOOT_EPOCH, because this script stops every service up front and only restarts
+# some of them - without the reboot a web-triggered update leaves the display
+# daemon and the WireGuard reconciler down, and the device drops off the VPN.
+NONINTERACTIVE="${IOSBACKUP_NONINTERACTIVE:-0}"
+AUTO_REBOOT="${IOSBACKUP_AUTO_REBOOT:-0}"
+
 # Files to copy (repo_path:install_name)
 APP_FILES=(
     "app/iosbackupmachine.py:iosbackupmachine.py"
@@ -726,15 +734,22 @@ echo ""
 # Record the reboot epoch we just installed, so the next update can compare.
 echo "${REPO_REBOOT_EPOCH}" > "${INSTALL_DIR}/.reboot_epoch" 2>/dev/null || true
 
-if [ "${NEED_REBOOT}" = true ]; then
+if [ "${AUTO_REBOOT}" = "1" ]; then
+    echo -e "  ${YELLOW}Rebooting to finish applying the update...${NC}"
+    reboot
+elif [ "${NEED_REBOOT}" = true ]; then
     echo -e "  ${YELLOW}⚠ A reboot is required to apply this update.${NC}"
     echo ""
-    read -rp "  Reboot now? [y/N] " answer
-    if [[ "${answer}" =~ ^[Yy]$ ]]; then
-        echo "  Rebooting..."
-        reboot
-    else
+    if [ "${NONINTERACTIVE}" = "1" ]; then
         echo -e "  ${YELLOW}Remember to reboot to finish applying the update.${NC}"
+    else
+        read -rp "  Reboot now? [y/N] " answer
+        if [[ "${answer}" =~ ^[Yy]$ ]]; then
+            echo "  Rebooting..."
+            reboot
+        else
+            echo -e "  ${YELLOW}Remember to reboot to finish applying the update.${NC}"
+        fi
     fi
 else
     echo -e "  No reboot required."

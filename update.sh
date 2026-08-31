@@ -17,6 +17,10 @@ NC='\033[0m'
 
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+# Set by the web UI, which has no tty: the prompts below would read EOF and take
+# the "no" branch, silently turning a requested update into a no-op.
+NONINTERACTIVE="${IOSBACKUP_NONINTERACTIVE:-0}"
+
 echo ""
 echo -e "${BLUE}╔══════════════════════════════════════════════════════════════╗${NC}"
 echo -e "${BLUE}║      iOS Backup Machine - Updater                          ║${NC}"
@@ -49,10 +53,14 @@ REMOTE=$(git rev-parse origin/main 2>/dev/null || echo "")
 if [ -n "${REMOTE}" ] && [ "${LOCAL}" = "${REMOTE}" ]; then
     echo -e "  ${GREEN}✓ Already up to date (${CURRENT_VERSION}).${NC}"
     echo ""
-    read -rp "  Re-install anyway? [y/N] " answer
-    if [[ ! "${answer}" =~ ^[Yy]$ ]]; then
-        echo "  Done."
-        exit 0
+    if [ "${NONINTERACTIVE}" = "1" ]; then
+        echo "  Re-installing anyway (non-interactive)."
+    else
+        read -rp "  Re-install anyway? [y/N] " answer
+        if [[ ! "${answer}" =~ ^[Yy]$ ]]; then
+            echo "  Done."
+            exit 0
+        fi
     fi
 fi
 
@@ -79,4 +87,6 @@ fi
 echo -e "  ${BLUE}Running installer...${NC}"
 echo ""
 export IOSBACKUP_SKIP_VERSION_CHECK=1
+export IOSBACKUP_NONINTERACTIVE="${NONINTERACTIVE}"
+export IOSBACKUP_AUTO_REBOOT="${IOSBACKUP_AUTO_REBOOT:-0}"
 exec bash "${REPO_DIR}/install.sh"

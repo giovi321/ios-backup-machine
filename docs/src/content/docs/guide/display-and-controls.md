@@ -22,6 +22,7 @@ The daemon renders these screens from state:
 - Sync progress: transferred / total size, current speed, and a progress bar (see [Remote sync](../remote-sync/))
 - System info: shown for 30 seconds after a single button tap (see below), then returns to whatever was on screen before the tap
 - Unplug / interrupted: if you unplug the iPhone mid-backup the process stops safely and the screen shows the interruption timestamp
+- Updating: shown for the whole of an update started from the web UI, and painted again as the daemon's last frame before the installer stops it. E-paper holds the image with the daemon down and through the reboot that ends the update
 - Power-off owner screen: owner info only. The daemon paints it on shutdown and sleeps the panel, so the image persists on e-paper after power-off or power loss
 
 Errors appear directly on the display.
@@ -30,7 +31,7 @@ Errors appear directly on the display.
 
 Every live screen (boot/idle, backup, sync, info, interrupted, complete) draws a row of status icons in the bottom-left corner. From the set: power (always on), VPN, internet, WiFi, and iPhone. The VPN, internet, and WiFi icons are crossed out with a "/" when that connection is inactive.
 
-The power-off owner screen omits the icon row.
+The power-off owner screen and the updating screen omit the icon row - during an update the icons would freeze mid-run and read as live.
 
 ### The three-state iPhone icon
 

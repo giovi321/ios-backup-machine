@@ -49,7 +49,7 @@ After the script finishes, open the web UI at `http://<device-ip>:8080` to compl
 
 ## Updating
 
-From the web UI: go to Tools > Update, click "Check for Updates", then "Install Update".
+From the web UI: go to Tools > Update, click "Check for Updates", then "Install Update". The device reboots when the update finishes, so the web UI and the VPN are unreachable for about a minute. The e-ink shows `Updating - device will reboot` for the whole run.
 
 From SSH:
 
@@ -64,7 +64,9 @@ The update process:
 - Pulls the latest code from GitHub
 - Migrates config, adding new settings without overwriting your values
 - Runs the installer with a post-install health check
-- Restarts services, and prompts for a reboot when the release requires one
+- Restarts services, then reboots: always for a web UI update, and after a prompt over SSH when the release requires one
+
+An update started from the web UI runs in its own systemd unit (`iosbackup-update`), not as a child of the web UI, so restarting the web UI partway through the install cannot cut it short. Follow it with `journalctl -u iosbackup-update -f`, or read `/var/lib/iosbackupmachine/update.log` afterwards.
 
 <details>
 <summary>Manual installation (step-by-step reference)</summary>
