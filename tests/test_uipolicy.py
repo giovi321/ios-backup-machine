@@ -136,3 +136,33 @@ def test_a_sync_no_longer_cancels_the_info_screen():
     w = uipolicy.InfoWindow(duration=30)
     w.open(now=100.0, previous_state={"screen": "normal", "subtitle": "Syncing..."})
     assert w.active(now=105.0) is True
+
+
+def test_a_plugged_in_phone_with_a_pending_request_releases_the_hold():
+    """The post-backup hold and the post-FAILURE hold must agree on this case.
+
+    The failure path used to wait on the cable alone, so a "Start Backup" from
+    the web UI did nothing while the error screen was up, and then fired later
+    on the next plug-in — one deaf wait producing both a dead button and an
+    apparently spontaneous backup.
+    """
+    assert uipolicy.should_release_hold(device_present=True, sync_running=False,
+                                        manual_start=True) is True
+
+
+def test_the_error_hold_uses_the_shared_policy_rather_than_its_own_loop():
+    """Pins the unification. These two waits drifted apart once already, because
+    each carried its own copy of "when do we stop holding the screen".
+
+    Read as text rather than imported: this module stays free of the daemon's
+    hardware dependencies, which is why it runs anywhere.
+    """
+    import os
+    app = os.path.join(os.path.dirname(__file__), "..", "app", "iosbackupmachine.py")
+    src = open(os.path.abspath(app), encoding="utf-8").read()
+    error_hold = src[src.index("def error_and_wait"):]
+    error_hold = error_hold[:error_hold.index("def feed_parser")]
+    assert "uipolicy.should_release_hold" in error_hold
+    assert "manual_start=_manual_start_requested()" in error_hold
+    # And it must not go back to waiting on the cable alone.
+    assert "while True:" not in error_hold

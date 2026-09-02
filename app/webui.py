@@ -32,7 +32,7 @@ import config_schema
 import power
 import logutil
 
-VERSION = "4.8.0"
+VERSION = "4.8.1"
 
 CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/iosbackupmachine/config.yaml")
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webui_static")

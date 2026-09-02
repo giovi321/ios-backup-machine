@@ -1399,7 +1399,18 @@ def run_backup(panel, logf, ui, _retry=0):
     )
 
     def error_and_wait(user_msg, code=None, tail=None):
-        """Show error on display and wait for iPhone to be unplugged.
+        """Show the error, then hold the screen until there is a reason to let go.
+
+        Holding until the iPhone is unplugged is what keeps the error readable.
+        But this used to wait on the cable and nothing else, which made the daemon
+        deaf for as long as the phone stayed in: a "Start Backup" from the web UI
+        wrote its sentinel, the UI reported the request accepted, and nothing
+        happened — then the sentinel was still inside its 15s window when the user
+        unplugged and replugged, so the backup fired on the plug instead, looking
+        like an unwanted auto-start. One deaf wait, two symptoms.
+
+        It now releases on the same three conditions the post-backup hold uses:
+        the phone leaving, a fresh manual request, or shutdown.
         Does NOT exit — lets the unplug handler show its screen."""
         # Enhance disk space errors with more context
         if code in (105, 106):
@@ -1422,14 +1433,16 @@ def run_backup(panel, logf, ui, _retry=0):
         if logf: logf.write(f"[ERROR] {user_msg} code={code} tail='{tail or ''}'\n")
         send_notification("backup_error", {"error": user_msg, "code": code})
 
-        # Wait for iPhone to be unplugged (so unplug-notify can show its screen)
-        print("[ERROR] Waiting for iPhone to be unplugged...", flush=True)
-        while True:
-            try:
-                out = subprocess.run(["idevice_id", "-l"], capture_output=True, text=True, timeout=5).stdout.strip()
-                if not out:
-                    break
-            except Exception:
+        # Hold the error on screen until the phone leaves, the user asks for
+        # another backup, or we are shutting down. Same policy as the post-backup
+        # hold, and deliberately the same function: keeping one of these two waits
+        # in step with the other by hand is what let them drift apart. A sync
+        # cannot be running here, since a backup is what got us to this line.
+        print("[ERROR] Holding error screen (unplug, new request, or shutdown)...", flush=True)
+        while not SHUTDOWN.is_set():
+            if uipolicy.should_release_hold(device_present=device_present(),
+                                            sync_running=False,
+                                            manual_start=_manual_start_requested()):
                 break
             time.sleep(1)
 

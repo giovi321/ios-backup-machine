@@ -4,6 +4,24 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses a
 single version constant in `app/webui.py`.
 
+## [4.8.1] - 2026-09-02
+
+### Fixed
+
+- After a failed backup, "Start Backup" in the web UI did nothing while the
+  error screen was up, and the request then fired later when the iPhone was
+  next plugged in - looking like an unwanted automatic backup. One cause, two
+  symptoms: the error screen's wait polled only for the cable being pulled, so
+  the daemon was deaf to everything else for as long as the phone stayed in.
+  The web UI meanwhile reported the request accepted, and the sentinel that
+  carries it stays valid for 15 seconds, so a replug inside that window ran the
+  backup the user had asked for a minute earlier.
+
+  The wait now releases on the same three conditions as the post-backup hold -
+  the phone leaving, a fresh manual request, or shutdown - and does so by
+  calling the same `uipolicy.should_release_hold` rather than keeping its own
+  copy of the rule, which is how the two drifted apart in the first place.
+
 ## [4.8.0] - 2026-09-02
 
 ### Added
