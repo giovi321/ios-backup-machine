@@ -1,8 +1,21 @@
 """Tests for webhook auth: notify_crypto round-trip, header assembly, and the
 _send_webhook (status, error) contract."""
+import pytest
+
 import notify_crypto
 import wg_crypto
 import notifications
+
+
+@pytest.fixture(autouse=True)
+def isolated_auth_cache(tmp_path, monkeypatch):
+    """Keep every test in this module off the real /run cache, in both
+    directions: a resolved header must not be written there, and a header left
+    there by the device must not answer a test."""
+    d = tmp_path / "runtime"
+    monkeypatch.setattr(notifications, "AUTH_CACHE_DIR", str(d))
+    monkeypatch.setattr(notifications, "AUTH_CACHE_FILE", str(d / "webhook_auth.json"))
+    monkeypatch.setattr(notifications, "AUTH_CACHE_TTL", 0)
 
 
 def test_round_trip(tmp_path, monkeypatch):
@@ -34,10 +47,16 @@ def test_webhook_auth_headers(tmp_path, monkeypatch):
 
 
 def test_webhook_auth_headers_unresolvable(tmp_path, monkeypatch):
-    # UDID mode, no iPhone -> can't decrypt -> request goes out unauthenticated.
+    """UDID mode, no iPhone, nothing cached -> None, meaning "auth was wanted and
+    could not be obtained".
+
+    This used to return {}, which send_notification could not tell apart from
+    "no auth configured", so the request went out unauthenticated and an
+    authenticated endpoint answered 403 with nothing recorded anywhere.
+    """
     monkeypatch.setattr(notify_crypto, "ENC_FILE", str(tmp_path / "notify.enc"))
     monkeypatch.setattr(wg_crypto, "resolve_passphrase", lambda passphrase=None, config=None: None)
-    assert notifications.webhook_auth_headers({"auth_enabled": True}) == {}
+    assert notifications.webhook_auth_headers({"auth_enabled": True}) is None
 
 
 def test_send_webhook_returns_status_error_tuple():

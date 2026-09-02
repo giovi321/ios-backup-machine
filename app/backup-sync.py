@@ -162,11 +162,19 @@ try:
 except Exception:
     _batt_ok, _batt_reason = True, ""
 if not _batt_ok:
-    logf.write(f"[SKIP] {_batt_reason}\n")
-    write_status("sync_error", message=_batt_reason)
+    # Same structured shape as any other sync failure, so a subscriber handling
+    # sync_error does not need a special case for the ones that never started.
+    import sync_manager as _sm
+    _failure = _sm.build_failure("battery_low", detail=_batt_reason)
+    logf.write(f"[SKIP] {_failure['message']}\n")
+    write_status("sync_error", message=_failure["message"],
+                 reason_code=_failure["reason_code"])
     try:
         from notifications import send_notification as _notify
-        _notify("sync_error", {"error": _batt_reason})
+        _notify("sync_error", {"error": _failure["message"],
+                               **_sm.notification_payload(_failure)})
+        import notifications as _n
+        _n.flush()      # this path exits immediately; see the flush at the tail
     except Exception:
         pass
     logf.close()
@@ -182,6 +190,10 @@ logf.write("[INFO] status set to syncing — display owned by iosbackupmachine.p
 # ---------- Notifications (non-fatal) ----------
 try:
     from notifications import send_notification
+    import notifications as _notif
+    # Delivery problems (a 403, an unavailable auth header) used to reach only
+    # the journal; put them in the sync log the web UI actually serves.
+    _notif.set_logger(lambda m: logf.write(m + "\n"))
 except ImportError:
     def send_notification(*a, **kw): pass
 
@@ -191,32 +203,22 @@ send_notification("sync_start")
 import sync_manager
 
 
-# Throttle progress logging: only on a percent change or every 30s, so a stuck
-# or slow sync leaves a sparse, readable trail instead of a line every second.
-# Scan and stall transitions are logged separately (once) by sync_manager.
-_last_log = {"pct": None, "t": 0.0}
-
-
+# Progress lines are written by sync_manager's SyncLogWriter, which owns the
+# per-run log for the whole transfer. This callback only drives the status file
+# that the display daemon and the dashboard read.
 def on_progress(info):
-    pct = info.get("pct", 0)
-    elapsed = info.get("elapsed", 0.0)
     write_status(
         "syncing",
-        percent=pct,
+        percent=info.get("pct", 0),
         bytes=info.get("bytes", 0),
         total=info.get("total", 0),
         speed=info.get("speed", ""),
+        eta_seconds=info.get("eta_seconds"),
         stalled=bool(info.get("stalled", False)),
         stalled_seconds=int(info.get("stalled_seconds", 0)),
         scanning=bool(info.get("scanning", False)),
         scan_seconds=int(info.get("scan_seconds", 0)),
     )
-    if info.get("scanning") or info.get("stalled"):
-        return  # transitions are logged by sync_manager; don't spam here
-    if pct != _last_log["pct"] or (elapsed - _last_log["t"]) >= 30:
-        logf.write(f"[SYNC] {pct}% ({elapsed:.0f}s)\n")
-        _last_log["pct"] = pct
-        _last_log["t"] = elapsed
 
 
 try:
@@ -224,17 +226,39 @@ try:
 except Exception as e:
     tb = traceback.format_exc()
     logf.write(f"[ERROR] sync raised: {e}\n{tb}")
-    result = {"success": False, "message": f"Sync error: {e}", "duration": 0}
+    result = sync_manager._fail("internal_error",
+                                detail=f"the sync runner raised {type(e).__name__}: {e}")
 
 if result["success"]:
     logf.write(f"[OK] {result['message']}\n")
     write_status("sync_complete", message=result["message"])
     send_notification("sync_complete", {"message": result["message"]})
 else:
-    msg = result["message"]
-    logf.write(f"[ERROR] {msg}\n")
-    write_status("sync_error", message=msg)
-    send_notification("sync_error", {"error": msg})
+    # The failure payload carries the reason code, the exit status, how far the
+    # transfer got and what the post-mortem probes found. Pass it on whole: MQTT
+    # and webhook consumers get the same verdict the log has, and can key off
+    # reason_code instead of matching English.
+    failure = result.get("failure") or {"message": result["message"],
+                                        "reason_code": "internal_error"}
+    if not failure.get("logged"):
+        logf.write(f"[ERROR] {failure['message']}\n")   # pre-flight failures only
+    write_status("sync_error", message=failure["message"],
+                 reason_code=failure.get("reason_code"))
+    send_notification("sync_error",
+                      {"error": failure["message"],
+                       **sync_manager.notification_payload(failure)})
+
+# Notifications are delivered on background threads. Wait for them before the
+# interpreter exits, or they are killed mid-request and the result of every
+# manual sync is lost without a trace. notifications.flush is also registered
+# with atexit; calling it here keeps the wait visible where the exit happens,
+# and lets a delivery that timed out be recorded in the log.
+try:
+    import notifications as _notifications
+    if not _notifications.flush():
+        logf.write("[WARN] notification delivery did not finish in time\n")
+except Exception as e:
+    logf.write(f"[WARN] notification flush failed: {e}\n")
 
 logf.close()
 sys.exit(0)

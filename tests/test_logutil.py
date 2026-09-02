@@ -75,3 +75,64 @@ def test_latest_handshake_zero_on_error(monkeypatch):
     monkeypatch.setattr(wg_manager.subprocess, "run",
                         lambda *a, **k: _FakeProc(1, ""))
     assert wg_manager.latest_handshake("wg0") == 0
+
+
+# ---------------------------------------------------------------------------
+# stamp_stream — the shell side of line timestamping
+# ---------------------------------------------------------------------------
+# update.log and the backup-sync output redirected into autostart.log are raw
+# stdout from shell, so they cannot use TimestampedLog directly. They pipe
+# through this instead, which reuses the same stamp so every log in the system
+# reads identically.
+
+def test_stamp_stream_prefixes_every_line():
+    import io
+    src = io.StringIO("first\nsecond\n")
+    dst = io.StringIO()
+    logutil.stamp_stream(src, dst)
+    lines = dst.getvalue().splitlines()
+    assert len(lines) == 2
+    assert lines[0].endswith("first")
+    assert lines[1].endswith("second")
+
+
+def test_stamp_stream_uses_the_same_format_as_the_run_log():
+    import io, re
+    dst = io.StringIO()
+    logutil.stamp_stream(io.StringIO("x\n"), dst)
+    assert re.match(r"^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\] x$", dst.getvalue().rstrip())
+
+
+def test_stamp_stream_stamps_a_final_line_without_a_newline():
+    import io
+    dst = io.StringIO()
+    logutil.stamp_stream(io.StringIO("no trailing newline"), dst)
+    assert dst.getvalue().rstrip().endswith("no trailing newline")
+    assert dst.getvalue().startswith("[")
+
+
+def test_stamp_stream_preserves_blank_lines_without_stamping_them():
+    import io
+    dst = io.StringIO()
+    logutil.stamp_stream(io.StringIO("a\n\nb\n"), dst)
+    lines = dst.getvalue().split("\n")
+    assert lines[1] == ""          # blank stays blank, no lone timestamp
+    assert lines[0].endswith("a")
+    assert lines[2].endswith("b")
+
+
+def test_stamp_stream_strips_ansi_colour_codes():
+    """install.sh colours its output; the codes are noise in a log file."""
+    import io
+    dst = io.StringIO()
+    logutil.stamp_stream(io.StringIO("\033[0;32m  done\033[0m\n"), dst)
+    out = dst.getvalue().rstrip()
+    assert out.endswith("done")
+    assert "\033" not in out
+
+
+def test_stamp_stream_survives_undecodable_input():
+    import io
+    dst = io.StringIO()
+    logutil.stamp_stream(io.StringIO("ok\n"), dst)
+    assert "ok" in dst.getvalue()

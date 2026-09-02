@@ -11,7 +11,7 @@ Provides a web interface to configure:
 - Web UI interface binding
 All configuration is saved directly to config.yaml.
 """
-import os, sys, time, subprocess, json, secrets, yaml, copy, hashlib, glob, plistlib, logging, shlex, shutil
+import os, sys, time, subprocess, json, secrets, yaml, copy, hashlib, glob, plistlib, logging, shlex, shutil, threading
 from functools import wraps
 from logging.handlers import RotatingFileHandler
 
@@ -32,7 +32,7 @@ import config_schema
 import power
 import logutil
 
-VERSION = "4.6.0"
+VERSION = "4.8.0"
 
 CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/iosbackupmachine/config.yaml")
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webui_static")
@@ -433,9 +433,11 @@ def index():
     backup_status = _read_backup_status()
     storage = _get_storage_info()
     wifi_ssid = netutil.get_wifi_ssid()
+    connectivity.ensure_started()
     return render_template("index.html", cfg=cfg, ip=ip, iface_type=iface_type,
                            wg_status=wg_status, backup_status=backup_status, storage=storage,
-                           wifi_ssid=wifi_ssid, wifi_nickname=_wifi_nickname_for(cfg, wifi_ssid))
+                           wifi_ssid=wifi_ssid, wifi_nickname=_wifi_nickname_for(cfg, wifi_ssid),
+                           connectivity=connectivity.snapshot())
 
 @app.route("/favicon.ico")
 def favicon():
@@ -674,6 +676,14 @@ def settings_notifications():
         notif["mqtt"] = mq
         cfg["notifications"] = notif
         save_config(cfg)
+        # Drop the cached auth header: the URL, the header name or the secret
+        # itself may have just changed, and a stale cached value would keep
+        # being sent (and rejected) until the next reboot.
+        try:
+            import notifications as _notif
+            _notif.clear_auth_cache()
+        except Exception:
+            pass
         flash("Notification settings saved.", "success")
         return redirect(url_for("settings_notifications"))
     return render_template("settings_notifications.html", cfg=cfg,
@@ -696,12 +706,22 @@ def test_notification():
     if channel == "webhook":
         wh = ncfg.get("webhook", {})
         if wh.get("url"):
-            status, err = _send_webhook(wh["url"], payload, webhook_auth_headers(wh))
-            if status and 200 <= status < 300:
-                flash(f"Webhook test sent successfully (HTTP {status}).", "success")
+            extra = webhook_auth_headers(wh)
+            if extra is None:
+                # Auth is configured but could not be obtained. Sending anyway
+                # guarantees a rejection and would report it as a network fault;
+                # name the real cause instead. (send_notification makes the same
+                # check — this path calls _send_webhook directly and must repeat it.)
+                flash("Webhook test not sent: the auth header could not be decrypted. "
+                      "Connect the iPhone, or run one backup with it connected so the "
+                      "header is cached.", "error")
             else:
-                detail = err or (f"status {status}" if status else "no response")
-                flash(f"Webhook test failed ({detail}).", "error")
+                status, err = _send_webhook(wh["url"], payload, extra)
+                if status and 200 <= status < 300:
+                    flash(f"Webhook test sent successfully (HTTP {status}).", "success")
+                else:
+                    detail = err or (f"status {status}" if status else "no response")
+                    flash(f"Webhook test failed ({detail}).", "error")
         else:
             flash("No webhook URL configured.", "error")
     elif channel == "mqtt":
@@ -1242,6 +1262,109 @@ def _human_size(nbytes):
 
 app.jinja_env.filters["human_size"] = _human_size
 
+
+def _human_duration(seconds):
+    """Compact duration for the dashboard. Same shape as the sync log's, so an
+    ETA read on the dashboard and one read in the log look alike."""
+    try:
+        seconds = int(seconds)
+    except (TypeError, ValueError):
+        return ""
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        return f"{seconds // 60}m"
+    return f"{seconds // 3600}h{(seconds % 3600) // 60:02d}m"
+
+app.jinja_env.filters["human_duration"] = _human_duration
+
+
+class ConnectivityMonitor:
+    """Background internet probe, cached for the dashboard and the health endpoint.
+
+    ``netutil.have_connectivity()`` opens a TCP connection and blocks for up to
+    its timeout per host, twice when both fail — so probing inline would make the
+    status poll as slow as the outage it is meant to report, and would put a
+    packet on the resolvers every few seconds for every open browser tab. This
+    probes on its own schedule; readers get the cached answer.
+
+    It also records when the current state began. That is the number that matters
+    on this device: the iPhone hotspot can drop as a sync starts and the device
+    fails over to WiFi, and "offline for 3m" says that happened where a bare
+    "offline" does not.
+    """
+
+    def __init__(self, interval=20.0):
+        self.interval = interval
+        self._lock = threading.Lock()
+        self._online = None        # None until the first probe lands
+        self._checked_at = 0.0
+        self._changed_at = 0.0
+        self._thread = None
+
+    def ensure_started(self):
+        """Start the probe loop once, on first use.
+
+        Deliberately not started at import: importing this module must not open
+        sockets, or the test suite would depend on the network.
+        """
+        with self._lock:
+            if self._thread is not None:
+                return
+            self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+
+    def _loop(self):
+        while True:
+            self.probe_once()
+            time.sleep(self.interval)
+
+    def probe_once(self):
+        """Run one probe and fold it into the cached state. Never raises."""
+        try:
+            online = bool(netutil.have_connectivity(timeout=4))
+        except Exception:
+            online = False
+        now = time.time()
+        with self._lock:
+            if online != self._online:
+                self._changed_at = now
+            self._online = online
+            self._checked_at = now
+        return online
+
+    def snapshot(self):
+        """Current state: ``online`` is None while no probe has completed yet,
+        which readers must render as "checking" rather than as offline."""
+        now = time.time()
+        with self._lock:
+            return {
+                "online": self._online,
+                "age_seconds": int(now - self._checked_at) if self._checked_at else None,
+                "since_seconds": int(now - self._changed_at) if self._changed_at else None,
+                "interval_seconds": int(self.interval),
+            }
+
+
+connectivity = ConnectivityMonitor()
+
+
+def _health_internet(monitor=None):
+    """Internet state for the health endpoint.
+
+    Prefers the monitor's cached answer so the endpoint stays fast, but probes
+    directly when the cache is empty or stale: an external monitor polling
+    /api/health must not be told the wrong thing just because nobody has opened
+    the dashboard recently. ``monitor`` is injectable for tests.
+    """
+    monitor = connectivity if monitor is None else monitor
+    monitor.ensure_started()
+    snap = monitor.snapshot()
+    age = snap["age_seconds"]
+    if snap["online"] is not None and age is not None and age <= monitor.interval * 2:
+        return snap["online"]
+    return monitor.probe_once()
+
 def _parse_info_plist(plist_path):
     """Parse an iOS backup Info.plist and return a dict of useful fields."""
     info = {}
@@ -1465,6 +1588,12 @@ def _update_launch_command(script, log_file, have_systemd_run=None):
     which also clears a failed unit of the same name from a previous attempt.
     Redirection is done by the inner shell rather than StandardOutput=append: so
     this does not depend on the systemd version.
+
+    The output goes through logutil's stamper on the way to the log. update.sh is
+    a shell script writing plain stdout, so it is the one log that cannot stamp
+    its own lines — and an update that breaks a sync is exactly the correlation
+    an unstamped log makes impossible. pipefail keeps the unit's exit status the
+    updater's rather than the stamper's.
     """
     if have_systemd_run is None:
         have_systemd_run = shutil.which("systemd-run") is not None
@@ -1472,7 +1601,9 @@ def _update_launch_command(script, log_file, have_systemd_run=None):
         # No systemd-run: run it in-cgroup as before. The update still applies,
         # but it can be cut short at the webui restart.
         return ["bash", script]
-    inner = f"exec bash {shlex.quote(script)} > {shlex.quote(log_file)} 2>&1"
+    stamper = f"{shlex.quote(sys.executable)} {shlex.quote(logutil.__file__)} --stamp"
+    inner = (f"set -o pipefail; bash {shlex.quote(script)} 2>&1 | "
+             f"{stamper} > {shlex.quote(log_file)}")
     argv = ["systemd-run", "--unit=iosbackup-update", "--collect"]
     argv += [f"--setenv={k}={v}" for k, v in sorted(UPDATE_ENV.items())]
     argv += ["bash", "-c", inner]
@@ -1584,6 +1715,7 @@ def api_status():
     ip, iface_type = netutil.get_active_ip()
     wg = cfg.get("wireguard", {})
     wifi_ssid = netutil.get_wifi_ssid()
+    connectivity.ensure_started()
     return jsonify({
         "ip": ip,
         "interface": iface_type,
@@ -1592,6 +1724,7 @@ def api_status():
         "wifi_nickname": _wifi_nickname_for(cfg, wifi_ssid),
         "usb_iphone_ip": netutil.get_usb_iphone_ip(),
         "wireguard": wg_manager.get_wireguard_status(wg.get("interface_name", "wg0")),
+        "connectivity": connectivity.snapshot(),
         "time": time.strftime("%Y-%m-%d %H:%M:%S"),
     })
 
@@ -1676,7 +1809,7 @@ def api_health():
         "wifi_ssid": wifi_ssid,
         "wifi_nickname": _wifi_nickname_for(cfg, wifi_ssid),
         "usb_iphone_ip": netutil.get_usb_iphone_ip(),
-        "internet": netutil.have_connectivity(timeout=2),
+        "internet": _health_internet(),
         "wireguard": wg_manager.get_wireguard_status(wg.get("interface_name", "wg0")),
     }
     backup = _last_backup_info()

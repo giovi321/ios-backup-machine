@@ -18,8 +18,11 @@ Per-run logs (backup-*.log / sync-*.log) accumulate one file per run, so they
 are pruned here by count and age. The continuous append logs (webui/ntp/
 autostart/update) are size-capped by logrotate, not by this module.
 """
+import io
 import os
 import glob
+import re
+import sys
 import time
 from datetime import datetime
 
@@ -94,6 +97,45 @@ def open_run_log(path, mode="a"):
     return TimestampedLog(open(path, mode, buffering=1))
 
 
+_ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+
+
+def stamp_stream(src, dst):
+    """Copy ``src`` to ``dst`` line by line, prefixing each with the log stamp.
+
+    The shell-produced logs (update.log, and backup-sync.py's output redirected
+    into autostart.log) are plain stdout redirects, so they cannot use
+    TimestampedLog. Piping them through this keeps every log in the system on one
+    format, which is the whole point of stamping them: a sync failure can be
+    lined up against what the updater or the button handler was doing at that
+    second.
+
+    ANSI colour codes are stripped — install.sh writes them for a terminal, and
+    in a file the web UI renders verbatim they are noise. Blank lines stay blank
+    rather than becoming a lone timestamp.
+    """
+    for line in src:
+        line = _ANSI_RE.sub("", line.rstrip("\n").rstrip("\r"))
+        if line.strip():
+            dst.write(datetime.now().strftime("[%Y-%m-%d %H:%M:%S] ") + line + "\n")
+        else:
+            dst.write("\n")
+        try:
+            dst.flush()      # a truncated update must still show what it reached
+        except Exception:
+            pass
+
+
+def _stamp_stdin():
+    """``python3 logutil.py --stamp`` — the entry point the shell pipes into.
+
+    Reads stdin with errors='replace' so a stray non-UTF-8 byte from a subprocess
+    cannot kill the pipeline and take the rest of the log with it.
+    """
+    src = io.TextIOWrapper(sys.stdin.buffer, encoding="utf-8", errors="replace")
+    stamp_stream(src, sys.stdout)
+
+
 def prune_logs(log_dir=None, keep_per_kind=None, max_age_days=None):
     """Delete old per-run logs: keep the newest ``keep_per_kind`` of each kind
     (backup / sync) and drop anything older than ``max_age_days``. The freshly
@@ -117,3 +159,12 @@ def prune_logs(log_dir=None, keep_per_kind=None, max_age_days=None):
                     os.remove(path)
             except Exception:
                 pass
+
+
+if __name__ == "__main__":
+    if "--stamp" in sys.argv[1:]:
+        _stamp_stdin()
+    else:
+        print("usage: logutil.py --stamp   (stamp stdin, write to stdout)",
+              file=sys.stderr)
+        sys.exit(2)

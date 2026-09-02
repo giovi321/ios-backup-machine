@@ -59,6 +59,11 @@ sys.exit(0 if cfg.get('sync', {}).get('enabled') else 1)
     exit 0
 fi
 
-# All checks passed — start sync
+# All checks passed — start sync.
+# backup-sync.py keeps its own timestamped sync-*.log; what lands here is only
+# its stray stdout/stderr. Pipe it through the logutil stamper so those lines
+# carry the same timestamp as the log() lines around them, instead of being the
+# one unstamped block in autostart.log.
 log "Starting sync via long press."
-/root/iosbackupmachine/bin/python3 /root/iosbackupmachine/backup-sync.py >> "$LOG" 2>&1 &
+/root/iosbackupmachine/bin/python3 /root/iosbackupmachine/backup-sync.py 2>&1 \
+  | /root/iosbackupmachine/bin/python3 /root/iosbackupmachine/logutil.py --stamp >> "$LOG" &

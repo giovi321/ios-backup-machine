@@ -4,6 +4,61 @@
 <h1>Dashboard</h1>
 <p class="subtitle">iOS Backup Machine status overview</p>
 
+{#- Network card. A sync can only fail one way when the link goes: silently.
+    The appliance switches between the iPhone's USB hotspot and WiFi on its own,
+    so the link state and how long it has held are worth showing before anything
+    else on the page. -#}
+<div class="card" style="margin-bottom:20px;">
+    <h2>Network</h2>
+    <div class="info-grid" style="margin-top:12px;">
+        <div class="info-item">
+            <div class="label">Internet</div>
+            <div class="value" id="net-internet">
+                {% if connectivity and connectivity.online is none %}
+                <span class="badge badge-off"><span class="badge-dot"></span>Checking&hellip;</span>
+                {% elif connectivity and connectivity.online %}
+                <span class="badge" style="background:var(--success-bg);color:var(--success);"><span class="badge-dot" style="background:var(--success);"></span>Online</span>
+                {% else %}
+                <span class="badge" style="background:var(--error-bg);color:var(--error);"><span class="badge-dot" style="background:var(--error);"></span>Offline</span>
+                {% endif %}
+            </div>
+        </div>
+        <div class="info-item">
+            <div class="label">Connection</div>
+            <div class="value" id="net-iface">
+                {% if iface_type == 'usb_iphone' %}iPhone USB
+                {%- elif iface_type == 'wifi' %}WiFi{% if wifi_nickname %} &middot; {{ wifi_nickname }}{% elif wifi_ssid %} &middot; {{ wifi_ssid }}{% endif %}
+                {%- else %}--{% endif %}
+                {%- if ip %} <small style="color:var(--text-muted);">({{ ip }})</small>{% endif %}
+            </div>
+        </div>
+        <div class="info-item">
+            <div class="label">VPN</div>
+            <div class="value" id="net-vpn">
+                {% if wg_status and wg_status.up %}
+                <span class="badge" style="background:var(--success-bg);color:var(--success);"><span class="badge-dot" style="background:var(--success);"></span>WireGuard up</span>
+                {% else %}
+                <span class="badge badge-off"><span class="badge-dot"></span>Down</span>
+                {% endif %}
+            </div>
+        </div>
+        <div class="info-item">
+            {#- The label tracks the state: "Stable for 4m" while offline reads
+                like the outage is fine. -#}
+            <div class="label" id="net-since-label">
+                {%- if connectivity and connectivity.online is none %}Link state
+                {%- elif connectivity and connectivity.online %}Online for
+                {%- else %}Offline for{% endif -%}
+            </div>
+            <div class="value" id="net-since">
+                {% if connectivity and connectivity.since_seconds %}{{ connectivity.since_seconds|human_duration }}
+                {%- else %}--{% endif %}
+                {%- if connectivity and connectivity.age_seconds is not none %} <small style="color:var(--text-muted);">(checked {{ connectivity.age_seconds|human_duration }} ago)</small>{% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
 <div class="card" style="margin-bottom:20px;">
     <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
         <h2 style="margin-bottom:0;">Backup Status</h2>
@@ -114,7 +169,7 @@
                 {% if backup_status.stalled %}
                 <small style="color:var(--warning);"><strong>STALLED</strong> · no progress for {{ backup_status.stalled_seconds or 0 }}s (last {{ backup_status.percent }}%)</small>
                 {% else %}
-                <small style="color:var(--text-muted);">{{ backup_status.percent }}%{% if backup_status.bytes and backup_status.total %} &middot; {{ backup_status.bytes|human_size }} / {{ backup_status.total|human_size }}{% endif %}{% if backup_status.speed %} &middot; {{ backup_status.speed }}{% endif %}</small>
+                <small style="color:var(--text-muted);">{{ backup_status.percent }}%{% if backup_status.bytes and backup_status.total %} &middot; {{ backup_status.bytes|human_size }} / {{ backup_status.total|human_size }}{% endif %}{% if backup_status.speed %} &middot; {{ backup_status.speed }}{% endif %}{% if backup_status.eta_seconds %} &middot; ETA {{ backup_status.eta_seconds|human_duration }}{% endif %}</small>
                 {% endif %}
                 {% elif backup_status and backup_status.state == 'sync_complete' %}
                 <small style="color:var(--text-muted);">{{ backup_status.get('message', 'Done') }}</small>
@@ -271,6 +326,17 @@
         return n.toFixed(1) + ' ' + units[i];
     }
 
+    // Mirrors the human_duration Jinja filter, so the live-refreshed ETA reads
+    // the same as the server-rendered one on first paint.
+    function humanDuration(s) {
+        s = parseInt(s, 10);
+        if (isNaN(s)) return '';
+        if (s < 60) return s + 's';
+        if (s < 3600) return Math.floor(s / 60) + 'm';
+        var m = Math.floor((s % 3600) / 60);
+        return Math.floor(s / 3600) + 'h' + (m < 10 ? '0' : '') + m + 'm';
+    }
+
     // Auto-refresh status every 5 seconds
     setInterval(function() {
         fetch('{{ url_for("api_backup_status") }}')
@@ -354,6 +420,7 @@
                                 det += ' · ' + humanSize(data.bytes) + ' / ' + humanSize(data.total);
                             }
                             if (data.speed) det += ' · ' + data.speed;
+                            if (data.eta_seconds) det += ' · ETA ' + humanDuration(data.eta_seconds);
                             sProg.innerHTML = makeBar(data.percent) + '<small style="color:var(--text-muted);">' + det + '</small>';
                         }
                     } else if (data.state === 'sync_complete') {
@@ -367,5 +434,78 @@
             })
             .catch(function() {});
     }, 5000);
+
+    // Network card. Polled on the same 5s tick as the rest of the dashboard,
+    // but the server answers from a cached probe rather than opening a socket
+    // per request, so this stays cheap no matter how many tabs are open.
+    function badge(bg, fg, label) {
+        return '<span class="badge" style="background:var(--' + bg + ');color:var(--' + fg + ');">' +
+               '<span class="badge-dot" style="background:var(--' + fg + ');"></span>' + label + '</span>';
+    }
+    function offBadge(label) {
+        return '<span class="badge badge-off"><span class="badge-dot"></span>' + label + '</span>';
+    }
+
+    function refreshNetwork() {
+        fetch('{{ url_for("api_status") }}')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (!data) return;
+                var c = data.connectivity || {};
+                var el = document.getElementById('net-internet');
+                if (el) {
+                    if (c.online === null || c.online === undefined) {
+                        el.innerHTML = offBadge('Checking…');
+                    } else if (c.online) {
+                        el.innerHTML = badge('success-bg', 'success', 'Online');
+                    } else {
+                        el.innerHTML = badge('error-bg', 'error', 'Offline');
+                    }
+                }
+
+                var ifaceEl = document.getElementById('net-iface');
+                if (ifaceEl) {
+                    var name = '--';
+                    if (data.interface === 'usb_iphone') {
+                        name = 'iPhone USB';
+                    } else if (data.interface === 'wifi') {
+                        name = 'WiFi';
+                        var label = data.wifi_nickname || data.wifi_ssid;
+                        if (label) name += ' · ' + label;
+                    }
+                    if (data.ip) {
+                        name += ' <small style="color:var(--text-muted);">(' + data.ip + ')</small>';
+                    }
+                    ifaceEl.innerHTML = name;
+                }
+
+                var vpnEl = document.getElementById('net-vpn');
+                if (vpnEl) {
+                    vpnEl.innerHTML = (data.wireguard && data.wireguard.up)
+                        ? badge('success-bg', 'success', 'WireGuard up')
+                        : offBadge('Down');
+                }
+
+                var sinceLabel = document.getElementById('net-since-label');
+                if (sinceLabel) {
+                    sinceLabel.textContent =
+                        (c.online === null || c.online === undefined) ? 'Link state'
+                        : (c.online ? 'Online for' : 'Offline for');
+                }
+
+                var sinceEl = document.getElementById('net-since');
+                if (sinceEl) {
+                    var txt = c.since_seconds ? humanDuration(c.since_seconds) : '--';
+                    if (c.age_seconds !== null && c.age_seconds !== undefined) {
+                        txt += ' <small style="color:var(--text-muted);">(checked ' +
+                               humanDuration(c.age_seconds) + ' ago)</small>';
+                    }
+                    sinceEl.innerHTML = txt;
+                }
+            })
+            .catch(function() {});
+    }
+    refreshNetwork();
+    setInterval(refreshNetwork, 5000);
 </script>
 {% endblock %}

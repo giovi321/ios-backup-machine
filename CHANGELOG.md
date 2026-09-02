@@ -4,6 +4,112 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses a
 single version constant in `app/webui.py`.
 
+## [4.8.0] - 2026-09-02
+
+### Added
+
+- Sync failures now carry a structured, stable payload instead of a sentence.
+  Every way a sync can fail maps to one of a fixed set of `reason_code` values
+  (`ssh_connection_failed`, `stall_timeout`, `out_of_memory`, `battery_abort`
+  and so on), and the failure object carries the exit code, how far the transfer
+  got in bytes and percent, its duration, the last file rsync was on, and the
+  post-mortem findings. The same object is the `[ERROR]` line in the log, the
+  message on the e-ink and the dashboard, and the `sync_error` notification body
+  delivered over MQTT and webhook - so the three can no longer disagree. The
+  payload keeps `error` alongside `message` so an existing consumer still works.
+- A failed sync now runs a post-mortem and records it in the log and in the
+  notification: whether the kernel OOM killer took rsync, whether the remote
+  answers on its SSH port now, how long ago WireGuard last handshook, and free
+  space on the source. When rsync dies mid-transfer it often prints nothing at
+  all, and these are the facts that are gone by the time anyone looks. Each
+  probe is best-effort: one that cannot run says so, and the rest still report.
+- Sync progress lines now carry bytes transferred against the total, speed,
+  elapsed time, an ETA, and the byte delta since the previous line. The delta is
+  what distinguishes a transfer parked on one percentage but still moving from
+  one that is genuinely stuck. The ETA comes from a rolling ten-minute average
+  of the transfer's own samples rather than rsync's instantaneous rate, and
+  reads `ETA unknown` rather than guessing when nothing is moving. It is also
+  shown on the dashboard's Remote Sync card.
+- Sync logs now name the file rsync is on (`--out-format`), sampled at most once
+  a minute, so a failure can be pinned to a file rather than to a bare
+  percentage. rsync reports every file it sends, which on a first sync is six
+  figures of them, so the log keeps a sample rather than the list. Directories
+  and symlinks are filtered out by rsync's own itemize flag: rsync reports those
+  through the same channel and creates them instantly, so one would otherwise
+  displace the real file at the moment it matters. `--stats` appends the real
+  totals when a run ends.
+- A Network card on the dashboard: internet reachable or not, which link is
+  carrying it (WiFi with its nickname, or the iPhone's USB hotspot), WireGuard
+  up or down, and how long the current state has held. The appliance switches
+  links on its own, so how long the current one has lasted is worth showing next
+  to whether it is up. The probe runs on its own schedule and the page reads a
+  cached answer, so polling it every 5 seconds costs nothing; `/api/health` reads
+  the same cache and falls back to a direct probe when it is stale.
+- `update.log` and the sync output redirected into `autostart.log` are now
+  timestamped line by line, through a `logutil.py --stamp` filter that reuses the
+  format the per-run logs already use. They were the last two logs whose lines
+  could not be lined up against the others.
+
+### Changed
+
+- The sync log is now written entirely by `sync_manager`; the auto-sync (display
+  daemon) and the manual sync (`backup-sync.py`) no longer format their own
+  progress lines and can no longer drift apart. They drive the e-ink and the
+  status file only.
+- Sync progress is logged once a minute rather than every 30 seconds. The lines
+  carry considerably more, and an eight-hour transfer now leaves a log in the
+  low hundreds of lines instead of around a thousand near-identical ones.
+
+### Fixed
+
+- Webhook notifications were sent unauthenticated whenever the iPhone was not
+  attached, and an authenticated endpoint answered 403 with no trace anywhere.
+  The auth header is decrypted with the iPhone's serial number, but most of the
+  events that carry it fire when the phone is gone: `device_disconnected` by
+  definition, every `sync_*` after the phone was unplugged, and `backup_complete`
+  - which is sent only after the e-ink has already displayed "Backup completed"
+  and invited the user to unplug. `webhook_auth_headers` reported that failure as
+  `{}`, indistinguishable from "no auth configured", so the request went out
+  regardless.
+
+  The resolved header is now cached in `/run/iosbackupmachine/webhook_auth.json`
+  (0600 in a 0700 directory) and reused when the phone is absent. `/run` is a
+  systemd tmpfs: RAM-only, wiped at every boot, never written to the SD card - so
+  a powered-off device still yields nothing without the phone. Only the derived
+  header is cached, never the passphrase, which is the phone's serial and also
+  unlocks the WireGuard and remote-sync credentials. The cache is refreshed
+  whenever the phone is seen, primed at the start of every backup, dropped when
+  notification settings are saved, and can be given a lifetime with
+  `IOSBACKUP_WEBHOOK_AUTH_TTL` (default 0, meaning until the next reboot).
+
+  When auth is wanted and genuinely unobtainable the webhook is now skipped
+  rather than sent blind, and the reason is written to the per-run log the web UI
+  serves - on the Test Webhook button too, which calls the sender directly and
+  needed the same check. Delivery failures - a 403, a refused connection, a
+  missing paho-mqtt - now land in that log as well, instead of only in the
+  journal.
+
+- Notifications sent by a manual sync were silently discarded. `send_notification`
+  dispatches webhook and MQTT deliveries on daemon threads and returns at once,
+  and `backup-sync.py` calls `sys.exit(0)` immediately after reporting its
+  result. Python terminates daemon threads at interpreter exit, so the POST was
+  killed mid-request, every time, with no error recorded anywhere. Deliveries are
+  now tracked and `notifications.flush()` waits for them; it is also registered
+  with `atexit`, which runs before daemon threads are killed, so a caller that
+  forgets to flush is still covered. Affected every sync started from the web UI,
+  a long press or a double tap, and the low-battery refusal. The auto-sync after
+  a backup was not affected, because the display daemon keeps running.
+
+### Security
+
+- The `[CMD]` line in a sync log published the SSH password in clear for
+  password-authenticated syncs: the full argv was written verbatim, and for that
+  auth method the argv is `sshpass -p <password> ...`. The log is served by the
+  web UI at `/logs/<file>`, so anyone who could read a log could read the
+  password. The password is now masked. Key-authenticated setups were never
+  affected. Rotate the remote's password if you used password auth and any sync
+  log may have been seen.
+
 ## [4.6.0] - 2026-08-31
 
 ### Fixed

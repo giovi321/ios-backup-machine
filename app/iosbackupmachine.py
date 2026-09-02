@@ -1480,6 +1480,17 @@ def run_backup(panel, logf, ui, _retry=0):
                 last_ui = time.time()
 
     write_status("backing_up", percent=0)
+    # Resolve and cache the webhook auth header NOW, while the phone is attached.
+    # It is decrypted with the phone's serial, and every later notification -
+    # backup_complete, and the whole auto-sync - fires after the e-ink has said
+    # "Backup completed" and the user has unplugged.
+    try:
+        import notifications as _notif
+        if logf:
+            _notif.set_logger(lambda m: logf.write(m + "\n"))
+        _notif.prime_auth()
+    except Exception as _e:
+        if logf: logf.write(f"[NOTIFY] could not prime webhook auth: {_e}\n")
     send_notification("backup_start")
     tee_and_parse(proc, logf, feed_parser)
     proc.wait(); rc = proc.returncode
@@ -1524,9 +1535,13 @@ def run_backup(panel, logf, ui, _retry=0):
             except Exception:
                 _ok, _reason = True, ""
             if not _ok:
+                _failure = _sync_manager.build_failure("battery_low", detail=_reason)
                 if logf: logf.write(f"[SYNC] Skipped auto-sync: {_reason}\n")
-                write_status("sync_error", message=_reason)
-                send_notification("sync_error", {"error": _reason})
+                write_status("sync_error", message=_failure["message"],
+                             reason_code=_failure["reason_code"])
+                send_notification("sync_error",
+                                  {"error": _failure["message"],
+                                   **_sync_manager.notification_payload(_failure)})
                 do_autosync = False
             else:
                 write_status("syncing", percent=0)   # claim the slot now
@@ -1551,12 +1566,11 @@ def run_backup(panel, logf, ui, _retry=0):
                    animate=True, show_header=True)
             ui.request_full()   # clear the backup-complete screen before sync progress
 
-            _log_pct = [None]    # throttle state: last-logged pct / elapsed
-            _log_t = [0.0]
-
+            # The sync log is written by sync_manager's SyncLogWriter; this
+            # callback only drives the e-ink and the status file, so the auto-sync
+            # and the manual sync can no longer log different things.
             def _sync_progress(info):
                 pct = info["pct"]
-                elapsed = info["elapsed"]
                 if info.get("total"):
                     sub = f"{fmt_bytes(info['bytes'])} / {fmt_bytes(info['total'])} | {info['speed']}"
                 else:
@@ -1565,15 +1579,8 @@ def run_backup(panel, logf, ui, _retry=0):
                 write_status("syncing", percent=pct,
                              bytes=info.get("bytes", 0),
                              total=info.get("total", 0),
-                             speed=info.get("speed", ""))
-                # Throttled: log only on a percent change or every 30s, so a
-                # stuck/scanning sync leaves a sparse trail (scan/stall transitions
-                # are logged separately by sync_manager) instead of a line/second.
-                if synclogf and not info.get("scanning") and not info.get("stalled"):
-                    if pct != _log_pct[0] or (elapsed - _log_t[0]) >= 30:
-                        synclogf.write(f"[SYNC] {pct}% ({elapsed:.0f}s)\n")
-                        _log_pct[0] = pct
-                        _log_t[0] = elapsed
+                             speed=info.get("speed", ""),
+                             eta_seconds=info.get("eta_seconds"))
 
             try:
                 result = _sync_manager.run_sync_with_progress(
@@ -1587,16 +1594,33 @@ def run_backup(panel, logf, ui, _retry=0):
                     ui.request_full()
                     send_notification("sync_complete", {"message": result["message"]})
                 else:
-                    if synclogf: synclogf.write(f"[ERROR] {result['message']}\n")
-                    write_status("sync_error", message=result["message"])
+                    # The structured failure carries the reason code, exit status,
+                    # how far the transfer got and the post-mortem findings. It
+                    # goes to MQTT / webhook whole, so an automation can act on
+                    # reason_code rather than matching an English sentence.
+                    failure = result.get("failure") or {
+                        "message": result["message"], "reason_code": "internal_error"}
+                    if synclogf and not failure.get("logged"):
+                        synclogf.write(f"[ERROR] {failure['message']}\n")
+                    write_status("sync_error", message=failure["message"],
+                                 reason_code=failure.get("reason_code"))
                     ui.set(screen="complete", subtitle="", percent=None, animate=False,
-                           center_block=f"Sync failed.\n{result['message'][:60]}", show_header=True)
+                           center_block=f"Sync failed.\n{failure['message'][:60]}", show_header=True)
                     ui.request_full()
-                    send_notification("sync_error", {"error": result["message"]})
+                    send_notification("sync_error",
+                                      {"error": failure["message"],
+                                       **_sync_manager.notification_payload(failure)})
                 time.sleep(5)
             except Exception as e:
-                if synclogf: synclogf.write(f"[ERROR] sync raised: {e}\n")
-                write_status("sync_error", message=str(e))
+                failure = _sync_manager.build_failure(
+                    "internal_error",
+                    detail=f"the sync runner raised {type(e).__name__}: {e}")
+                if synclogf: synclogf.write(f"[ERROR] {failure['message']}\n")
+                write_status("sync_error", message=failure["message"],
+                             reason_code=failure["reason_code"])
+                send_notification("sync_error",
+                                  {"error": failure["message"],
+                                   **_sync_manager.notification_payload(failure)})
             finally:
                 if synclogf:
                     try: synclogf.close()
