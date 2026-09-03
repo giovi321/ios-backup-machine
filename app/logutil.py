@@ -15,8 +15,9 @@ Two directories, split by lifetime:
   regenerated every run, so losing it on reboot is harmless.
 
 Per-run logs (backup-*.log / sync-*.log) accumulate one file per run, so they
-are pruned here by count and age. The continuous append logs (webui/ntp/
-autostart/update) are size-capped by logrotate, not by this module.
+are pruned here by count, age and an aggregate size cap. The continuous append
+logs (webui/ntp/autostart/update) are size-capped by logrotate, not by this
+module.
 """
 import io
 import os
@@ -34,6 +35,9 @@ RUNTIME_DIR = os.getenv("IOSBACKUP_RUNTIME_DIR", "/var/log/iosbackupmachine")
 # Per-run log retention.
 LOG_KEEP_PER_KIND = int(os.getenv("IOSBACKUP_LOG_KEEP", "50"))
 LOG_MAX_AGE_DAYS = int(os.getenv("IOSBACKUP_LOG_MAX_AGE_DAYS", "90"))
+# Aggregate size cap per kind: even 50 tiny runs of each kind cannot exceed it.
+LOG_MAX_BYTES_PER_KIND = int(os.getenv("IOSBACKUP_LOG_MAX_BYTES_PER_KIND",
+                                       str(100 * 1024 * 1024)))
 _PRUNE_PREFIXES = ("backup-", "sync-")
 
 
@@ -52,18 +56,32 @@ class TimestampedLog:
     def __init__(self, fh):
         self._fh = fh
         self._buf = ""
+        self._failures = 0
+        self._dead = False
 
     @staticmethod
     def _stamp():
         return datetime.now().strftime("[%Y-%m-%d %H:%M:%S] ")
 
     def write(self, text):
-        if not text:
+        if not text or self._dead:
             return
         self._buf += text
         while "\n" in self._buf:
             line, self._buf = self._buf.split("\n", 1)
-            self._fh.write(self._stamp() + line + "\n")
+            try:
+                self._fh.write(self._stamp() + line + "\n")
+                self._failures = 0
+            except Exception as e:
+                # ENOSPC / EROFS must never reach the caller: logf.write is
+                # called unguarded all over iosbackupmachine.py, including from
+                # inside its fatal handler. The first failure goes to stderr so
+                # it still reaches the journal; repeated failures stop trying.
+                if self._failures == 0:
+                    print(f"[logutil] log write failed: {e}", file=sys.stderr)
+                self._failures += 1
+                if self._failures >= 10:
+                    self._dead = True
 
     def flush(self):
         try:
@@ -136,13 +154,18 @@ def _stamp_stdin():
     stamp_stream(src, sys.stdout)
 
 
-def prune_logs(log_dir=None, keep_per_kind=None, max_age_days=None):
+def prune_logs(log_dir=None, keep_per_kind=None, max_age_days=None,
+               max_bytes_per_kind=None):
     """Delete old per-run logs: keep the newest ``keep_per_kind`` of each kind
-    (backup / sync) and drop anything older than ``max_age_days``. The freshly
-    created log sorts newest, so it is always kept. Best-effort; never raises."""
+    (backup / sync), drop anything older than ``max_age_days``, then cap each
+    kind's aggregate size at ``max_bytes_per_kind`` by deleting oldest first.
+    The freshly created log sorts newest, so it is always kept. Best-effort;
+    never raises."""
     log_dir = LOG_DIR if log_dir is None else log_dir
     keep_per_kind = LOG_KEEP_PER_KIND if keep_per_kind is None else keep_per_kind
     max_age_days = LOG_MAX_AGE_DAYS if max_age_days is None else max_age_days
+    max_bytes_per_kind = (LOG_MAX_BYTES_PER_KIND
+                          if max_bytes_per_kind is None else max_bytes_per_kind)
     now = time.time()
     max_age = max_age_days * 86400
     for prefix in _PRUNE_PREFIXES:
@@ -159,6 +182,27 @@ def prune_logs(log_dir=None, keep_per_kind=None, max_age_days=None):
                     os.remove(path)
             except Exception:
                 pass
+        if max_bytes_per_kind <= 0:
+            continue
+        try:
+            sized = []
+            total = 0
+            for path in files:                          # newest first still
+                if not os.path.exists(path):            # pruned above
+                    continue
+                try:
+                    size = os.path.getsize(path)
+                except Exception:
+                    size = 0
+                sized.append((path, size))
+                total += size
+            for path, size in reversed(sized):          # oldest first
+                if total <= max_bytes_per_kind:
+                    break
+                os.remove(path)
+                total -= size
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

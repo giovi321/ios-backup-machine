@@ -48,6 +48,16 @@ def have_connectivity(timeout=4):
             continue
     return False
 
+def already_synced():
+    """True when systemd-timesyncd reports the clock already synchronized.
+    Lets the 15-minute retry timer exit cheaply once time is good."""
+    try:
+        r = subprocess.run(["timedatectl", "show", "--property=NTPSynchronized", "--value"],
+                           capture_output=True, text=True, timeout=5)
+        return r.returncode == 0 and r.stdout.strip() == "yes"
+    except Exception:
+        return False
+
 def sync_ntp(servers):
     """Try multiple NTP sync methods until one succeeds.
 
@@ -60,10 +70,12 @@ def sync_ntp(servers):
     try:
         # Configure NTP servers
         ntp_line = " ".join(servers)
-        subprocess.run(
+        r = subprocess.run(
             ["timedatectl", "set-ntp", "true"],
             capture_output=True, text=True, timeout=5
         )
+        if r.returncode != 0:
+            log(f"timedatectl set-ntp true failed (rc={r.returncode}): {(r.stderr or '').strip()}")
         # Write servers to timesyncd config
         try:
             timesyncd_conf = "/etc/systemd/timesyncd.conf.d/iosbackup.conf"
@@ -127,6 +139,10 @@ def main():
     cfg = load_config()
     if not cfg.get("enabled", True):
         log("NTP sync disabled in config.")
+        sys.exit(0)
+
+    if already_synced():
+        log("Clock already synchronized (NTPSynchronized=yes). Nothing to do.")
         sys.exit(0)
 
     log("Checking internet connectivity...")

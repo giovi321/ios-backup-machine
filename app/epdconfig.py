@@ -12,6 +12,10 @@ PIN_RST  = int(os.getenv("EPD_PIN_RST",  "17"))
 PIN_BUSY = int(os.getenv("EPD_PIN_BUSY", "24"))
 PIN_PWR  = int(os.getenv("EPD_PIN_PWR",  "18"))   # optional; tie high if unused
 SPI_HZ   = int(os.getenv("EPD_SPI_HZ",   "2000000"))  # 2 MHz safe
+# A panel that holds BUSY low forever would hang the (non-vendored) upstream
+# driver's busy-wait loop. Bound it in our layer: digital_read raises once the
+# panel has been continuously busy this long (a full refresh takes ~2-3s).
+BUSY_TIMEOUT_SEC = float(os.getenv("EPD_BUSY_TIMEOUT_SEC", "10"))
 # Add a dummy CS so the driver stops failing. Kernel SPI handles CS.
 PIN_CS  = int(os.getenv("EPD_PIN_CS", "-1"))
 # Back-compat constants expected by waveshare drivers
@@ -25,6 +29,7 @@ _gpio_dc = None
 _gpio_rst = None
 _gpio_busy = None
 _gpio_pwr = None
+_busy_since = None
 
 def _open_gpio(line, direction):
     # direction: "in" or "out"
@@ -43,8 +48,19 @@ def digital_write(pin, value):
 
 def digital_read(pin):
     # BUSY is active-low on many Waveshare panels. Library expects 0=busy, 1=ready.
+    global _busy_since
     if pin == PIN_BUSY and _gpio_busy:
-        return 1 if _gpio_busy.read() else 0
+        if _gpio_busy.read():
+            _busy_since = None
+            return 1
+        # Still busy: raise rather than let the driver's busy-wait hang forever.
+        now = time.monotonic()
+        if _busy_since is None:
+            _busy_since = now
+        elif now - _busy_since > BUSY_TIMEOUT_SEC:
+            _busy_since = None
+            raise RuntimeError(f"display stuck busy for >{BUSY_TIMEOUT_SEC:g}s")
+        return 0
     return 0
 
 def delay_ms(ms):
@@ -67,18 +83,24 @@ def spi_writebyte2(data):
     _spi.transfer(tx)
 
 def module_init(cleanup=False):
-    # Open SPI
     global _spi, _gpio_dc, _gpio_rst, _gpio_busy, _gpio_pwr
-    _spi = SPI(SPI_DEV, 0, SPI_HZ)  # mode 0
-    # Open GPIOs
-    _gpio_dc   = _open_gpio(PIN_DC,   "out")
-    _gpio_rst  = _open_gpio(PIN_RST,  "out")
-    _gpio_busy = _open_gpio(PIN_BUSY, "in")
     try:
-        _gpio_pwr = _open_gpio(PIN_PWR, "out")
-        _gpio_pwr.write(True)
-    except Exception:
-        _gpio_pwr = None  # optional pin
+        # Open SPI
+        _spi = SPI(SPI_DEV, 0, SPI_HZ)  # mode 0
+        # Open GPIOs
+        _gpio_dc   = _open_gpio(PIN_DC,   "out")
+        _gpio_rst  = _open_gpio(PIN_RST,  "out")
+        _gpio_busy = _open_gpio(PIN_BUSY, "in")
+        try:
+            _gpio_pwr = _open_gpio(PIN_PWR, "out")
+            _gpio_pwr.write(True)
+        except Exception:
+            _gpio_pwr = None  # optional pin
+    except Exception as e:
+        # Don't leak whichever handles did open.
+        try: module_exit()
+        except Exception: pass
+        raise RuntimeError(f"display init failed: {e}") from e
     return 0
 
 def module_exit(cleanup=False):

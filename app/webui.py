@@ -47,7 +47,8 @@ app = Flask(
 
 @app.context_processor
 def inject_version():
-    return {"app_version": VERSION}
+    return {"app_version": VERSION,
+            "config_warnings": config_schema.get_load_warnings()}
 
 # Persistent logs on the rootfs; runtime status/flags on the volatile zram
 # /var/log. See logutil.py for the rationale.
@@ -115,6 +116,18 @@ def save_config(cfg):
     config_schema.atomic_save(cfg, CONFIG_PATH)
 
 
+def _try_save_config(cfg):
+    """Persist config from a request handler; on failure flash the reason and
+    return False so the caller can re-render/redirect instead of 500ing."""
+    try:
+        save_config(cfg)
+        return True
+    except Exception as e:
+        app.logger.exception("Could not save configuration")
+        flash(f"Could not save configuration: {e}", "error")
+        return False
+
+
 # ---------------------------------------------------------------------------
 # WiFi multi-network helpers
 # ---------------------------------------------------------------------------
@@ -159,15 +172,42 @@ def _ensure_secret_key():
         new_key = secrets.token_hex(32)
         webui["secret_key"] = new_key
         cfg["webui"] = webui
-        save_config(cfg)
-        app.logger.info("Auto-generated new secret key.")
+        try:
+            save_config(cfg)
+            app.logger.info("Auto-generated new secret key.")
+        except Exception as e:
+            # Keep serving with the in-memory key; sessions just won't survive
+            # a restart until the config becomes writable again.
+            app.logger.error("Could not persist new secret key: %s", e)
         return new_key
     return current
 
 def _setup_needed():
     """Return True if the guided first-start wizard should be shown."""
     cfg = load_config()
+    # A missing/corrupt config means the saved setup state (and password hash)
+    # is gone; the wizard is the recovery path, so re-engage it rather than
+    # leaving an open UI that pretends setup was done.
+    if config_schema.was_load_degraded():
+        return True
     return not cfg.get("setup_completed", False)
+
+# ---------------------------------------------------------------------------
+# Global error handler
+# ---------------------------------------------------------------------------
+
+@app.errorhandler(Exception)
+def _unhandled_error(e):
+    """Log the full traceback and render a friendly page instead of the Werkzeug
+    500. Debug stays off, so nothing internal leaks to the browser."""
+    from werkzeug.exceptions import HTTPException
+    if isinstance(e, HTTPException):
+        return e
+    app.logger.exception("Unhandled error on %s %s", request.method, request.path)
+    try:
+        return render_template("error.html"), 500
+    except Exception:
+        return "Something went wrong — see the Logs page.", 500
 
 # ---------------------------------------------------------------------------
 # Routes
@@ -351,7 +391,8 @@ def setup():
             session["authenticated"] = True
 
         cfg["setup_completed"] = True
-        save_config(cfg)
+        if not _try_save_config(cfg):
+            return redirect(url_for("setup"))
 
         # If iPhone is connected, restart the backup service so it picks up
         # the newly-completed setup without requiring a re-plug.
@@ -459,8 +500,8 @@ def settings_general():
         for i in range(4):
             owner.append(request.form.get(f"owner_line_{i}", ""))
         cfg["owner_lines"] = owner
-        save_config(cfg)
-        flash("General settings saved.", "success")
+        if _try_save_config(cfg):
+            flash("General settings saved.", "success")
         return redirect(url_for("settings_general"))
     return render_template("settings_general.html", cfg=cfg)
 
@@ -509,8 +550,8 @@ def settings_datetime():
             servers = request.form.get("ntp_servers", "").strip().splitlines()
             ntp["servers"] = [s.strip() for s in servers if s.strip()]
             cfg["ntp"] = ntp
-            save_config(cfg)
-            flash("NTP settings saved.", "success")
+            if _try_save_config(cfg):
+                flash("NTP settings saved.", "success")
         elif action == "set_timezone":
             tz = request.form.get("timezone", "").strip()
             if tz:
@@ -580,7 +621,8 @@ def settings_wifi():
         wifi["ssid"] = networks[0]["ssid"] if networks else ""
         wifi["password"] = networks[0]["password"] if networks else ""
         cfg["wifi"] = wifi
-        save_config(cfg)
+        if not _try_save_config(cfg):
+            return redirect(url_for("settings_wifi"))
         if wifi["enabled"] and networks:
             ok, msg = _apply_wifi_networks(networks)
             flash(f"WiFi settings saved. {msg}" if ok
@@ -675,7 +717,8 @@ def settings_notifications():
         mq["events"] = mq_events
         notif["mqtt"] = mq
         cfg["notifications"] = notif
-        save_config(cfg)
+        if not _try_save_config(cfg):
+            return redirect(url_for("settings_notifications"))
         # Drop the cached auth header: the URL, the header name or the secret
         # itself may have just changed, and a stale cached value would keep
         # being sent (and rejected) until the next reboot.
@@ -765,7 +808,8 @@ def settings_wireguard():
             cred_enc = cfg.get("credential_encryption", {})
             cred_enc["passphrase_mode"] = request.form.get("passphrase_mode", "udid")
             cfg["credential_encryption"] = cred_enc
-            save_config(cfg)
+            if not _try_save_config(cfg):
+                return redirect(url_for("settings_wireguard"))
             # Apply (or clear) the full-tunnel routing right away if the VPN is
             # already up; otherwise it takes effect on the next connect.
             if wg_manager.is_interface_up(iface):
@@ -822,8 +866,8 @@ def settings_sync():
             sync["allowed_network"] = request.form.get("allowed_network", "any")
             sync["allowed_ssid"] = request.form.get("allowed_ssid", "").strip()
             cfg["sync"] = sync
-            save_config(cfg)
-            flash("Sync settings saved.", "success")
+            if _try_save_config(cfg):
+                flash("Sync settings saved.", "success")
         elif action == "upload_credentials":
             mode = cfg.get("credential_encryption", {}).get("passphrase_mode", "udid")
             pw = wg_crypto.get_iphone_serial() if mode == "udid" else request.form.get("master_password", "").strip()
@@ -909,12 +953,11 @@ def settings_sync():
                 except Exception:
                     pass
                 sync_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "backup-sync.py")
-                subprocess.Popen(
-                    [sys.executable, sync_script],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                    env={**os.environ, "IOSBACKUP_CONFIG": CONFIG_PATH},
-                )
-                flash("Sync started. Check the dashboard for progress.", "success")
+                try:
+                    _launch_sync_detached(sync_script)
+                    flash("Sync started. Check the dashboard for progress.", "success")
+                except Exception as e:
+                    flash(f"Failed to start sync: {e}", "error")
         return redirect(url_for("settings_sync"))
     mode = cfg.get("credential_encryption", {}).get("passphrase_mode", "udid")
     saved_cred = None
@@ -948,7 +991,12 @@ def api_sync_decrypt():
     pw = wg_crypto.get_iphone_serial() if mode == "udid" else None
     if not pw:
         return jsonify({"error": "iPhone not connected"}), 400
-    dec = sync_crypto.decrypt_sync_config(passphrase=pw)
+    try:
+        dec = sync_crypto.decrypt_sync_config(passphrase=pw)
+    except Exception as e:
+        # A corrupt sync.enc must surface as a clean JSON error, not a 500.
+        app.logger.exception("Failed to decrypt sync credentials")
+        return jsonify({"error": f"Cannot decrypt credentials: {e}"}), 400
     if not dec:
         return jsonify({"error": "Cannot decrypt credentials"}), 400
     return jsonify({
@@ -1010,8 +1058,8 @@ def settings_webui():
         webui["bind_interfaces"] = bind if bind else ["all"]
         webui["secret_key"] = request.form.get("secret_key", webui.get("secret_key", ""))
         cfg["webui"] = webui
-        save_config(cfg)
-        flash("Web UI settings saved. Restart the service to apply binding changes.", "success")
+        if _try_save_config(cfg):
+            flash("Web UI settings saved. Restart the service to apply binding changes.", "success")
         return redirect(url_for("settings_webui"))
     interfaces = netutil.get_all_interfaces()
     return render_template("settings_webui.html", cfg=cfg, interfaces=interfaces)
@@ -1045,7 +1093,8 @@ def settings_password():
             auth = cfg.get("auth", {})
             auth["password_hash"] = _hash_password(new_pw)
             cfg["auth"] = auth
-            save_config(cfg)
+            if not _try_save_config(cfg):
+                return redirect(url_for("settings_password"))
             session["authenticated"] = True
             flash("Password updated successfully.", "success")
         elif action == "remove_password":
@@ -1057,8 +1106,8 @@ def settings_password():
             auth = cfg.get("auth", {})
             auth["password_hash"] = ""
             cfg["auth"] = auth
-            save_config(cfg)
-            flash("Password removed. Web UI is now open.", "success")
+            if _try_save_config(cfg):
+                flash("Password removed. Web UI is now open.", "success")
         return redirect(url_for("settings_password"))
     return render_template("settings_password.html", cfg=cfg, has_password=has_password)
 
@@ -1084,8 +1133,8 @@ def settings_devices():
         if action == "save_filter":
             df["enabled"] = request.form.get("filter_enabled") == "on"
             cfg["device_filter"] = df
-            save_config(cfg)
-            flash("Device filter settings saved.", "success")
+            if _try_save_config(cfg):
+                flash("Device filter settings saved.", "success")
         elif action == "add_connected":
             if not connected_udid:
                 flash("No iPhone connected.", "error")
@@ -1099,8 +1148,8 @@ def settings_devices():
                     allowed.append({"udid": connected_udid, "name": name})
                     df["allowed_devices"] = allowed
                     cfg["device_filter"] = df
-                    save_config(cfg)
-                    flash(f"Added device: {name} ({connected_udid})", "success")
+                    if _try_save_config(cfg):
+                        flash(f"Added device: {name} ({connected_udid})", "success")
         elif action == "add_manual":
             udid = request.form.get("manual_udid", "").strip()
             name = request.form.get("manual_name", "").strip() or "Manual entry"
@@ -1115,15 +1164,15 @@ def settings_devices():
                     allowed.append({"udid": udid, "name": name})
                     df["allowed_devices"] = allowed
                     cfg["device_filter"] = df
-                    save_config(cfg)
-                    flash(f"Added device: {name} ({udid})", "success")
+                    if _try_save_config(cfg):
+                        flash(f"Added device: {name} ({udid})", "success")
         elif action == "remove_device":
             rm_udid = request.form.get("remove_udid", "")
             allowed = df.get("allowed_devices", [])
             df["allowed_devices"] = [d for d in allowed if d.get("udid") != rm_udid]
             cfg["device_filter"] = df
-            save_config(cfg)
-            flash(f"Device {rm_udid} removed.", "success")
+            if _try_save_config(cfg):
+                flash(f"Device {rm_udid} removed.", "success")
         return redirect(url_for("settings_devices"))
     return render_template("settings_devices.html", cfg=cfg, df=df,
                            connected_udid=connected_udid, connected_name=connected_name)
@@ -1138,8 +1187,8 @@ def settings_backup():
         bk["auto_start"] = request.form.get("auto_start") == "on"
         bk["notify_on_rejected"] = request.form.get("notify_on_rejected") == "on"
         cfg["backup"] = bk
-        save_config(cfg)
-        flash("Backup settings saved.", "success")
+        if _try_save_config(cfg):
+            flash("Backup settings saved.", "success")
         return redirect(url_for("settings_backup"))
     return render_template("settings_backup.html", cfg=cfg)
 
@@ -1204,8 +1253,8 @@ def settings_encryption():
                     if r.returncode == 0 or "enabled" in out.lower():
                         enc["encryption_confirmed"] = True
                         cfg["backup_encryption"] = enc
-                        save_config(cfg)
-                        flash("Backup encryption enabled on device. The password was NOT stored - remember it for restores.", "success")
+                        if _try_save_config(cfg):
+                            flash("Backup encryption enabled on device. The password was NOT stored - remember it for restores.", "success")
                     else:
                         flash(f"Failed to enable encryption: {out[:200]}", "error")
                 except subprocess.TimeoutExpired:
@@ -1523,6 +1572,10 @@ def purge_logs():
     count = 0
     if os.path.isdir(LOG_DIR):
         for f in glob.glob(os.path.join(LOG_DIR, "*.log")):
+            # The running process holds webui.log open; deleting it would
+            # silently kill web UI logging until the next restart.
+            if os.path.basename(f) == "webui.log":
+                continue
             try:
                 os.remove(f)
                 count += 1
@@ -1608,6 +1661,30 @@ def _update_launch_command(script, log_file, have_systemd_run=None):
     argv += [f"--setenv={k}={v}" for k, v in sorted(UPDATE_ENV.items())]
     argv += ["bash", "-c", inner]
     return argv
+
+
+def _launch_sync_detached(sync_script):
+    """Launch backup-sync.py detached from webui.service.
+
+    A plain Popen child sits in webui.service's cgroup, so a webui restart
+    (e.g. after a settings change or an update) SIGTERMs the rsync mid-run —
+    the same failure mode the updater had. systemd-run puts the sync in its own
+    transient unit; without systemd we fall back to cutting the session tie so
+    at least a SIGHUP can't reach it.
+    """
+    env = {**os.environ, "IOSBACKUP_CONFIG": CONFIG_PATH}
+    if shutil.which("systemd-run"):
+        argv = ["systemd-run", "--unit=iosbackup-web-sync", "--collect",
+                f"--setenv=IOSBACKUP_CONFIG={CONFIG_PATH}",
+                sys.executable, sync_script]
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=30, env=env)
+        if r.returncode == 0:
+            return
+        app.logger.warning("systemd-run sync launch failed (%s); falling back to Popen",
+                           (r.stderr or r.stdout or "").strip())
+    subprocess.Popen([sys.executable, sync_script],
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                     env=env, start_new_session=True)
 
 @app.route("/update", methods=["GET", "POST"])
 @login_required
@@ -1954,11 +2031,7 @@ def sync_start():
     except Exception:
         pass
     try:
-        subprocess.Popen(
-            [sys.executable, sync_script],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            env={**os.environ, "IOSBACKUP_CONFIG": CONFIG_PATH},
-        )
+        _launch_sync_detached(sync_script)
         flash("Sync started. Watch the dashboard or live log for progress.", "success")
     except Exception as e:
         flash(f"Failed to start sync: {e}", "error")
@@ -1983,6 +2056,8 @@ def api_backup_sizes():
 def api_export_config():
     """Download config.yaml as a file."""
     from flask import send_file
+    if not os.path.isfile(CONFIG_PATH):
+        return jsonify({"error": "No config file on disk to export."}), 404
     return send_file(CONFIG_PATH, as_attachment=True, download_name="config.yaml",
                      mimetype="text/yaml")
 

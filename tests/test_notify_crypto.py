@@ -65,3 +65,45 @@ def test_send_webhook_returns_status_error_tuple():
     status, err = notifications._send_webhook("http://", {"x": 1})
     assert status is None
     assert err
+
+
+# ---------------------------------------------------------------------------
+# Corrupt / truncated credential stores degrade to None, never an exception
+# ---------------------------------------------------------------------------
+# Same contract as a wrong passphrase: the caller falls back to "no
+# credentials" instead of crashing the code path that needed them.
+
+def test_corrupt_enc_json_returns_none(tmp_path):
+    enc = tmp_path / "wireguard.enc"
+    enc.write_text("{not json at all")
+    assert wg_crypto._decrypt_file("pw", str(enc)) is None
+
+
+def test_truncated_enc_file_returns_none(tmp_path, monkeypatch):
+    enc = tmp_path / "wireguard.enc"
+    monkeypatch.setattr(wg_crypto, "ENC_FILE", str(enc))
+    wg_crypto.encrypt_wg_config({"wg_conf": "x"}, passphrase="pw")
+    full = enc.read_bytes()
+    with open(enc, "wb") as f:
+        f.write(full[: len(full) // 2])                     # torn mid-write
+    assert wg_crypto._decrypt_file("pw", str(enc)) is None
+
+
+def test_malformed_base64_fields_return_none(tmp_path):
+    import json
+    enc = tmp_path / "wireguard.enc"
+    enc.write_text(json.dumps({"method": "aes-gcm", "nonce": "abc", "data": "def"}))
+    assert wg_crypto._decrypt_file("pw", str(enc)) is None
+
+
+def test_missing_fields_return_none(tmp_path):
+    import json
+    enc = tmp_path / "wireguard.enc"
+    enc.write_text(json.dumps({"method": "aes-gcm"}))
+    assert wg_crypto._decrypt_file("pw", str(enc)) is None
+
+
+def test_non_mapping_payload_returns_none(tmp_path):
+    enc = tmp_path / "wireguard.enc"
+    enc.write_text('["not", "a", "mapping"]')
+    assert wg_crypto._decrypt_file("pw", str(enc)) is None

@@ -1,0 +1,14 @@
+[Unit]
+Description=Retry NTP time sync until the clock is synchronized
+
+[Timer]
+# First retry shortly after boot (the on-boot service run may precede any
+# working network), then keep retrying every 15 min. ntp-sync.py exits 0 early
+# once timedatectl reports NTPSynchronized=yes, so the steady-state cost is one
+# cheap probe per interval.
+OnBootSec=2min
+OnUnitActiveSec=15min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

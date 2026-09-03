@@ -71,10 +71,11 @@ def test_latest_handshake_zero_when_never(monkeypatch):
     assert wg_manager.latest_handshake("wg0") == 0
 
 
-def test_latest_handshake_zero_on_error(monkeypatch):
+def test_latest_handshake_none_on_error(monkeypatch):
+    # A failed `wg` call means the state is unknown — None, not 0 ("no handshake").
     monkeypatch.setattr(wg_manager.subprocess, "run",
                         lambda *a, **k: _FakeProc(1, ""))
-    assert wg_manager.latest_handshake("wg0") == 0
+    assert wg_manager.latest_handshake("wg0") is None
 
 
 # ---------------------------------------------------------------------------
@@ -136,3 +137,112 @@ def test_stamp_stream_survives_undecodable_input():
     dst = io.StringIO()
     logutil.stamp_stream(io.StringIO("ok\n"), dst)
     assert "ok" in dst.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# TimestampedLog.write — a failing disk must never reach the caller
+# ---------------------------------------------------------------------------
+# iosbackupmachine.py writes log lines unguarded all over, including from
+# inside its own fatal handler, so an ENOSPC/EROFS from the file must be
+# swallowed here. The first failure is printed to stderr (the journal) so the
+# disk problem is still visible somewhere.
+
+class _BoomFile:
+    def __init__(self, fail=True):
+        self.calls = 0
+        self.fail = fail
+
+    def write(self, s):
+        self.calls += 1
+        if self.fail:
+            raise OSError(28, "No space left on device")
+
+    def flush(self):
+        pass
+
+    def close(self):
+        pass
+
+
+def test_write_never_propagates_oserror(capsys):
+    log = logutil.TimestampedLog(_BoomFile())
+    for _ in range(3):
+        log.write("line\n")                      # must not raise
+    assert "[logutil] log write failed" in capsys.readouterr().err
+
+
+def test_write_reports_only_the_first_failure_of_a_streak(capsys):
+    log = logutil.TimestampedLog(_BoomFile())
+    for _ in range(3):
+        log.write("line\n")
+    assert capsys.readouterr().err.count("[logutil]") == 1
+
+
+def test_write_stops_hitting_the_disk_after_repeated_failures():
+    fh = _BoomFile()
+    log = logutil.TimestampedLog(fh)
+    for _ in range(20):
+        log.write("line\n")
+    assert fh.calls == 10                        # then the log goes dead
+
+
+def test_write_recovers_when_the_disk_does(capsys):
+    fh = _BoomFile()
+    log = logutil.TimestampedLog(fh)
+    log.write("dropped\n")
+    fh.fail = False
+    log.write("back\n")
+    assert fh.calls == 2                         # kept trying after one failure
+
+
+def test_close_on_a_dead_log_still_does_not_raise():
+    fh = _BoomFile()
+    log = logutil.TimestampedLog(fh)
+    log.write("partial line without newline")
+    log.close()                                  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# prune_logs — aggregate size cap per kind
+# ---------------------------------------------------------------------------
+
+def _sized(path, size, age_seconds=0):
+    with open(path, "w") as f:
+        f.write("x" * size)
+    if age_seconds:
+        t = time.time() - age_seconds
+        os.utime(path, (t, t))
+
+
+def test_prune_size_cap_deletes_oldest_until_under_cap(tmp_path):
+    d = str(tmp_path)
+    for i in range(5):                           # sync-0 oldest ... sync-4 newest
+        _sized(os.path.join(d, f"sync-{i}.log"), 1000, age_seconds=(5 - i) * 60)
+    logutil.prune_logs(log_dir=d, keep_per_kind=50, max_age_days=0,
+                       max_bytes_per_kind=2500)
+    kept = sorted(os.listdir(d))
+    # 5 x 1000 B: deleting oldest first — 4000, 3000 still over — leaves 2000 B.
+    assert kept == ["sync-3.log", "sync-4.log"]
+
+
+def test_prune_size_cap_is_per_kind(tmp_path):
+    d = str(tmp_path)
+    _sized(os.path.join(d, "sync-a.log"), 1000, age_seconds=60)
+    _sized(os.path.join(d, "backup-a.log"), 1000, age_seconds=60)
+    logutil.prune_logs(log_dir=d, keep_per_kind=50, max_age_days=0,
+                       max_bytes_per_kind=100)
+    # Each kind is over the cap on its own and loses its oldest (only) file.
+    assert os.listdir(d) == []
+
+
+def test_prune_size_cap_leaves_logs_under_the_cap_alone(tmp_path):
+    d = str(tmp_path)
+    _sized(os.path.join(d, "sync-a.log"), 100)
+    _sized(os.path.join(d, "sync-b.log"), 100)
+    logutil.prune_logs(log_dir=d, keep_per_kind=50, max_age_days=0,
+                       max_bytes_per_kind=1024)
+    assert sorted(os.listdir(d)) == ["sync-a.log", "sync-b.log"]
+
+
+def test_prune_default_cap_is_100mb():
+    assert logutil.LOG_MAX_BYTES_PER_KIND == 100 * 1024 * 1024

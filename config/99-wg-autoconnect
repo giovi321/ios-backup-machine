@@ -5,10 +5,12 @@
 IFACE="$1"
 ACTION="$2"
 
-if [ "$ACTION" = "up" ]; then
+WG_SCRIPT=/root/iosbackupmachine/wg-autoconnect.sh
+
+if [ "$ACTION" = "up" ] && [ -x "$WG_SCRIPT" ]; then
     if echo "$IFACE" | grep -q "^wlan"; then
-        /root/iosbackupmachine/wg-autoconnect.sh wifi &
+        "$WG_SCRIPT" wifi &
     elif echo "$IFACE" | grep -qE "^(usb|eth[1-9]|enx)"; then
-        /root/iosbackupmachine/wg-autoconnect.sh iphone &
+        "$WG_SCRIPT" iphone &
     fi
 fi

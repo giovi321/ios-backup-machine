@@ -28,5 +28,12 @@ fi
 # Kernel sees an Apple device but usbmux doesn't -> the hotplug gap. Re-scan.
 if lsusb 2>/dev/null | grep -qiE "05ac:|apple"; then
     log "Apple device present but invisible to usbmux — restarting usbmuxd"
-    systemctl restart usbmuxd
+    if systemctl restart usbmuxd; then
+        log "usbmuxd restarted"
+    else
+        log "usbmuxd restart failed — retrying in 5s"
+        sleep 5
+        systemctl restart usbmuxd || log "usbmuxd restart failed again — giving up"
+    fi
 fi
+exit 0

@@ -701,6 +701,8 @@ def _probe_wireguard():
         iface = cfg.get("interface_name", "wg0")
         import wg_manager
         ts = wg_manager.latest_handshake(iface)
+        if ts is None:
+            return f"could not read the {iface} handshake state (wg missing, error or timeout)"
         if not ts:
             return f"{iface} is up but has never completed a handshake"
         return f"{iface} last handshake {fmt_duration(time.time() - ts)} ago"
@@ -830,6 +832,16 @@ def _resolve_min_battery(min_battery):
         return 35
 
 
+def _resolve_max_seconds():
+    """Overall cap for one sync run: config ``sync.max_seconds``, default 3600.
+    A missing, invalid or non-positive value falls back to the default."""
+    try:
+        cap = int(_load_config().get("sync", {}).get("max_seconds", 3600))
+    except Exception:
+        cap = 3600
+    return cap if cap > 0 else 3600
+
+
 def run_sync(passphrase=None, backup_dir=None):
     """
     Run rsync to sync backups to remote server (blocking, no progress).
@@ -888,6 +900,9 @@ def run_sync_with_progress(passphrase=None, backup_dir=None, on_progress=None, l
         return err
 
     min_battery = _resolve_min_battery(min_battery)
+    # Overall run cap. The scan/stall watchdogs only fire on silence, so a
+    # transfer that keeps trickling a few bytes would run forever without this.
+    max_seconds = _resolve_max_seconds()
 
     # Exact progress denominator, measured locally while rsync builds its own
     # file list. progress2 reports only an integer percentage, so a total
@@ -931,6 +946,7 @@ def run_sync_with_progress(passphrase=None, backup_dir=None, on_progress=None, l
     killed_for_stall = False
     killed_for_scan = False
     killed_for_battery = False
+    killed_for_timeout = False
     battery_reason = ""
     try:
         print(f"[SYNC] Running (progress): {' '.join(cmd[:4])}...", flush=True)
@@ -982,6 +998,29 @@ def run_sync_with_progress(passphrase=None, backup_dir=None, on_progress=None, l
                     logw.write(value)
 
         while True:
+            # Total run cap: terminate rsync gracefully, then hard-kill if it
+            # ignores SIGTERM for 5s. The partial transfer resumes next time.
+            if time.time() - start >= max_seconds:
+                killed_for_timeout = True
+                logw.write(f"[ABORT] sync exceeded its {fmt_duration(max_seconds)} "
+                           f"limit — killing rsync (last file: {logw.last_file or 'unknown'})")
+                try:
+                    proc.terminate()
+                except Exception:
+                    pass
+                try:
+                    proc.wait(timeout=5)
+                except Exception:
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+                    try:
+                        proc.wait(timeout=5)
+                    except Exception:
+                        pass
+                break
+
             # Power-aware abort: if the UPS drops below the threshold (and isn't
             # charging) mid-sync, kill rsync so it doesn't get cut by PiSugar's
             # own auto-shutdown — and so --partial-dir can resume it next time.
@@ -1181,6 +1220,11 @@ def run_sync_with_progress(passphrase=None, backup_dir=None, on_progress=None, l
         if killed_for_battery:
             return _failed("battery_abort",
                            detail=f"{battery_reason} The partial transfer resumes next time")
+        if killed_for_timeout:
+            return _failed("run_timeout",
+                           detail=(f"the sync exceeded its {fmt_duration(max_seconds)} "
+                                   f"limit and was aborted — the partial transfer "
+                                   f"resumes next time"))
         if killed_for_scan:
             return _failed("scan_timeout",
                            detail=(f"rsync produced no output for {SCAN_KILL_SEC // 60} min "
@@ -1207,13 +1251,6 @@ def run_sync_with_progress(passphrase=None, backup_dir=None, on_progress=None, l
         # message names the code and its meaning so neither has to be looked up.
         rc = proc.returncode
         return _failed(reason_for_exit(rc), exit_code=rc, detail=_rsync_exit_detail(rc))
-    except subprocess.TimeoutExpired:
-        try:
-            proc.kill()
-        except Exception:
-            pass
-        return _fail("run_timeout", duration=time.time() - start,
-                     detail="the sync exceeded its 1 hour limit")
     except FileNotFoundError as e:
         tool = "sshpass" if "sshpass" in str(e) else "/usr/bin/rsync"
         return _fail("tool_missing", detail=f"{tool} is not installed")

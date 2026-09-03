@@ -156,6 +156,8 @@ def prime_auth(config=None):
     """
     ncfg = (config or _load_notify_config())
     wh = ncfg.get("webhook", {}) if isinstance(ncfg, dict) else {}
+    if not isinstance(wh, dict):
+        wh = {}
     if not (wh.get("enabled") and wh.get("auth_enabled")):
         return False
     headers = _resolve_auth_now(wh)
@@ -166,12 +168,18 @@ def prime_auth(config=None):
 
 
 def _load_notify_config():
+    """The ``notifications:`` section of config.yaml, or {} when absent,
+    unreadable, or not a mapping — a scalar/list there must degrade to
+    "notifications disabled", not AttributeError in every caller."""
     try:
         with open(CONFIG_PATH, "r") as f:
             cfg = yaml.safe_load(f) or {}
     except Exception:
-        cfg = {}
-    return cfg.get("notifications", {})
+        return {}
+    if not isinstance(cfg, dict):
+        return {}
+    ncfg = cfg.get("notifications", {})
+    return ncfg if isinstance(ncfg, dict) else {}
 
 def _send_webhook(url, payload, extra_headers=None):
     """Send a JSON POST to the webhook URL using urllib (no extra deps).
@@ -270,7 +278,17 @@ def send_notification(event, data=None):
     event: str like 'backup_start', 'backup_complete', 'backup_error',
            'device_connected', 'device_disconnected'
     data: optional dict with extra info
+
+    Never raises: most call sites invoke this bare, and a notification must
+    never take down the thing it is reporting on.
     """
+    try:
+        _send_notification(event, data)
+    except Exception as e:
+        _log(f"notification '{event}' failed before delivery: {e}")
+
+
+def _send_notification(event, data=None):
     ncfg = _load_notify_config()
     payload = {
         "event": event,
@@ -282,6 +300,8 @@ def send_notification(event, data=None):
 
     # Webhook
     wh = ncfg.get("webhook", {})
+    if not isinstance(wh, dict):
+        wh = {}
     if wh.get("enabled") and wh.get("url"):
         events = wh.get("events", [])
         if event in events or not events:
@@ -295,6 +315,8 @@ def send_notification(event, data=None):
 
     # MQTT
     mq = ncfg.get("mqtt", {})
+    if not isinstance(mq, dict):
+        mq = {}
     if mq.get("enabled") and mq.get("broker"):
         events = mq.get("events", [])
         if event in events or not events:

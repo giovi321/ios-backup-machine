@@ -137,3 +137,38 @@ def test_without_the_fix_the_delivery_would_be_lost(tmp_path):
     )
     subprocess.run([sys.executable, str(script)], timeout=30, check=True)
     assert not os.path.exists(result)
+
+
+# ---------------------------------------------------------------------------
+# send_notification must never raise, whatever the config looks like
+# ---------------------------------------------------------------------------
+# Many call sites invoke send_notification bare; a malformed config.yaml or a
+# blown config layer must degrade to "no notifications", never an exception.
+
+def test_non_mapping_notifications_section_is_treated_as_disabled(tmp_path, monkeypatch):
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("notifications: nope\n")
+    monkeypatch.setattr(notifications, "CONFIG_PATH", str(cfg))
+    notifications.send_notification("backup_start")          # must not raise
+
+
+def test_non_mapping_webhook_and_mqtt_sections_are_ignored(tmp_path, monkeypatch):
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("notifications:\n  webhook: 42\n  mqtt: [x]\n")
+    monkeypatch.setattr(notifications, "CONFIG_PATH", str(cfg))
+    notifications.send_notification("sync_error", {"error": "x"})
+
+
+def test_non_mapping_config_file_is_treated_as_disabled(tmp_path, monkeypatch):
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("- just\n- a\n- list\n")
+    monkeypatch.setattr(notifications, "CONFIG_PATH", str(cfg))
+    notifications.send_notification("backup_error", {"error": "x"})
+
+
+def test_a_blown_config_layer_is_logged_and_swallowed(monkeypatch, capsys):
+    def boom():
+        raise RuntimeError("config layer exploded")
+    monkeypatch.setattr(notifications, "_load_notify_config", boom)
+    notifications.send_notification("backup_start")          # must not raise
+    assert "backup_start" in capsys.readouterr().out

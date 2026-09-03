@@ -4,6 +4,77 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses a
 single version constant in `app/webui.py`.
 
+## [Unreleased]
+
+### Fixed
+
+- A fatal error in the display daemon exited with code 0, so systemd's
+  `Restart=on-failure` never restarted it - one unexpected exception left the
+  device dead until the next power cycle. Fatal exits now use a non-zero code
+  and the unit restarts the daemon.
+- The daemon no longer dies or hangs on startup faults: an unwritable log
+  directory, a missing or stuck e-ink display, or a broken config all degrade
+  instead of crashing - the daemon runs headless (backups, sync and
+  notifications keep working) and logs one journal warning. The e-ink BUSY wait
+  now has a 10-second ceiling instead of blocking forever, and after 30
+  consecutive draw failures the panel is re-initialised once, then abandoned.
+- A hung backup is no longer invisible: `idevicebackup2` is terminated after
+  600 s without output (`backup.hang_timeout_sec`) and capped at 4 h total
+  (`backup.max_duration_sec`), `idevice_id`/`idevicepair`/`df`/`pgrep` probes
+  have timeouts, and a watchdog thread restarts the daemon if the main loop
+  stalls. An unplugged phone is now detected within 30 s even if both udev and
+  `idevicebackup2` misbehave.
+- `systemctl stop iosbackupmachine` no longer orphans a running
+  `idevicebackup2` (`KillMode=mixed`), and the daemon terminates a running
+  backup child before exiting.
+- A corrupt or truncated `config.yaml` no longer bricks the web UI and every
+  route in it: the bad file is saved as `config.yaml.bad-*`, the device runs on
+  defaults with a banner in the web UI, and the first-start wizard re-engages
+  (previously a missing config silently disabled the web UI password). Config
+  values with the wrong type are replaced by defaults with a warning instead of
+  crashing pages. Concurrent saves no longer race, and the directory is fsynced
+  after the atomic rename.
+- The web UI gained a global error handler (friendly page instead of a bare
+  500), every settings save is guarded, and syncs started from the web UI now
+  survive a web UI restart (launched via `systemd-run`, like the updater).
+  Purging logs no longer deletes the web UI's own open log file.
+- Logging can no longer crash what it logs: a full or read-only disk makes the
+  log writer degrade to the journal instead of raising into callers - including
+  the daemon's own fatal-error handler. Per-run logs now have a 100 MB per-kind
+  size cap in addition to the count/age pruning.
+- `send_notification` and the credential decrypter no longer raise on malformed
+  config or corrupt `.enc` files; they degrade to "no credentials/disabled".
+- Sync launcher guards now fail closed (a failed probe skips the sync instead
+  of allowing overlapping rsync/backup runs), skipped syncs write a
+  `sync_skipped` status instead of leaving stale state, and a failed sync exits
+  non-zero. Syncs now have an overall time cap (`sync.max_seconds`, default
+  1 h) in addition to the stall watchdog.
+- WireGuard: a `wg` command error is no longer indistinguishable from "no
+  handshake yet", so the reconciler stops cycling the tunnel every minute when
+  the probe itself fails; full-tunnel enforcement failures are reported instead
+  of swallowed. WiFi: a failed netplan rollback is now reported ("WiFi may be
+  down") instead of ignored, and clearing all networks reports real failures.
+- A failed or interrupted upgrade no longer leaves the appliance dead: when the
+  installer aborts after stopping services, it restores the previous install
+  from its backup and restarts the web UI and daemon. The version file is only
+  written when the health checks pass. The storage marker file is only created
+  when the backup drive is actually mounted, so backups can no longer silently
+  land on the root filesystem.
+- Backups now refuse to start when disk space is critically low (previously a
+  warning that was ignored) or when the backup storage is read-only, with a
+  clear display/status message instead of a mid-backup failure.
+- `usbmux-refresh.sh` checks and retries the usbmuxd restart; the WireGuard
+  auto-connect script is serialized with `flock` so the boot service and the
+  NetworkManager dispatcher can no longer race; rtc-sync output now reaches the
+  web UI logs page.
+
+### Added
+
+- `ntp-sync.timer`: retries clock sync 2 min after boot and every 15 min after
+  that (once synchronized, each run is one cheap early-exit probe) - a boot
+  without internet no longer leaves the clock wrong forever (which broke
+  WireGuard handshakes).
+
 ## [4.8.1] - 2026-09-02
 
 ### Fixed

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import os, re, sys, time, json, glob, signal, subprocess, threading
+import os, re, sys, time, json, glob, select, shutil, signal, subprocess, tempfile, threading
 from datetime import datetime
 from periphery.gpio import GPIOError
 
@@ -56,11 +56,12 @@ UPDATING_MAX_SEC = 1800   # safety valve: an update that dies without rebooting
 IDLE_REFRESH_SEC = 4
 WG_RECONCILE_SEC = 10   # how often the WireGuard auto-connect watcher re-checks
 WG_HANDSHAKE_GRACE_SEC = 45   # tolerate 'up but no handshake yet' this long before re-connecting
+DRAW_FAIL_REINIT_AFTER = 30   # consecutive draw failures before one panel re-init, then headless
+BACKUP_SILENCE_TIMEOUT_SEC = 600   # idevicebackup2 silent this long -> hung; terminate it
+BACKUP_MAX_DURATION_SEC = 4 * 3600 # total cap for a single backup run
 TITLE = "iOS Backup Machine"
 
-def load_config(path):
-    with open(path, "r") as f:
-        cfg = yaml.safe_load(f) or {}
+def _apply_defaults(cfg):
     cfg.setdefault("backup_dir", "/media/iosbackup/")
     cfg.setdefault("marker_file", ".foldermarker")
     cfg.setdefault("disk_device", "/dev/mmcblk1")
@@ -75,7 +76,18 @@ def load_config(path):
     cfg["error_codes"] = ec
     return cfg
 
-CFG = load_config(CONFIG_PATH)
+def load_config(path):
+    with open(path, "r") as f:
+        cfg = yaml.safe_load(f) or {}
+    return _apply_defaults(cfg)
+
+try:
+    CFG = load_config(CONFIG_PATH)
+except Exception as e:
+    # A config that crashes the loader must not take the daemon down with it:
+    # fall back to the schema defaults so backups can still run.
+    print(f"[WARN] Could not load config {CONFIG_PATH} ({e}); using built-in defaults", flush=True)
+    CFG = _apply_defaults(_config_schema.apply_defaults({}) if _config_schema else {})
 for k, v in CFG.get("env", {}).items():
     os.environ[k] = str(v)
 
@@ -96,6 +108,61 @@ F_14 = font(14)
 # thread (the sole EPD drawer) notices it, paints the owner screen one last time,
 # sleeps the panel so the image persists after power-off, and exits.
 SHUTDOWN = threading.Event()
+
+
+# ---------------------------------------------------------------------------
+# Main-loop heartbeat watchdog. The main loop (and every long-running hold it
+# can legitimately sit in: backup output, post-backup holds) calls _heartbeat();
+# if no beat lands within stall_sec the process is wedged somewhere without a
+# watchdog of its own, so we log and exit 1 — Restart=on-failure brings back a
+# healthy daemon. Time and exit are injectable so tests can drive it without
+# threads or os._exit.
+# ---------------------------------------------------------------------------
+class LoopWatchdog:
+    def __init__(self, stall_sec, exit_fn=None, time_fn=None, log_fn=None):
+        self.stall_sec = stall_sec
+        self._exit = exit_fn or os._exit
+        self._time = time_fn or time.monotonic
+        self._log = log_fn or (lambda m: print(m, flush=True))
+        self._last_beat = self._time()
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self.thread = None
+
+    def beat(self):
+        with self._lock:
+            self._last_beat = self._time()
+
+    def check(self):
+        """One watchdog pass; returns True when the loop proved stalled."""
+        with self._lock:
+            stalled = (self._time() - self._last_beat) > self.stall_sec
+        if stalled:
+            self._log(f"[FATAL] main loop stalled (no heartbeat for >{int(self.stall_sec)}s)")
+            self._exit(1)
+            return True
+        return False
+
+    def _run(self):
+        while not self._stop.wait(5):
+            if self.check():
+                return
+
+    def start(self):
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+
+    def stop(self):
+        self._stop.set()
+
+
+_loop_watchdog = None
+
+def _heartbeat():
+    wd = _loop_watchdog
+    if wd is not None:
+        try: wd.beat()
+        except Exception: pass
 
 
 # ---------------------------------------------------------------------------
@@ -842,6 +909,21 @@ class Panel:
             try: epdconfig.module_exit()
             except Exception: pass
 
+class NullPanel:
+    """Headless stand-in for Panel: same interface, every method a no-op, so a
+    display that can't init (or dies at runtime) doesn't take down backups,
+    sync and notifications with it."""
+    def __init__(self):
+        self.pw = self.ph = 0
+        self._mode = "none"
+        self._partial_ready = False
+
+    def prepare_partial(self, base_img=None): pass
+    def draw(self, **kw): pass
+    def draw_owner(self): pass
+    def draw_updating(self): pass
+    def sleep(self): pass
+
 class Animator:
     """The single EPD drawer. Runs at 1 Hz for the whole process lifetime:
     animated screens (waiting / backup / sync) are redrawn every tick so the
@@ -865,6 +947,8 @@ class Animator:
         }
         self.running = False
         self.thread = None
+        self.exit_code = 0          # fatal main-loop exit sets this to 1
+        self._draw_failures = 0     # consecutive draw exceptions (panel may be dying)
         self._last = None
         self._last_layout = None     # screen-type signature of the last drawn frame
         self._force_full = False     # one-shot: next draw is a clean full refresh
@@ -913,13 +997,15 @@ class Animator:
         with self.lock:
             return dict(self.state)
 
-    def _do_shutdown(self):
+    def _do_shutdown(self, exit_code=None):
         # Paint the final screen one last time, crisp full refresh, then sleep
         # the panel so the e-paper holds the image after PiSugar cuts power.
         # A system update stops this daemon partway through, so it gets the
         # "Updating" screen rather than the power-off owner screen — painting it
         # here rather than relying on a tick landing first removes the race with
         # the installer's `systemctl stop`.
+        if exit_code is None:
+            exit_code = self.exit_code
         try:
             if _updating_requested():
                 self.panel.draw_updating()
@@ -931,7 +1017,32 @@ class Animator:
             self.panel.sleep()
         except Exception:
             pass
-        os._exit(0)
+        # Don't orphan a running idevicebackup2 on the way out (KillMode=mixed
+        # covers `systemctl stop`; this covers the os._exit paths).
+        try:
+            proc = _backup_proc
+            if proc is not None and proc.poll() is None:
+                proc.terminate()
+        except Exception:
+            pass
+        os._exit(exit_code)
+
+    def _handle_draw_failure_streak(self):
+        """The panel has failed DRAW_FAIL_REINIT_AFTER draws in a row: try one
+        full re-init (a stale SPI/GPIO handle can recover); if that also fails,
+        drop to a NullPanel so the journal isn't spammed 1 Hz forever."""
+        self._draw_failures = 0
+        print(f"[DRAW] {DRAW_FAIL_REINIT_AFTER} consecutive failures; re-initializing panel", flush=True)
+        try:
+            panel = Panel()
+            panel.prepare_partial()
+        except Exception as e:
+            print(f"[DRAW] panel re-init failed ({e}); running headless", flush=True)
+            panel = NullPanel()
+        self.panel = panel
+        self._last = None
+        self._last_layout = None
+        self._force_full = True
 
     def _tick(self):
         while self.running:
@@ -966,8 +1077,12 @@ class Animator:
                 try:
                     self.panel.draw(full=full, **s)
                     self._last = s
+                    self._draw_failures = 0
                 except Exception as e:
+                    self._draw_failures += 1
                     print(f"[DRAW] {e}", flush=True)
+                    if self._draw_failures >= DRAW_FAIL_REINIT_AFTER:
+                        self._handle_draw_failure_streak()
             if SHUTDOWN.wait(1):    # wakes immediately when shutdown is requested
                 self._do_shutdown(); return
 
@@ -1045,14 +1160,33 @@ def _updating_requested():
         return False
     return (time.time() - mtime) < UPDATING_MAX_SEC
 
+_idevice_id_warned = False
+
 def get_connected_udids():
-    """Return list of currently connected iPhone UDIDs."""
+    """Return list of currently connected iPhone UDIDs.
+
+    Every probe failure (tool missing, hung, unstartable) reads as an empty
+    list — callers treat it as no-device and keep polling — but each failure
+    mode is logged distinctly, once, so 'idevice_id is broken' is never
+    mistaken for 'no phone plugged in'."""
+    global _idevice_id_warned
     try:
-        out = subprocess.run(["idevice_id", "-l"], capture_output=True, text=True).stdout.strip()
+        out = subprocess.run(["idevice_id", "-l"], capture_output=True, text=True,
+                             timeout=10).stdout.strip()
         if out:
             return [u.strip() for u in out.splitlines() if u.strip()]
     except FileNotFoundError:
-        pass
+        if not _idevice_id_warned:
+            _idevice_id_warned = True
+            print("[WARN] idevice_id not found (libimobiledevice not installed?)", flush=True)
+    except subprocess.TimeoutExpired:
+        if not _idevice_id_warned:
+            _idevice_id_warned = True
+            print("[WARN] idevice_id -l timed out; treating as no device", flush=True)
+    except OSError as e:
+        if not _idevice_id_warned:
+            _idevice_id_warned = True
+            print(f"[WARN] idevice_id -l failed: {e}", flush=True)
     return []
 
 def device_present():
@@ -1150,7 +1284,7 @@ def _sync_running():
     and a sync mutually exclusive (never run both / show both)."""
     try:
         return subprocess.run(["pgrep", "-f", "backup-sync.py"],
-                              capture_output=True).returncode == 0
+                              capture_output=True, timeout=5).returncode == 0
     except Exception:
         return False
 
@@ -1221,9 +1355,25 @@ def log_open():
     logutil.prune_logs()   # trim old per-run logs (count + age)
     return f, path
 
+def _backup_dir_writable(path):
+    """Probe-write a temp file and delete it. A backup dir that is read-only
+    (failed disk remounted ro, wrong mount options) must fail the pre-backup
+    gate here instead of crashing idevicebackup2 mid-run."""
+    try:
+        fd, tmp = tempfile.mkstemp(prefix=".wprobe-", dir=path)
+        try:
+            os.write(fd, b"0")
+        finally:
+            os.close(fd)
+        os.remove(tmp)
+        return True
+    except OSError:
+        return False
+
 def check_backup_mount(logf, ui):
-    """Return True if the backup folder is mounted; else show an error via the
-    Animator and return False. The daemon stays alive (single EPD owner)."""
+    """Return True if the backup folder is mounted and writable; else show an
+    error via the Animator and return False. The daemon stays alive (single EPD
+    owner)."""
     ensure_dir(CFG["backup_dir"])
     marker = os.path.join(CFG["backup_dir"], CFG["marker_file"])
     if not os.path.exists(marker):
@@ -1234,34 +1384,58 @@ def check_backup_mount(logf, ui):
         ui.set(screen="normal", subtitle="Backup folder not found.", percent=None,
                animate=False, show_header=True)
         return False
+    if not _backup_dir_writable(CFG["backup_dir"]):
+        msg = "Backup storage read-only / not writable"
+        print(f"[ERROR] {msg} ({CFG['backup_dir']})")
+        if logf: logf.write(f"[ERROR] {msg} ({CFG['backup_dir']})\n")
+        write_status("error", message=msg)
+        ui.set(screen="normal", subtitle="Backup storage is\nread-only.", percent=None,
+               animate=False, show_header=True)
+        return False
     return True
 
-def check_disk_space(logf, ui):
-    """Check disk space on root and backup drive before starting."""
-    warnings = []
-    # Check root filesystem
+ROOT_MIN_FREE_MB = 200
+BACKUP_MIN_FREE_MB = 500
+
+def _disk_space_problems(backup_dir, statvfs_fn=None):
+    """Free-space shortfalls that should block a backup from starting. An
+    unreadable filesystem fails open (empty list): statvfs lying is rarer than
+    the backup actually needing the space."""
+    if statvfs_fn is None:
+        statvfs_fn = getattr(os, "statvfs", None)   # absent on non-POSIX dev machines
+    if statvfs_fn is None:
+        return []
+    problems = []
     try:
-        st = os.statvfs("/")
+        st = statvfs_fn("/")
         root_free_mb = (st.f_bavail * st.f_frsize) // (1024 * 1024)
-        if root_free_mb < 500:
-            warnings.append(f"Root disk low: {root_free_mb}MB free")
+        if root_free_mb < ROOT_MIN_FREE_MB:
+            problems.append(f"Root disk: {root_free_mb}MB free (need {ROOT_MIN_FREE_MB}MB)")
     except Exception:
         pass
-    # Check backup drive
     try:
-        bd = CFG.get("backup_dir", "/media/iosbackup/")
-        st = os.statvfs(bd)
-        backup_free_gb = (st.f_bavail * st.f_frsize) / (1024 ** 3)
-        if backup_free_gb < 1:
-            warnings.append(f"Backup drive low: {backup_free_gb:.1f}GB free")
+        st = statvfs_fn(backup_dir)
+        backup_free_mb = (st.f_bavail * st.f_frsize) // (1024 * 1024)
+        if backup_free_mb < BACKUP_MIN_FREE_MB:
+            problems.append(f"Backup drive: {backup_free_mb}MB free (need {BACKUP_MIN_FREE_MB}MB)")
     except Exception:
         pass
-    if warnings:
-        msg = "\n".join(warnings)
-        if logf: logf.write(f"[WARN] Disk space: {msg}\n")
-        ui.set(subtitle=f"Warning:\n{msg}\nProceeding...", percent=None, animate=False, show_header=True)
-        time.sleep(4)
-    return len(warnings) == 0
+    return problems
+
+def check_disk_space(logf, ui):
+    """Pre-backup disk-space gate. Returns False (after explaining on the
+    display/status) when there is too little room to start; a backup that runs
+    into ENOSPC mid-way fails as a corrupt backup, not a clean error."""
+    problems = _disk_space_problems(CFG.get("backup_dir", "/media/iosbackup/"))
+    if not problems:
+        return True
+    msg = "Not enough disk space.\n" + "\n".join(problems)
+    print(f"[ERROR] {msg}", flush=True)
+    if logf: logf.write(f"[ERROR] Disk space gate: {msg}\n")
+    write_status("error", message=msg)
+    ui.set(screen="normal", subtitle=msg, percent=None, animate=False, show_header=True)
+    time.sleep(4)
+    return False
 
 def verify_backup_integrity(backup_dir, logf):
     """Check backup completed with valid Manifest.plist."""
@@ -1293,29 +1467,108 @@ def _is_progress_line(ln):
     """Check if a line is a progress bar (e.g. '[====] 42% Finished')."""
     return bool(re.match(r'\s*\[=*\s*\]\s*\d+%', ln))
 
-def tee_and_parse(proc, logf, on_line):
+def _backup_watchdog_limits():
+    """Silence timeout / total cap for a backup run. Configurable under the
+    `backup:` section (hang_timeout_sec, max_duration_sec); read defensively so
+    a config schema that doesn't know those keys yet can't break us."""
+    bk = CFG.get("backup", {})
+    if not isinstance(bk, dict):
+        bk = {}
+    try: silence = int(bk.get("hang_timeout_sec", BACKUP_SILENCE_TIMEOUT_SEC))
+    except (TypeError, ValueError): silence = BACKUP_SILENCE_TIMEOUT_SEC
+    try: cap = int(bk.get("max_duration_sec", BACKUP_MAX_DURATION_SEC))
+    except (TypeError, ValueError): cap = BACKUP_MAX_DURATION_SEC
+    return max(30, silence), max(300, cap)
+
+def _terminate_then_kill(proc, logf, why):
+    print(f"[WATCHDOG] {why}; terminating idevicebackup2", flush=True)
+    if logf: logf.write(f"[WATCHDOG] {why}; terminating idevicebackup2\n")
+    try: proc.terminate()
+    except Exception: return
+    try:
+        proc.wait(timeout=5)
+        return
+    except Exception:
+        pass
+    try: proc.kill()
+    except Exception: pass
+    try: proc.wait(timeout=5)
+    except Exception: pass
+
+def tee_and_parse(proc, logf, on_line, silence_timeout=BACKUP_SILENCE_TIMEOUT_SEC,
+                  total_cap=BACKUP_MAX_DURATION_SEC, device_gone=None, device_poll_sec=30):
+    """Pump idevicebackup2's merged stdout/stderr to the journal, the run log and
+    the parser (char-at-a-time; the parser tracks progress-bar rewrites via \\r).
+
+    Watchdogs, mirroring sync_manager's SCAN_KILL_SEC/STALL_KILL_SEC pattern:
+    `silence_timeout` seconds without ANY output means the backup hung (device
+    still attached, nothing progressing) and a run past `total_cap` is bounded;
+    both terminate, then SIGKILL 5s later. `device_gone` (polled every
+    device_poll_sec) is the third unplug layer: the phone vanished but the
+    process is still alive. Returns "eof" | "silent" | "overtime" | "unplugged"
+    so the caller can report why the stream ended."""
+    fd = proc.stdout.fileno()
     cur_line = ""
+    start = time.monotonic()
+    last_output = start
+    last_dev_poll = start
+    outcome = "eof"
+    reasons = {
+        "silent": f"no output for {silence_timeout}s",
+        "overtime": f"backup exceeded {total_cap}s",
+        "unplugged": "device vanished mid-backup but process still running",
+    }
     while True:
-        ch = proc.stdout.read(1)
-        if ch == "" or ch is None:
+        now = time.monotonic()
+        if now - last_output > silence_timeout:
+            outcome = "silent"; break
+        if now - start > total_cap:
+            outcome = "overtime"; break
+        if device_gone is not None and now - last_dev_poll >= device_poll_sec:
+            last_dev_poll = now
+            try:
+                gone = device_gone()
+            except Exception:
+                gone = False
+            if gone and proc.poll() is None:
+                outcome = "unplugged"; break
+        wait = max(0.05, min(1.0, silence_timeout - (now - last_output)))
+        try:
+            ready, _, _ = select.select([fd], [], [], wait)
+        except (OSError, ValueError):
             break
-        sys.stdout.write(ch); sys.stdout.flush()
-        if ch in ["\n", "\r"]:
-            # Only log non-progress lines (progress bars are noise)
-            if cur_line and logf and not _is_progress_line(cur_line):
-                logf.write(cur_line + "\n")
-            on_line("__LINE_BREAK__")
-            cur_line = ""
-        else:
-            cur_line += ch
-            on_line(ch)
+        if not ready:
+            continue
+        try:
+            chunk = os.read(fd, 4096)
+        except OSError:
+            break
+        if not chunk:
+            break
+        last_output = time.monotonic()
+        _heartbeat()
+        text = chunk.decode("utf-8", "replace")
+        sys.stdout.write(text); sys.stdout.flush()
+        for ch in text:
+            if ch in ("\n", "\r"):
+                # Only log non-progress lines (progress bars are noise)
+                if cur_line and logf and not _is_progress_line(cur_line):
+                    logf.write(cur_line + "\n")
+                on_line("__LINE_BREAK__")
+                cur_line = ""
+            else:
+                cur_line += ch
+                on_line(ch)
     # Flush remaining
     if cur_line and logf and not _is_progress_line(cur_line):
         logf.write(cur_line + "\n")
+    if outcome != "eof":
+        _terminate_then_kill(proc, logf, reasons[outcome])
+    return outcome
 
 def get_disk_usage_pct(device_path: str):
     try:
-        out = subprocess.run(["df", "-P", device_path], capture_output=True, text=True, check=True).stdout.splitlines()
+        out = subprocess.run(["df", "-P", device_path], capture_output=True, text=True, check=True, timeout=5).stdout.splitlines()
         if len(out) >= 2:
             tokens = out[-1].split()
             for tok in tokens:
@@ -1374,6 +1627,7 @@ def _check_encryption(logf, ui):
             return None
 
 def run_backup(panel, logf, ui, _retry=0):
+    global _backup_proc
     if _retry == 0:
         # Fresh backup — clear any stale stop request from a previous run.
         try:
@@ -1383,12 +1637,22 @@ def run_backup(panel, logf, ui, _retry=0):
             pass
     if not check_backup_mount(logf, ui):
         return 2
-    check_disk_space(logf, ui)
+    if not check_disk_space(logf, ui):
+        return 2
+    if shutil.which("idevicebackup2") is None:
+        msg = "idevicebackup2 not installed"
+        print(f"[ERROR] {msg}", flush=True)
+        if logf: logf.write(f"[ERROR] {msg}\n")
+        write_status("error", message=msg)
+        ui.set(screen="normal", subtitle=f"Error:\n{msg}", percent=None,
+               animate=False, show_header=True)
+        return 2
     _check_encryption(logf, ui)
     cmd = ["idevicebackup2", "backup", CFG["backup_dir"]]
     print(f"[CMD] {' '.join(cmd)}", flush=True)
     if logf: logf.write(f"[CMD] {' '.join(cmd)}\n")
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=0, universal_newlines=True)
+    _backup_proc = proc
     pct, encrypted, last_ui = None, False, 0
     last_pct = None
     cur_line = ""
@@ -1440,6 +1704,7 @@ def run_backup(panel, logf, ui, _retry=0):
         # cannot be running here, since a backup is what got us to this line.
         print("[ERROR] Holding error screen (unplug, new request, or shutdown)...", flush=True)
         while not SHUTDOWN.is_set():
+            _heartbeat()
             if uipolicy.should_release_hold(device_present=device_present(),
                                             sync_running=False,
                                             manual_start=_manual_start_requested()):
@@ -1505,9 +1770,25 @@ def run_backup(panel, logf, ui, _retry=0):
     except Exception as _e:
         if logf: logf.write(f"[NOTIFY] could not prime webhook auth: {_e}\n")
     send_notification("backup_start")
-    tee_and_parse(proc, logf, feed_parser)
+    silence_sec, cap_sec = _backup_watchdog_limits()
+    outcome = tee_and_parse(proc, logf, feed_parser, silence_timeout=silence_sec,
+                            total_cap=cap_sec,
+                            device_gone=lambda: not device_present())
     proc.wait(); rc = proc.returncode
     ts_end = datetime.now().strftime("%H:%M / %d %b %Y")
+    if outcome in ("silent", "overtime"):
+        # Watchdog killed a hung/runaway backup; the phone may still be plugged,
+        # so the device_present() check below can't catch this — report it here,
+        # through the same interrupted flow as a mid-backup unplug.
+        reason_txt = ("Backup hung (no progress)" if outcome == "silent"
+                      else "Backup exceeded time limit")
+        if logf: logf.write(f"[INTERRUPT] {reason_txt}; watchdog killed idevicebackup2\n")
+        write_status("interrupted", reason=reason_txt)
+        ui.set(screen="interrupted", subtitle=ts_end, percent=None, animate=False)
+        send_notification("backup_error", {"error": reason_txt})
+        return 0
+    # outcome "unplugged": rc!=0 with the device gone — the interrupted branch
+    # below reports it through the existing flow.
     if rc == 0:
         # Verify backup integrity
         ok, integrity_msg = verify_backup_integrity(CFG["backup_dir"], logf)
@@ -1671,6 +1952,9 @@ def run_backup(panel, logf, ui, _retry=0):
 # PiSugar button listener (single-tap → system-info screen for 30s)
 # ---------------------------------------------------------------------------
 _backup_running = False
+# Live idevicebackup2 process (or None) — _do_shutdown terminates it so a
+# daemon exit can't orphan a running backup.
+_backup_proc = None
 # The single authority on whether the single-tap info screen is up. Enforced in
 # Animator.set(), so no drawing path has to remember to check it.
 _info_window = uipolicy.InfoWindow()
@@ -1805,7 +2089,12 @@ def _wg_autoconnect_watcher(logf):
                 # not within the grace window, tear it down so the next tick
                 # reconnects cleanly. A tunnel that handshaked at least once is
                 # left alone (its handshake time stays set even when idle).
-                if _wg.latest_handshake(iface) > 0:
+                ts = _wg.latest_handshake(iface)
+                if ts is None:
+                    # Could not read handshake state (wg missing/error/timeout):
+                    # leave the tunnel alone — cycling it would not fix the probe.
+                    dead_since = None
+                elif ts > 0:
                     last_err = None
                     dead_since = None
                 else:
@@ -1864,7 +2153,7 @@ def _setup_completed():
 
 
 def main():
-    global _backup_running
+    global _backup_running, _loop_watchdog
 
     # Single EPD owner: on shutdown the Animator paints the owner screen and sleeps
     # the panel so the image persists after PiSugar cuts power.
@@ -1874,9 +2163,14 @@ def main():
     except Exception:
         pass
 
-    logf, logpath = log_open()
-    print(f"[LOG] writing to {logpath}")
-    if logf: logf.write(f"[LOG] writing to {logpath}\n")
+    try:
+        logf, logpath = log_open()
+        print(f"[LOG] writing to {logpath}")
+        if logf: logf.write(f"[LOG] writing to {logpath}\n")
+    except OSError as e:
+        # A broken log dir must not stop the daemon; journal stdout still works.
+        logf = None
+        print(f"[WARN] could not open run log ({e}); logging to journal only", flush=True)
 
     # Try NTP sync in background
     _try_ntp_sync()
@@ -1886,8 +2180,14 @@ def main():
     # connection appears — including the iPhone hotspot being toggled on after
     # the phone is already plugged in, not just at boot.
 
-    p = Panel()
-    p.prepare_partial()  # enable partial for text screens
+    try:
+        p = Panel()
+        p.prepare_partial()  # enable partial for text screens
+    except Exception as e:
+        # No display (panel missing, SPI/GPIO wedged, stuck BUSY): run headless.
+        # Backups, sync and notifications all still work without the EPD.
+        print(f"[WARN] display init failed ({e}); running headless", flush=True)
+        p = NullPanel()
 
     ui = Animator(p)
     ui.start()
@@ -1930,6 +2230,26 @@ def main():
             except OSError:
                 pass
 
+        # Pre-flight: without idevicebackup2 every backup would crash on the
+        # first plug-in. Fail loudly now (journal + status) instead.
+        if shutil.which("idevicebackup2") is None:
+            msg = "idevicebackup2 not installed"
+            print(f"[ERROR] {msg}", flush=True)
+            if logf: logf.write(f"[ERROR] {msg}\n")
+            write_status("error", message=msg)
+
+        # Failsafe against a wedged main loop: every long-running hold beats,
+        # so silence past the backup hang timeout + margin means a genuine
+        # wedge -> exit 1 and let Restart=on-failure bring back a healthy daemon.
+        def _wd_log(m):
+            print(m, flush=True)
+            if logf:
+                try: logf.write(m + "\n")
+                except Exception: pass
+        _silence_sec, _ = _backup_watchdog_limits()
+        _loop_watchdog = LoopWatchdog(stall_sec=_silence_sec + 100, log_fn=_wd_log)
+        _loop_watchdog.start()
+
         def show(**kw):
             # Passive redraw. Animator.set() is what holds the info screen back,
             # so this no longer needs its own guard.
@@ -1937,6 +2257,7 @@ def main():
 
         while True:
             # The Animator owns the EPD; this loop only decides what state to show.
+            _heartbeat()
             if SHUTDOWN.is_set():
                 time.sleep(0.2); continue   # Animator paints owner + exits
 
@@ -1970,7 +2291,7 @@ def main():
                 if _age > 60:
                     try:
                         _pg = subprocess.run(["pgrep", "-f", "backup-sync.py"],
-                                             capture_output=True, text=True)
+                                             capture_output=True, text=True, timeout=5)
                         _alive = _pg.returncode == 0
                     except Exception:
                         _alive = True
@@ -2067,7 +2388,7 @@ def main():
                 ui.set(screen="normal", subtitle="Device detected. Preparing...",
                        percent=None, animate=True, show_header=True)
                 ui.request_full()   # clean transition from the boot/idle screen
-                try: subprocess.run(["idevicepair", "validate"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                try: subprocess.run(["idevicepair", "validate"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)
                 except Exception: pass
                 run_backup(p, logf, ui)
                 _backup_running = False
@@ -2080,6 +2401,7 @@ def main():
                 # the mutual-exclusion check above still refuses to re-backup a
                 # device while a sync is live.
                 while not SHUTDOWN.is_set():
+                    _heartbeat()
                     if uipolicy.should_release_hold(
                             device_present=device_present(),
                             sync_running=_sync_running(),
@@ -2117,9 +2439,15 @@ def main():
     except Exception as e:
         if logf:
             logf.write(f"[FATAL] main loop: {e}\n")
-        # Let the Animator paint the owner screen and exit; the unit restarts on failure.
+        print(f"[FATAL] main loop: {e}", flush=True)
+        # Fatal must exit NON-ZERO (the old unconditional os._exit(0) meant
+        # Restart=on-failure never restarted a crashed daemon): the Animator
+        # paints the final screen and exits 1, and the os._exit(1) below is the
+        # fallback for when the Animator thread itself is wedged.
+        ui.exit_code = 1
         SHUTDOWN.set()
         time.sleep(2)
+        os._exit(1)
     finally:
         _backup_running = False
         try: logf.close()

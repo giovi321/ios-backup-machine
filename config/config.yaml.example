@@ -29,6 +29,8 @@ auth:
 backup:
   auto_start: true          # start backup automatically when iPhone is plugged in
   notify_on_rejected: true   # send notification when a non-allowed device is rejected
+  hang_timeout_sec: 600      # idevicebackup2 silent this long -> hung; it is killed
+  max_duration_sec: 14400    # total cap for a single backup run (4 h)
 
 # --- Backup encryption ---
 # Encryption is set ON THE iPHONE via the web UI Encryption page.
@@ -132,3 +134,4 @@ sync:
   # and battery is below this percent. Kept above PiSugar's 30% auto-shutdown so
   # a long rsync isn't cut mid-transfer. SSH credentials live encrypted in sync.enc.
   min_battery_percent: 35
+  max_seconds: 3600          # total cap for one sync run (stall watchdog is separate)
