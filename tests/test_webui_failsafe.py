@@ -956,3 +956,55 @@ def test_the_journal_problem_filter_does_not_claim_there_are_no_problems(monkeyp
     assert "No warnings in this window" not in body
     assert "not the same as" in body
     assert "Turn the filter off" in body
+
+
+# --- /api/health reports a device that has gone quiet ----------------------------
+#
+# The pull half of the quiet-device alert: an external poller sees both "up but
+# quiet" here and "unreachable" when the poll itself fails, which together cover
+# the case a push notification from the device can never report.
+
+def _health_backup(monkeypatch, tmp_path, record=None):
+    monkeypatch.setattr(webui, "LOG_DIR", str(tmp_path))
+    if record is not None:
+        (tmp_path / "last_backup.json").write_text(record)
+    _write_config("setup_completed: true\n")
+    r = _client().get("/api/health")
+    assert r.status_code == 200
+    body = r.get_json()
+    return body["backup"], body["warnings"]
+
+
+def test_health_reports_a_stale_backup_and_says_how_long(monkeypatch, tmp_path):
+    import time as _time
+    old = _time.time() - 9 * 86400
+    backup, warnings = _health_backup(
+        monkeypatch, tmp_path, json.dumps({"completed_at": old}))
+    assert backup["stale"] is True
+    assert backup["last_success_ts"] == old
+    assert backup["last_success"] is not None
+    assert backup["age_seconds"] >= 9 * 86400
+    assert any("no backup in 9 days" in w for w in warnings)
+
+
+def test_health_reports_a_fresh_backup_as_not_stale(monkeypatch, tmp_path):
+    import time as _time
+    backup, warnings = _health_backup(
+        monkeypatch, tmp_path, json.dumps({"completed_at": _time.time() - 3600}))
+    assert backup["stale"] is False
+    assert backup["age_seconds"] < 7200
+    assert not any("no backup in" in w for w in warnings)
+
+
+def test_health_degrades_to_nulls_when_the_record_is_missing_or_corrupt(monkeypatch, tmp_path):
+    # A missing or unreadable record must not turn the endpoint an external
+    # monitor depends on into a 500.
+    backup, _ = _health_backup(monkeypatch, tmp_path)
+    assert backup["last_success"] is None
+    assert backup["last_success_ts"] is None
+    assert backup["age_seconds"] is None
+    assert backup["stale"] is False
+
+    backup, _ = _health_backup(monkeypatch, tmp_path, "{not json")
+    assert backup["last_success"] is None
+    assert backup["stale"] is False

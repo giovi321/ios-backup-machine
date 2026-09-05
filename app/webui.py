@@ -2108,13 +2108,21 @@ def _iso_from_mtime(ts):
 
 
 def _last_backup_info():
-    """Current backup state + newest backup folder time (best-effort)."""
+    """Current backup state + newest backup folder time (best-effort), plus the
+    daemon's durable record of the last SUCCESSFUL backup and whether it has gone
+    stale. Folder mtimes report the last write — an interrupted run bumps them
+    too — so they cannot answer "is this device still backing up".
+    """
     st = _read_backup_status() or {}
     info = {
         "state": st.get("state"),
         "timestamp": st.get("timestamp"),
         "completed_at": st.get("completed_at"),
         "last_backup_time": None,
+        "last_success": None,
+        "last_success_ts": None,
+        "stale": False,
+        "age_seconds": None,
     }
     try:
         bd = load_config().get("backup_dir", "/media/iosbackup/")
@@ -2127,6 +2135,22 @@ def _last_backup_info():
                         latest = m
         if latest:
             info["last_backup_time"] = _iso_from_mtime(latest)
+    except Exception:
+        pass
+    # Its own try: a missing or corrupt record must degrade to nulls, never turn
+    # /api/health (the surface an external poller watches) into a 500.
+    try:
+        with open(os.path.join(LOG_DIR, "last_backup.json"), "r") as f:
+            rec = json.load(f)
+        ts = rec.get("completed_at") if isinstance(rec, dict) else None
+        if isinstance(ts, (int, float)) and not isinstance(ts, bool) and ts > 0:
+            age = time.time() - ts
+            info["last_success_ts"] = ts
+            info["last_success"] = _iso_from_mtime(ts)
+            info["age_seconds"] = int(max(0.0, age))
+            thr = load_config().get("backup", {}).get("stale_after_sec", 604800)
+            thr = int(thr) if isinstance(thr, int) and not isinstance(thr, bool) else 604800
+            info["stale"] = bool(thr > 0 and age >= thr)
     except Exception:
         pass
     return info
@@ -2188,6 +2212,12 @@ def api_health():
         status = "warning"; warnings.append("no internet")
     if backup.get("state") == "error" and status != "error":
         status = "warning"; warnings.append("last backup error")
+    # The pull half of the quiet-device alert: a poller catches both "up but
+    # quiet" here and "unreachable" from the poll failing, which together cover
+    # the case a push notification from the device itself never can.
+    if backup.get("stale") and status != "error":
+        days = int((backup.get("age_seconds") or 0) // 86400)
+        status = "warning"; warnings.append(f"no backup in {days} days")
 
     return jsonify({
         "status": status,

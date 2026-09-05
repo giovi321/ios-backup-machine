@@ -31,6 +31,16 @@ backup:
   notify_on_rejected: true   # send notification when a non-allowed device is rejected
   hang_timeout_sec: 600      # idevicebackup2 silent this long -> hung; it is killed
   max_duration_sec: 14400    # total cap for a single backup run (4 h)
+  min_battery_percent: 35    # refuse to start / abort mid-run below this when not charging
+                             # (PiSugar hard-powers the board off at 30%); 0 disables
+  min_free_mb: 512           # free space the backup drive must keep during the run; also
+                             # raises the pre-backup floor when higher; 0 disables the
+                             # drive check (the root-filesystem check always runs)
+  notify_stale: true         # alert once when no backup has succeeded for stale_after_sec
+                             # (every other notification only fires when something happens,
+                             # so a device that quietly stops backing up tells nobody)
+  stale_after_sec: 604800    # no successful backup for this long -> one alert (7 d); the
+                             # next successful backup re-arms it; 0 = off
 
 # --- Backup encryption ---
 # Encryption is set ON THE iPHONE via the web UI Encryption page.
@@ -85,10 +95,11 @@ notifications:
   webhook:
     enabled: false
     url: ""
-    # Events: backup_start, backup_complete, backup_error, device_connected, device_disconnected, device_rejected
+    # Events: backup_start, backup_complete, backup_error, backup_stale, device_connected, device_disconnected, device_rejected
     events:
       - "backup_complete"
       - "backup_error"
+      - "backup_stale"
     # Optional auth header. The header VALUE is encrypted at rest in notify.enc
     # (same AES-256-GCM credential store as WireGuard/sync). Set the value via the
     # web UI. In UDID mode it can only be decrypted while the iPhone is connected,
@@ -105,6 +116,7 @@ notifications:
     events:
       - "backup_complete"
       - "backup_error"
+      - "backup_stale"
 
 # --- WireGuard client ---
 wireguard:

@@ -29,7 +29,7 @@ import yaml
 CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/iosbackupmachine/config.yaml")
 
 # Bump whenever the schema changes in a way that needs a migration step below.
-CONFIG_VERSION = 2
+CONFIG_VERSION = 3
 
 # Result of the most recent load_config(): problems found (and repaired) while
 # reading the file, and whether the on-disk config had to be discarded entirely.
@@ -76,7 +76,23 @@ DEFAULTS = {
     "backup": {"auto_start": True, "notify_on_rejected": True,
                # hang_timeout_sec: idevicebackup2 silent this long -> considered hung, killed.
                # max_duration_sec: total cap for one backup run.
-               "hang_timeout_sec": 600, "max_duration_sec": 4 * 3600},
+               "hang_timeout_sec": 600, "max_duration_sec": 4 * 3600,
+               # min_battery_percent: a backup started below this is a backup cut
+               # mid-write by PiSugar's own 30% auto-shutdown. Same value and same
+               # reasoning as sync.min_battery_percent below; 0 disables.
+               "min_battery_percent": 35,
+               # min_free_mb: mid-run free-space reserve for the backup drive. Also
+               # raises the pre-backup floor when set above it, so a run can never
+               # start and then abort on its own first poll. 0 disables the drive
+               # check, never the rootfs one.
+               "min_free_mb": 512,
+               # notify_stale / stale_after_sec: every other notification is edge-
+               # triggered, so a device that quietly stops backing up (phone no longer
+               # plugged in, auto_start switched off, the filter rejecting) tells nobody
+               # until a restore is needed. One alert per quiet episode, re-armed by the
+               # next successful backup. 0 seconds disables the check entirely.
+               "notify_stale": True,
+               "stale_after_sec": 7 * 24 * 3600},
     "backup_encryption": {"encryption_confirmed": False},
     "device_filter": {"enabled": False, "allowed_devices": []},
     # networks: list of {nickname, ssid, password}. The legacy single ssid/password
@@ -85,10 +101,12 @@ DEFAULTS = {
     "ntp": {"enabled": True, "servers": ["pool.ntp.org", "time.google.com"]},
     "webui": {"enabled": True, "port": 8080, "bind_interfaces": ["all"], "secret_key": "change-me"},
     "notifications": {
-        "webhook": {"enabled": False, "url": "", "events": ["backup_complete", "backup_error"],
+        "webhook": {"enabled": False, "url": "",
+                    "events": ["backup_complete", "backup_error", "backup_stale"],
                     "auth_enabled": False, "auth_header": "Authorization"},
         "mqtt": {"enabled": False, "broker": "", "port": 1883, "username": "", "password": "",
-                 "topic_prefix": "iosbackupmachine", "events": ["backup_complete", "backup_error"]},
+                 "topic_prefix": "iosbackupmachine",
+                 "events": ["backup_complete", "backup_error", "backup_stale"]},
     },
     # full_tunnel: route ALL traffic (incl. the local subnet) through the VPN, so a
     # sync server whose IP overlaps the WiFi subnet is reachable over the tunnel.
@@ -168,9 +186,34 @@ def _migrate_1_to_2(cfg):
     return cfg
 
 
+def _migrate_2_to_3(cfg):
+    # v3 introduces the backup_stale event (no successful backup for a week).
+    # Adding it to DEFAULTS alone reaches FRESH INSTALLS ONLY: _deep_merge treats a
+    # saved events list as type-matching and copies it wholesale, and install.sh
+    # merges with the saved config winning — so every device that already has
+    # notifications configured, i.e. every device that would benefit, would never
+    # see the event. Only lists that already opted into backup_error are touched: a
+    # list deliberately narrowed to successes is a choice, and an empty list already
+    # means all events. Idempotent.
+    notif = cfg.get("notifications")
+    if not isinstance(notif, dict):
+        return cfg
+    for channel in ("webhook", "mqtt"):
+        ch = notif.get(channel)
+        if not isinstance(ch, dict):
+            continue
+        events = ch.get("events")
+        if not isinstance(events, list):
+            continue
+        if "backup_error" in events and "backup_stale" not in events:
+            events.append("backup_stale")
+    return cfg
+
+
 _MIGRATIONS = {
     0: _migrate_0_to_1,
     1: _migrate_1_to_2,
+    2: _migrate_2_to_3,
 }
 
 

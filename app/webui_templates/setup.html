@@ -389,7 +389,7 @@
                 <h2><span class="step-number">7</span> Notifications <span class="optional-tag">(optional)</span></h2>
                 <p class="card-desc">Get notified about backup events via webhook or MQTT. You can configure these later from the settings page.</p>
 
-                {% set all_events = ["backup_start", "backup_complete", "backup_error", "device_connected", "device_disconnected"] %}
+                {% set all_events = ["backup_start", "backup_complete", "backup_error", "backup_stale", "device_connected", "device_disconnected"] %}
 
                 <details>
                     <summary style="cursor:pointer; font-weight:500; font-size:14px; margin-bottom:12px; color:var(--primary);">Configure Webhook</summary>

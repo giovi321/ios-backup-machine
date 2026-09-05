@@ -52,6 +52,7 @@ Backup-related events can be sent by webhook (JSON POST) and/or MQTT:
 - `backup_start`
 - `backup_complete`
 - `backup_error`
+- `backup_stale` (no backup has completed for `backup.stale_after_sec`, 7 days by default; sent once per quiet stretch and re-armed by the next successful backup)
 - `device_connected`
 - `device_disconnected`
 - `device_rejected`

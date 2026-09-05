@@ -93,7 +93,7 @@ The `status` field is a rollup:
 
 ## Notifications
 
-Backup and sync events can be sent via webhook (JSON POST) and MQTT. Supported events: `backup_start`, `backup_complete`, `backup_error`, `sync_start`, `sync_complete`, `sync_error`, `device_connected`, `device_disconnected`, `device_rejected`. Configure them on the Notifications page or directly in `config.yaml`.
+Backup and sync events can be sent via webhook (JSON POST) and MQTT. Supported events: `backup_start`, `backup_complete`, `backup_error`, `backup_stale`, `sync_start`, `sync_complete`, `sync_error`, `device_connected`, `device_disconnected`, `device_rejected`. Configure them on the Notifications page or directly in `config.yaml`.
 
 ### The `sync_error` payload
 
