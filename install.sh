@@ -582,6 +582,22 @@ for svc in "${ENABLE_SERVICES[@]}"; do
         else
             warn "Could NOT enable ${svc} — it will not start at boot"
         fi
+        # Timers also need starting. The stop loop above stopped them and this
+        # loop only enables, so on an upgrade a new or changed timer would sit
+        # inactive until the next boot - and an upgrade only reboots when
+        # REBOOT_EPOCH bumped. Services are deliberately NOT started here: the
+        # oneshots would fire mid-install (wg-autoconnect can cut the network
+        # this script is running over) and the two long-running units are
+        # restarted further down.
+        case "${svc}" in
+            *.timer)
+                if systemctl start "${svc}" 2>/dev/null; then
+                    detail "Started ${svc}"
+                else
+                    warn "Could NOT start ${svc} — it will start at the next boot"
+                fi
+                ;;
+        esac
     else
         warn "Service file not found: ${svc}"
     fi

@@ -4,7 +4,7 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses a
 single version constant in `app/webui.py`.
 
-## [Unreleased]
+## [4.9.0] - 2026-09-05
 
 ### Fixed
 
@@ -17,7 +17,10 @@ single version constant in `app/webui.py`.
   instead of crashing - the daemon runs headless (backups, sync and
   notifications keep working) and logs one journal warning. The e-ink BUSY wait
   now has a 10-second ceiling instead of blocking forever, and after 30
-  consecutive draw failures the panel is re-initialised once, then abandoned.
+  consecutive draw failures the panel is re-initialised once. Headless is never
+  final: while the display is unavailable the daemon retries it on a 30 s to
+  15 min backoff, so a panel that was only slow to appear at boot recovers on
+  its own instead of staying dark until a restart.
 - A hung backup is no longer invisible: `idevicebackup2` is terminated after
   600 s without output (`backup.hang_timeout_sec`) and capped at 4 h total
   (`backup.max_duration_sec`), `idevice_id`/`idevicepair`/`df`/`pgrep` probes
