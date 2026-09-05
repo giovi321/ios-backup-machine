@@ -216,6 +216,196 @@ def test_a_failed_reinit_drops_to_headless_and_resets_the_streak(monkeypatch):
     a.panel.sleep()
 
 
+# --- headless -> periodic panel re-init ---------------------------------------
+
+class _RecordingPanel(FakePanel):
+    """A Panel stand-in that records what it was asked to draw."""
+
+    def __init__(self):
+        super().__init__()
+        self.draws = []
+        self.prepared = False
+
+    def prepare_partial(self, base_img=None):
+        self.prepared = True
+
+    def draw(self, **kw):
+        self.draws.append(kw)
+        super().draw(**kw)
+
+
+class _BoomPanel:
+    def __init__(self):
+        raise RuntimeError("SPI gone")
+
+
+def _counting_panel(built):
+    class CountingPanel(_RecordingPanel):
+        def __init__(self):
+            super().__init__()
+            built.append(1)
+    return CountingPanel
+
+
+def _one_tick(monkeypatch, animator):
+    """Run exactly one _tick iteration: no thread, no sleep. A fake SHUTDOWN
+    that isn't set on entry but whose wait() returns True ends the loop through
+    the normal shutdown path, which the no_exit fixture catches."""
+    monkeypatch.setattr(ibm, "SHUTDOWN", types.SimpleNamespace(
+        is_set=lambda: False, wait=lambda _t: True))
+    animator.running = True
+    animator._tick()
+
+
+def test_a_healthy_panel_never_retries_the_init(monkeypatch):
+    class NeverPanel:
+        def __init__(self):
+            raise AssertionError("must not re-init a healthy panel")
+
+    monkeypatch.setattr(ibm, "Panel", NeverPanel)
+    a = ibm.Animator(FakePanel())
+    a._retry_panel_init(1000.0)
+    assert a._panel_retry_at is None
+
+
+def test_a_headless_start_defers_the_first_retry(monkeypatch):
+    built = []
+    monkeypatch.setattr(ibm, "Panel", _counting_panel(built))
+    a = ibm.Animator(ibm.NullPanel())
+    # main() drops to NullPanel before the Animator exists, so the first tick is
+    # what arms the retry - it must not re-ask the question immediately.
+    a._retry_panel_init(1000.0)
+    assert built == []
+    assert a._panel_retry_at == 1000.0 + ibm.PANEL_RETRY_MIN_SEC
+    a._retry_panel_init(1000.0 + ibm.PANEL_RETRY_MIN_SEC - 1)
+    assert built == []
+    a._retry_panel_init(1000.0 + ibm.PANEL_RETRY_MIN_SEC)
+    assert built == [1]
+
+
+def test_a_due_retry_leaves_headless_and_forces_a_full_repaint(monkeypatch):
+    monkeypatch.setattr(ibm, "Panel", _RecordingPanel)
+    a = ibm.Animator(ibm.NullPanel())
+    a._retry_panel_init(1000.0)
+    a._retry_panel_init(1000.0 + ibm.PANEL_RETRY_MIN_SEC)
+    assert not isinstance(a.panel, ibm.NullPanel)
+    assert a.panel.prepared is True
+    assert a._force_full is True
+    assert a._last is None
+    assert a._last_layout is None
+    assert a._panel_retry_at is None
+
+
+def test_failed_retries_escalate_and_cap(monkeypatch):
+    monkeypatch.setattr(ibm, "Panel", _BoomPanel)
+    a = ibm.Animator(ibm.NullPanel())
+    a._retry_panel_init(1000.0)
+    gaps = [a._panel_retry_at - 1000.0]
+    for _ in range(7):
+        now = a._panel_retry_at
+        a._retry_panel_init(now)
+        gaps.append(a._panel_retry_at - now)
+    expected, g = [ibm.PANEL_RETRY_MIN_SEC], ibm.PANEL_RETRY_MIN_SEC
+    for _ in range(7):
+        g = min(g * 2, ibm.PANEL_RETRY_MAX_SEC)
+        expected.append(g)
+    assert gaps == expected
+    assert isinstance(a.panel, ibm.NullPanel)
+
+
+def test_a_permanently_absent_panel_logs_once(monkeypatch, capsys):
+    monkeypatch.setattr(ibm, "Panel", _BoomPanel)
+    a = ibm.Animator(ibm.NullPanel())
+    a._retry_panel_init(1000.0)
+    for _ in range(8):
+        a._retry_panel_init(a._panel_retry_at)
+    out = capsys.readouterr().out
+    # A unit built with no panel gets one line for the whole run, not one per try.
+    assert out.count("[DRAW] display still unavailable") == 1
+
+
+def test_a_changed_failure_is_logged_again(monkeypatch, capsys):
+    tries = []
+
+    class FlakyPanel:
+        def __init__(self):
+            tries.append(1)
+            raise RuntimeError(("SPI gone", "display stuck busy")[len(tries) % 2])
+
+    monkeypatch.setattr(ibm, "Panel", FlakyPanel)
+    a = ibm.Animator(ibm.NullPanel())
+    a._retry_panel_init(1000.0)
+    a._retry_panel_init(a._panel_retry_at)
+    a._retry_panel_init(a._panel_retry_at)
+    out = capsys.readouterr().out
+    assert out.count("[DRAW] display still unavailable") == 2
+
+
+def test_the_streak_fallback_leaves_the_retry_armed(monkeypatch):
+    monkeypatch.setattr(ibm, "Panel", _BoomPanel)
+    a = ibm.Animator(FakePanel())
+    a._handle_draw_failure_streak()
+    assert isinstance(a.panel, ibm.NullPanel)
+    # Same mechanism covers the streak's door: it sets no flag, the next tick
+    # just sees a NullPanel.
+    built = []
+    monkeypatch.setattr(ibm, "Panel", _counting_panel(built))
+    a._retry_panel_init(2000.0)
+    assert built == []
+    a._retry_panel_init(2000.0 + ibm.PANEL_RETRY_MIN_SEC)
+    assert built == [1]
+
+
+def test_a_null_panel_draw_does_not_reset_the_retry_gap(monkeypatch, no_exit):
+    monkeypatch.setattr(ibm, "Panel", _BoomPanel)
+    a = ibm.Animator(ibm.NullPanel())
+    a._panel_retry_gap = 480
+    a._panel_retry_at = 1e12          # not due: this tick only draws
+    a.set(screen="sync", animate=True, percent=10)
+    _one_tick(monkeypatch, a)
+    # An animated screen draws every tick, so resetting on any successful draw
+    # would pin the gap at the minimum and disable the rate limit entirely.
+    assert a._panel_retry_gap == 480
+
+
+def test_a_real_draw_resets_the_retry_gap(monkeypatch, no_exit):
+    a = ibm.Animator(FakePanel())
+    a._panel_retry_gap = 480
+    _one_tick(monkeypatch, a)
+    assert a._panel_retry_gap == ibm.PANEL_RETRY_MIN_SEC
+
+
+def test_a_tick_retries_and_repaints_a_recovered_panel(monkeypatch, no_exit):
+    monkeypatch.setattr(ibm, "Panel", _RecordingPanel)
+    a = ibm.Animator(ibm.NullPanel())
+    a._panel_retry_at = 0.0           # due on the next tick
+    _one_tick(monkeypatch, a)
+    assert isinstance(a.panel, _RecordingPanel)
+    # The retry runs before the draw block, so the recovered panel paints the
+    # current state in the same tick instead of waiting for a state change.
+    assert len(a.panel.draws) == 1
+    assert a.panel.draws[0]["full"] is True
+
+
+def test_a_settled_screen_still_gets_its_retry(monkeypatch, no_exit):
+    monkeypatch.setattr(ibm, "Panel", _RecordingPanel)
+    a = ibm.Animator(ibm.NullPanel())
+    a.set(screen="normal", subtitle="Ready", animate=False)
+    _one_tick(monkeypatch, a)         # draws once, settles _last, arms the retry
+    # An idle "normal" screen (or "complete" after a sync) holds identical state
+    # for minutes or hours: unchanged state, no animation, no pending full
+    # refresh, so the redraw branch is skipped on every tick.
+    assert a._force_full is False
+    assert a._last == a.state
+    a._panel_retry_at = 0.0           # due on the next tick
+    _one_tick(monkeypatch, a)
+    # The retry has to run per tick, not per redraw: folded into the redraw
+    # branch it would never run on a settled screen and the panel that came back
+    # would stay dark for the life of the process.
+    assert isinstance(a.panel, _RecordingPanel)
+    assert a.panel.draws[0]["full"] is True
+
+
 # --- disk-space gate -----------------------------------------------------------
 
 class _VFS:

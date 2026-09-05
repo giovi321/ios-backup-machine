@@ -70,10 +70,15 @@ def _probe_failed(name, exc):
             pass
 
 
+# Every probe below runs with timeout=5. Failing closed only helps if the probe
+# returns at all: a pgrep or pkill wedged on an unresponsive /proc entry parks
+# the run in the guard stage indefinitely, with no status, no exit and nothing
+# in the log. A TimeoutExpired is exactly the "cannot run" case _probe_failed
+# already handles.
 def backup_running():
     try:
         out = subprocess.run(["pgrep", "-f", "idevicebackup2"],
-                             capture_output=True, text=True)
+                             capture_output=True, text=True, timeout=5)
         return out.returncode == 0
     except Exception as e:
         _probe_failed("backup_running", e)
@@ -84,7 +89,7 @@ def another_sync_running():
     """True if another backup-sync.py process is running."""
     try:
         out = subprocess.run(["pgrep", "-f", "backup-sync.py"],
-                             capture_output=True, text=True)
+                             capture_output=True, text=True, timeout=5)
         if out.returncode != 0:
             return False
         my_pid = os.getpid()
@@ -118,7 +123,7 @@ def sync_in_progress():
         return False
     try:
         return subprocess.run(["pgrep", "-f", "/usr/bin/rsync"],
-                              capture_output=True).returncode == 0
+                              capture_output=True, timeout=5).returncode == 0
     except Exception as e:
         _probe_failed("sync_in_progress pgrep", e)
         return True
@@ -128,7 +133,7 @@ def kill_stale_rsync(logf):
     """Kill orphaned rsync processes left behind by previous interrupted runs."""
     try:
         r = subprocess.run(["pkill", "-9", "-f", "/usr/bin/rsync"],
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, timeout=5)
         if r.returncode == 0:
             logf.write("[INFO] killed stale rsync processes\n")
     except Exception as e:
@@ -177,21 +182,28 @@ def main():
         logf.close()
         sys.exit(0)
 
+    # None of the three guards below writes the status file. The run we are
+    # yielding to owns backup_status.json from its "syncing"/"backing_up" state
+    # through to the terminal one; a skipped launch overwriting it dropped the
+    # daemon's sync screen and blanked the dashboard card mid-transfer, and left
+    # a window where the next launcher saw no sync and kill_stale_rsync()'d a
+    # live one. When a probe fails we do not even know who owns the file, so a
+    # write would also be inventing a state nobody observed — that is how the
+    # backup guard came to report "Backup in progress" for a broken pgrep. The
+    # [SKIP] line, and _probe_failed's [WARN] above it, are the record; the
+    # launchers (webui, long-press) tell the user before they spawn anything.
     if another_sync_running():
         logf.write("[SKIP] another backup-sync.py is already running\n")
-        write_status("sync_skipped", message="Another sync is already running.")
         logf.close()
         sys.exit(0)
 
     if backup_running():
         logf.write("[SKIP] backup (idevicebackup2) in progress\n")
-        write_status("sync_error", message="Backup in progress — sync skipped.")
         logf.close()
         sys.exit(0)
 
     if sync_in_progress():
         logf.write("[SKIP] a sync is already in progress (in-process or external)\n")
-        write_status("sync_skipped", message="A sync is already in progress.")
         logf.close()
         sys.exit(0)
 

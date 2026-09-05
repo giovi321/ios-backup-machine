@@ -177,3 +177,47 @@ def test_purge_logs_keeps_webui_log(tmp_path, monkeypatch):
     assert r.status_code == 302
     assert (tmp_path / "webui.log").exists()
     assert not (tmp_path / "backup-2024.log").exists()
+
+
+# --- launchers are the only place a refused sync can be reported -----------------
+# backup-sync.py's guards no longer write backup_status.json: the run they yield to
+# owns that file, and a skipped launch overwriting it dropped the daemon's sync
+# screen mid-transfer. The consequence is that a refused launch is now silent to the
+# user unless the launcher checks first, so both launchers must.
+
+def _run_sync_from_settings(monkeypatch, backup_running):
+    _write_config("setup_completed: true\nsync:\n  enabled: true\n")
+    launched = []
+    monkeypatch.setattr(webui, "_backup_in_progress", lambda: backup_running)
+    monkeypatch.setattr(webui, "_read_backup_status", lambda: {"state": "idle"})
+    monkeypatch.setattr(webui.subprocess, "run",
+                        lambda *a, **k: type("R", (), {"returncode": 1})())
+    monkeypatch.setattr(webui.time, "sleep", lambda s: None)
+    monkeypatch.setattr(webui, "_launch_sync_detached", lambda script: launched.append(script))
+    r = _client().post("/settings/sync", data={"action": "run_sync"},
+                       follow_redirects=True)
+    return r, launched
+
+
+def test_settings_page_refuses_to_launch_a_sync_during_a_backup(monkeypatch):
+    r, launched = _run_sync_from_settings(monkeypatch, backup_running=True)
+    assert launched == []
+    assert b"backup is in progress" in r.data.lower()
+
+
+def test_settings_page_still_launches_a_sync_when_no_backup_runs(monkeypatch):
+    r, launched = _run_sync_from_settings(monkeypatch, backup_running=False)
+    assert len(launched) == 1
+
+
+def test_backup_in_progress_probe_cannot_hang_a_request(monkeypatch):
+    """A wedged pgrep inside a request would hold a worker open forever."""
+    seen = {}
+    monkeypatch.setattr(webui, "_read_backup_status", lambda: {"state": "idle"})
+
+    def fake_run(argv, **kw):
+        seen["kw"] = kw
+        return type("R", (), {"returncode": 1})()
+    monkeypatch.setattr(webui.subprocess, "run", fake_run)
+    assert webui._backup_in_progress() is False
+    assert seen["kw"].get("timeout")

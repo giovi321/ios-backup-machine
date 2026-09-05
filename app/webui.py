@@ -942,6 +942,12 @@ def settings_sync():
             _cur = _read_backup_status() or {}
             if _cur.get("state") == "syncing":
                 flash("Sync is already in progress.", "error")
+            # Mutual exclusion, same check the dashboard button makes. backup-sync.py
+            # still refuses to run during a backup, but its guard no longer writes the
+            # status file (that write clobbered the backup's own state), so the
+            # launcher is now the only place the user can be told.
+            elif _backup_in_progress():
+                flash("A backup is in progress. Wait for it to finish (or use auto-sync).", "error")
             else:
                 # Nuke leftovers from a cancelled/crashed sync before relaunching
                 try:
@@ -2099,8 +2105,11 @@ def _backup_in_progress():
     if (_read_backup_status() or {}).get("state") in ("backing_up", "connected"):
         return True
     try:
+        # Timeout: this runs inside a request, so a wedged pgrep would hold a
+        # worker open. Failing open here is deliberate — backup-sync.py's own
+        # guard fails closed, so the worst case is a launch that then refuses.
         return subprocess.run(["pgrep", "-f", "idevicebackup2"],
-                              capture_output=True).returncode == 0
+                              capture_output=True, timeout=5).returncode == 0
     except Exception:
         return False
 

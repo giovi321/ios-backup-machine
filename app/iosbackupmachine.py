@@ -57,6 +57,8 @@ IDLE_REFRESH_SEC = 4
 WG_RECONCILE_SEC = 10   # how often the WireGuard auto-connect watcher re-checks
 WG_HANDSHAKE_GRACE_SEC = 45   # tolerate 'up but no handshake yet' this long before re-connecting
 DRAW_FAIL_REINIT_AFTER = 30   # consecutive draw failures before one panel re-init, then headless
+PANEL_RETRY_MIN_SEC = 30   # first re-init attempt after dropping to headless
+PANEL_RETRY_MAX_SEC = 900   # cap, so a unit built with no panel costs ~nothing
 BACKUP_SILENCE_TIMEOUT_SEC = 600   # idevicebackup2 silent this long -> hung; terminate it
 BACKUP_MAX_DURATION_SEC = 4 * 3600 # total cap for a single backup run
 TITLE = "iOS Backup Machine"
@@ -953,6 +955,9 @@ class Animator:
         self._last_layout = None     # screen-type signature of the last drawn frame
         self._force_full = False     # one-shot: next draw is a clean full refresh
         self._pending = {}           # updates made while the info screen holds the panel
+        self._panel_retry_at = None                   # monotonic deadline for the next headless re-init
+        self._panel_retry_gap = PANEL_RETRY_MIN_SEC   # current backoff, doubling to PANEL_RETRY_MAX_SEC
+        self._panel_retry_err = None                  # last logged failure, so an absent panel logs once
 
     def set(self, _force=False, **kwargs):
         """Update what the next tick draws.
@@ -1037,8 +1042,51 @@ class Animator:
             panel = Panel()
             panel.prepare_partial()
         except Exception as e:
-            print(f"[DRAW] panel re-init failed ({e}); running headless", flush=True)
+            print(f"[DRAW] panel re-init failed ({e}); running headless, will keep retrying", flush=True)
             panel = NullPanel()
+        self.panel = panel
+        self._last = None
+        self._last_layout = None
+        self._force_full = True
+
+    def _retry_panel_init(self, now):
+        """Climb back out of headless.
+
+        NullPanel.draw never raises, so the draw-failure streak that owns
+        re-init can never fire once we are on the shim: a display that only
+        needed a moment (spidev/gpiochip not enumerated yet at boot, the
+        previous instance still holding the lines through its 20s stop timeout,
+        BUSY stuck from an interrupted refresh) stayed dark for the life of the
+        process. It used to self-heal because Panel() was outside any try and
+        Restart=on-failure brought back a healthy daemon.
+
+        Retry on the same backoff shape as the usbmuxd restart, so a wedge
+        clears in half a minute while a unit built with no panel pays one failed
+        SPI open every PANEL_RETRY_MAX_SEC. Failures are only logged when the
+        reason changes, so that unit prints one line for the whole run."""
+        if not isinstance(self.panel, NullPanel):
+            self._panel_retry_at = None
+            return
+        if self._panel_retry_at is None:
+            # Just went headless: the init that failed was moments ago, so wait
+            # a gap before asking it the same question again.
+            self._panel_retry_at = now + self._panel_retry_gap
+            return
+        if now < self._panel_retry_at:
+            return
+        try:
+            panel = Panel()
+            panel.prepare_partial()
+        except Exception as e:
+            self._panel_retry_gap = min(self._panel_retry_gap * 2, PANEL_RETRY_MAX_SEC)
+            self._panel_retry_at = now + self._panel_retry_gap
+            if str(e) != self._panel_retry_err:
+                print(f"[DRAW] display still unavailable ({e}); retrying in the background", flush=True)
+                self._panel_retry_err = str(e)
+            return
+        print("[DRAW] display back; leaving headless", flush=True)
+        self._panel_retry_err = None
+        self._panel_retry_at = None
         self.panel = panel
         self._last = None
         self._last_layout = None
@@ -1048,6 +1096,9 @@ class Animator:
         while self.running:
             if SHUTDOWN.is_set():
                 self._do_shutdown(); return
+            # Headless is a state, not a verdict: while the panel is the no-op
+            # shim, retry the real one on a backoff.
+            self._retry_panel_init(time.monotonic())
             with self.lock:
                 s = dict(self.state)
             # Auto-detect a screen change and force ONE full refresh on it, so the
@@ -1078,6 +1129,11 @@ class Animator:
                     self.panel.draw(full=full, **s)
                     self._last = s
                     self._draw_failures = 0
+                    if not isinstance(self.panel, NullPanel):
+                        # A panel that actually painted has earned a fast retry
+                        # if it dies later; NullPanel's no-op draw proves nothing
+                        # and would pin the gap at the minimum forever.
+                        self._panel_retry_gap = PANEL_RETRY_MIN_SEC
                 except Exception as e:
                     self._draw_failures += 1
                     print(f"[DRAW] {e}", flush=True)
@@ -2186,7 +2242,7 @@ def main():
     except Exception as e:
         # No display (panel missing, SPI/GPIO wedged, stuck BUSY): run headless.
         # Backups, sync and notifications all still work without the EPD.
-        print(f"[WARN] display init failed ({e}); running headless", flush=True)
+        print(f"[WARN] display init failed ({e}); running headless, will keep retrying", flush=True)
         p = NullPanel()
 
     ui = Animator(p)
