@@ -331,7 +331,7 @@
                 Password
             </a>
             <div class="sidebar-section">Tools</div>
-            <a href="{{ url_for('logs') }}" class="{% if request.endpoint in ('logs', 'view_log') %}active{% endif %}">
+            <a href="{{ url_for('logs') }}" class="{% if request.endpoint in ('logs', 'view_log', 'journal_log') %}active{% endif %}">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
                 Logs
             </a>
@@ -367,6 +367,23 @@
             {% endfor %}
         {% endif %}
         {% endwith %}
+        {% if pending_confirm %}
+        <div class="flash flash-warning" id="confirm-destructive-banner">
+            <strong>{{ pending_confirm.label }}?</strong>
+            This stops the backup or sync cleanly first, so the run log records
+            why it ended, then continues.
+            <div style="margin-top:10px; display:flex; gap:8px; align-items:center;">
+                <form method="POST" action="{{ url_for(pending_confirm.endpoint) }}" style="display:inline;">
+                    {% for name, value in pending_confirm.fields.items() %}
+                    <input type="hidden" name="{{ name }}" value="{{ value }}">
+                    {% endfor %}
+                    <input type="hidden" name="confirm" value="1">
+                    <button type="submit" class="btn btn-danger btn-sm">{{ pending_confirm.label }}</button>
+                </form>
+                <a href="{{ request.path }}" class="btn btn-secondary btn-sm">Keep Running</a>
+            </div>
+        </div>
+        {% endif %}
         {% block content %}{% endblock %}
         <div style="text-align:center; padding:24px 0 12px; font-size:12px; color:#9aa0a6;">
             iOS Backup Machine v{{ app_version }}<br>

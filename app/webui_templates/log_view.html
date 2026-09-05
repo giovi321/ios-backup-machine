@@ -7,11 +7,20 @@
     <form method="POST" action="{{ url_for('delete_log', filename=filename) }}" onsubmit="return confirm('Delete {{ filename }}?');" style="margin:0;">
         <button type="submit" class="btn btn-danger btn-sm">Delete</button>
     </form>
+    <a class="btn btn-secondary btn-sm" href="{{ url_for('download_log', filename=filename) }}">Download</a>
     <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
         <input type="checkbox" id="auto-refresh" style="width:16px;height:16px;accent-color:var(--primary);">
         Live tail (auto-refresh)
     </label>
 </div>
+
+{% if truncated %}
+<p style="color:var(--text-muted); font-size:13px; margin:-12px 0 20px;">
+    Only the beginning and the end of this {{ size|human_size }} log are shown.
+    <a href="{{ url_for('download_log', filename=filename) }}" style="color:var(--primary);">Download the whole file</a>
+    for the rest.
+</p>
+{% endif %}
 
 <div class="card">
     <pre id="log-content" style="
@@ -45,17 +54,22 @@
     }
 
     function refreshLog() {
-        var url = window.location.pathname;
-        fetch(url)
-            .then(function(r) { return r.text(); })
-            .then(function(html) {
-                var parser = new DOMParser();
-                var doc = parser.parseFromString(html, 'text/html');
-                var newPre = doc.getElementById('log-content');
-                if (newPre && logEl) {
-                    logEl.textContent = newPre.textContent;
-                    logEl.scrollTop = logEl.scrollHeight;
-                }
+        // Plain text, not the whole page: re-downloading the rendered page and
+        // running it through DOMParser every two seconds is what made following
+        // a big log worse than not following it.
+        fetch(window.location.pathname + '?raw=1', {cache: 'no-store'})
+            .then(function(r) {
+                // An expired session redirects to /login, which fetch follows.
+                // Painting that response would replace the log with the HTML
+                // source of a login form, so take only the plain-text log.
+                var ct = r.headers.get('content-type') || '';
+                if (!r.ok || ct.indexOf('text/plain') === -1) return null;
+                return r.text();
+            })
+            .then(function(text) {
+                if (text === null) return;
+                logEl.textContent = text;
+                logEl.scrollTop = logEl.scrollHeight;
             })
             .catch(function() {});
     }

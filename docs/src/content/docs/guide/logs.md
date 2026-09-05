@@ -67,12 +67,23 @@ Retention is managed by the app, not logrotate. The newest 50 backup logs and th
 
 - `IOSBACKUP_LOG_KEEP`: how many of each log type to keep
 - `IOSBACKUP_LOG_MAX_AGE_DAYS`: maximum age in days before pruning
+- `IOSBACKUP_LOG_MAX_BYTES_PER_FILE`: size cap for a single run log
+
+A single run cannot grow past that last cap. When it is reached the run log says so, output is suppressed, and the last lines are appended when the run ends, so a failure loop cannot fill the rootfs and the end of the run is still readable.
 
 The continuous append logs (`ntp-sync.log`, `autostart.log`, `update.log`) are size-capped by logrotate. `webui.log` self-rotates.
 
 ## Browsing logs
 
 The web UI Logs page can browse backup log files directly from the browser. It has separate live-tail links for the most recent backup log and the most recent sync log.
+
+A large log is shown as its head and tail rather than in full, and the page says when it has done that. Reading a very large file whole is what would take the web UI down on a device this size, precisely when it is being opened to find out what went wrong. Use the download link for the complete file.
+
+### System journal
+
+The display daemon and the web UI write much of their diagnostics to the systemd journal, not to a log file: panel initialisation failures, watchdog trips, a stalled main loop. The Logs page links to a journal viewer for those. It covers the display daemon, the web UI, both sync paths, the update unit, `usbmuxd`, `pisugar-server`, and an all-units view that also carries the kernel's USB disconnect messages.
+
+How far back the journal goes is a systemd setting this appliance does not configure, so the viewer reports how many boots it actually found rather than promising history. On a stock image `/var/log` is a RAM disk, so expect the current boot only.
 
 ## Related
 

@@ -1406,7 +1406,11 @@ def log_open():
     ensure_dir(LOG_DIR)
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
     path = os.path.join(LOG_DIR, f"backup-{ts}.log")
-    f = open(path, "a", buffering=1)
+    # Through logutil so the per-file byte cap applies: this is one file for
+    # the whole daemon lifetime, not one per backup, so it is the run log
+    # most able to fill the rootfs. stamp=False because these lines carry
+    # their own tags and the first one its own timestamp.
+    f = logutil.open_run_log(path, stamp=False)
     f.write(f"[{ts}] backup started\n")
     logutil.prune_logs()   # trim old per-run logs (count + age)
     return f, path

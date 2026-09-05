@@ -576,3 +576,51 @@ def test_a_vanished_device_stops_a_running_backup():
                                 device_gone=lambda: True, device_poll_sec=0.1)
     assert outcome == "unplugged"
     assert proc.poll() is not None
+
+
+# --- the daemon's own run log is bounded too ------------------------------------
+# backup-*.log is one file for the whole daemon lifetime, not one per backup, so it
+# is the run log most able to fill the rootfs. It used to be opened with a bare
+# open(), which left logutil's per-file cap applying only to sync logs.
+
+def test_the_daemon_run_log_goes_through_the_capped_writer(tmp_path, monkeypatch):
+    ibm = _load_daemon()
+    import logutil
+    monkeypatch.setattr(ibm, "LOG_DIR", str(tmp_path))
+    monkeypatch.setattr(logutil, "prune_logs", lambda *a, **kw: None)
+    f, path = ibm.log_open()
+    try:
+        assert isinstance(f, logutil.TimestampedLog)
+        assert f._max > 0                      # a cap is actually in force
+    finally:
+        f.close()
+    assert os.path.dirname(path) == str(tmp_path)
+
+
+def test_the_daemon_run_log_keeps_its_own_line_format(tmp_path, monkeypatch):
+    """stamp=False: these lines carry their own tags, and a second wall-clock
+    prefix in front of the daemon's own would be a format change, not a cap."""
+    ibm = _load_daemon()
+    import logutil
+    monkeypatch.setattr(ibm, "LOG_DIR", str(tmp_path))
+    monkeypatch.setattr(logutil, "prune_logs", lambda *a, **kw: None)
+    f, path = ibm.log_open()
+    f.write("[ERROR] something\n")
+    f.close()
+    lines = open(path).read().splitlines()
+    assert lines[1] == "[ERROR] something"     # unstamped, exactly as written
+
+
+def test_a_runaway_daemon_run_log_is_capped(tmp_path, monkeypatch):
+    ibm = _load_daemon()
+    import logutil
+    monkeypatch.setattr(ibm, "LOG_DIR", str(tmp_path))
+    monkeypatch.setattr(logutil, "prune_logs", lambda *a, **kw: None)
+    monkeypatch.setattr(logutil, "LOG_MAX_BYTES_PER_FILE", 2000)
+    f, path = ibm.log_open()
+    for i in range(5000):
+        f.write(f"[ERROR] runaway loop line {i}\n")
+    f.close()
+    size = os.path.getsize(path)
+    assert size < 200_000, f"run log grew to {size} bytes despite the cap"
+    assert "cap" in open(path).read()           # and it says it was truncated
