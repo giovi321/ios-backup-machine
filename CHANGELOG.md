@@ -4,6 +4,38 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses a
 single version constant in `app/webui.py`.
 
+## [4.10.2] - 2026-09-07
+
+### Fixed
+
+- The journal viewer's problems-only filter matched the two daemons' bracket
+  tags only. Flask leaves its `default_handler` on `app.logger`, so every
+  `app.logger.warning` and `.error` also reaches `webui.service`'s journal
+  formatted `[ts] WARNING in webui: ...`, which none of those tags match: the
+  filter answered "nothing matched" on a journal full of web UI errors.
+- That filter also dropped the flood-truncation notice, so a filtered view of a
+  truncated window read as the whole story.
+- `prune_logs` promised the freshest log survives all three of its rules, and
+  the size sweep spared it, but the age rule did not. An appliance idle past
+  `IOSBACKUP_LOG_MAX_AGE_DAYS` could delete the log the daemon still held open,
+  freeing nothing and making the live run vanish from the Logs page.
+- Cancelling a sync to reboot, shut down or update wrote no closing line to the
+  persistent sync log, so the confirm banner's promise that "the run log records
+  why it ended" held for a backup and not for a sync.
+- A clean stop that failed or ran out of budget still reported success. The
+  caller now says the log may end without a reason instead of leaving the
+  failure in `webui.log` alone.
+- The journal page re-read the boot count from journald on every render, and its
+  live tail re-renders every 10 s, so a tab left open forked `journalctl` twice
+  per refresh for an answer that does not change.
+
+### Added
+
+- Tests for `Panel`, the only writer to the e-ink panel and the one class the
+  suite never constructed. Covers the errno-16 retry that the blank-display bug
+  disabled, and the driver API resolution whose silent failure mode is a correct
+  picture that flashes on every tick.
+
 ## [4.10.1] - 2026-09-07
 
 ### Fixed

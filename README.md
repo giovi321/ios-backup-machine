@@ -8,7 +8,7 @@
   <a href="https://github.com/giovi321/ios-backup-machine/actions/workflows/ci.yml"><img src="https://github.com/giovi321/ios-backup-machine/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/giovi321/ios-backup-machine/actions/workflows/docs.yml"><img src="https://github.com/giovi321/ios-backup-machine/actions/workflows/docs.yml/badge.svg" alt="Docs"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/giovi321/ios-backup-machine" alt="License: MIT"></a>
-  <img src="https://img.shields.io/badge/version-4.10.1-brightgreen" alt="Version 4.10.1">
+  <img src="https://img.shields.io/badge/version-4.10.2-brightgreen" alt="Version 4.10.2">
   <img src="https://img.shields.io/badge/Python-3.13-blue?logo=python&logoColor=white" alt="Python 3.13">
 </p>
 
