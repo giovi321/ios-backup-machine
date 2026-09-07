@@ -4,7 +4,7 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses a
 single version constant in `app/webui.py`.
 
-## [4.9.0] - 2026-09-05
+## [4.9.0] - 2026-09-07
 
 ### Fixed
 
@@ -71,12 +71,67 @@ single version constant in `app/webui.py`.
   NetworkManager dispatcher can no longer race; rtc-sync output now reaches the
   web UI logs page.
 
+- Reboot, shutdown and a system update no longer destroy work in flight. They
+  were the only actions with no mutual exclusion at all, while starting a sync
+  during a backup was already refused. Each now refuses once, names what is
+  running and how to stop it, and offers an explicit override that stops the work
+  through the sanctioned path first, so the run log still records why it ended.
+  The check fails open, so a device that cannot answer "is a backup running" can
+  always still be powered off.
+- The log viewer could take the web UI down. It read the whole file and rendered
+  it in full, and nothing capped a single run log, so the page opened when
+  something had gone wrong was at its most dangerous when it was most needed. It
+  now shows a bounded head and tail and says so, with a streamed download for the
+  whole file, and the writer caps a single run, marks where it cut and appends the
+  closing lines when the run ends. The daemon's own backup log is capped too - it
+  is one file for the whole daemon lifetime, not one per backup.
+- A backup had no battery protection, though a sync had it at both ends. A run
+  starting at 33% was powered off mid-write by PiSugar's own 30% auto-shutdown.
+  It now refuses below `backup.min_battery_percent` (default 35) and aborts if
+  the battery falls during the run.
+- The backup drive disappearing mid-run left `idevicebackup2` filling the rootfs
+  through the empty mountpoint. The marker that distinguishes a mounted drive
+  from an empty directory was only checked before the run; it is now checked
+  every 10 s, alongside the device id of the mountpoint, and a lost drive is
+  killed without the usual SIGTERM grace.
+- Free space was measured once, against a 500 MB floor, for a job that writes
+  tens of gigabytes - so the run died on ENOSPC deep in. It is now checked during
+  the run against `backup.min_free_mb`, and the start floor rises with it so a
+  run can never pass the gate and then abort on its own first poll.
+- The completion check only tested that `Manifest.plist` parsed, which an
+  interrupted run passes because the previous run's copy is still there. It now
+  tests signals that actually prove a run finished, degrading to the old answer
+  on a layout it does not recognise: calling a good backup bad would be worse.
+- Uploads had no size limit, and a config import silently reset wrong-typed
+  values. Uploads are now capped and the import says what it corrected.
+
 ### Added
 
 - `ntp-sync.timer`: retries clock sync 2 min after boot and every 15 min after
   that (once synchronized, each run is one cheap early-exit probe) - a boot
   without internet no longer leaves the clock wrong forever (which broke
   WireGuard handshakes).
+- A journal viewer in the web UI. Much of the daemons' diagnostics go to the
+  systemd journal rather than to a log file - panel failures, watchdog trips, a
+  stalled main loop - so that whole class of degradation was invisible from the
+  device's own interface. The Logs page now links to a viewer over the units that
+  matter, honest about how far back the journal goes on an appliance whose
+  `/var/log` is a RAM disk.
+- A `backup_stale` notification. Every other event is edge-triggered, so an
+  appliance that quietly stopped backing up told nobody until a restore was
+  needed. A durable last-success record now drives one alert per quiet episode
+  (`backup.stale_after_sec`, default 7 days, `backup.notify_stale` to disable),
+  with the state also on the panel and the health endpoint.
+- New `backup:` settings, all file-only for now: `min_battery_percent`,
+  `min_free_mb`, `notify_stale`, `stale_after_sec`.
+
+### Changed
+
+- Config schema version 3. The migration adds `backup_stale` only to
+  notification event lists that already asked for `backup_error`: a list
+  narrowed to successes is a deliberate choice, and adding the event to the
+  defaults alone would have reached fresh installs only, never the devices that
+  would benefit.
 
 ## [4.8.1] - 2026-09-02
 
