@@ -307,3 +307,27 @@ def test_clearing_the_cap_is_idempotent(tmp_path):
     once = config_schema.load_config(str(p))
     config_schema.atomic_save(once, str(p))
     assert config_schema.load_config(str(p))["sync"]["max_seconds"] == 0
+
+
+# --- every key the web UI writes must be in DEFAULTS ---------------------------
+# A key absent from DEFAULTS is copied through by _deep_merge unchecked: never
+# default-filled, never type-validated. sync.allowed_ssid was written by the
+# settings page and read by sync_manager while missing from DEFAULTS, so a
+# hand-edited non-string reached the SSID comparison instead of being reset.
+
+def test_allowed_ssid_is_a_known_key():
+    assert "allowed_ssid" in config_schema.DEFAULTS["sync"]
+
+
+def test_a_non_string_allowed_ssid_is_reset_and_reported():
+    warnings = []
+    cfg = config_schema.apply_defaults({"sync": {"allowed_ssid": 5}}, warnings)
+    assert cfg["sync"]["allowed_ssid"] == ""
+    assert any("allowed_ssid" in w for w in warnings)
+
+
+def test_a_real_allowed_ssid_survives():
+    warnings = []
+    cfg = config_schema.apply_defaults({"sync": {"allowed_ssid": "MyNet"}}, warnings)
+    assert cfg["sync"]["allowed_ssid"] == "MyNet"
+    assert warnings == []

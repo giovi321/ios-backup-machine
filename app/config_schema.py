@@ -117,6 +117,12 @@ DEFAULTS = {
     # min_battery_percent: power-aware sync refuses to start / auto-aborts below
     # this when not charging. Comfortably above PiSugar's 30% auto-shutdown.
     "sync": {"enabled": False, "auto_sync": False, "allowed_network": "any", "min_battery_percent": 35,
+             # allowed_ssid: the SSID that allowed_network "wifi_ssid" matches. The
+             # web UI writes it, so it belongs here: a key absent from DEFAULTS is
+             # copied through by _deep_merge unchecked, which let a hand-edited
+             # non-string reach the comparison in sync_manager instead of being
+             # reset with a warning.
+             "allowed_ssid": "",
              # max_seconds: overall cap for one sync run. 0 = no cap, the default:
              # the scan/stall watchdogs already kill a sync that has stopped moving,
              # and a first sync of a large backup set legitimately runs for many

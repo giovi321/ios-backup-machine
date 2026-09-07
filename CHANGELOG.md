@@ -4,6 +4,23 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses a
 single version constant in `app/webui.py`.
 
+## [4.10.1] - 2026-09-07
+
+### Fixed
+
+- `sync.allowed_ssid` was missing from the config schema, so it was never
+  default-filled and never type-checked: the settings page wrote it and
+  `sync_manager` read it, but a hand-edited non-string reached the SSID
+  comparison instead of being reset with a warning like every other setting.
+  Found while auditing the documentation against the code.
+
+### Changed
+
+- Documentation brought back in line with the code across all 18 pages, the
+  README, `SECURITY.md`, `CONTRIBUTING.md` and `config.yaml.example`. Several
+  statements were wrong rather than merely out of date, the backup battery
+  threshold and the manual-install paths among them.
+
 ## [4.10.0] - 2026-09-07
 
 ### Fixed
