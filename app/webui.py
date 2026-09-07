@@ -1749,8 +1749,16 @@ JOURNAL_MAX_CHARS = 256 * 1024
 # to stdout, which systemd records at SyslogLevel= (info) unless the text starts
 # with a "<N>" prefix - none do - so "journalctl -p warning" would look correct
 # and return nothing. Match on what is actually written instead.
+_JOURNAL_TRUNC_PREFIX = "[... truncated"
+
+# The first group is the daemons' vocabulary. The second is this app's own: Flask
+# leaves its default_handler on app.logger, so every app.logger.warning/.error
+# also reaches webui.service's journal formatted "[ts] WARNING in webui: ...",
+# which none of the bracket tags above match - the filter answered "nothing
+# matched" on a journal full of web UI errors.
 JOURNAL_MARKERS = ("[FATAL]", "[ERROR]", "[WATCHDOG]", "[WARN]", "[DRAW]",
-                   "[WG]", "Traceback")
+                   "[WG]", "Traceback",
+                   "] WARNING in ", "] ERROR in ", "] CRITICAL in ")
 
 
 def _read_journal(unit, lines):
@@ -1787,6 +1795,9 @@ def _read_journal(unit, lines):
     return (out.strip() or "No journal entries for this unit.", True)
 
 
+_journal_boots_cache = None
+
+
 def _journal_boots():
     """How many boots the journal still holds, or None if it cannot be asked.
 
@@ -1798,6 +1809,12 @@ def _journal_boots():
     """
     # Guarded here too, not only in _read_journal: opening this page must not
     # fork anything at all on a system that has no journalctl.
+    # Cached for the life of the process: journald retention does not change
+    # between page refreshes, and a live tail re-rendering this page every 10 s
+    # forked a second journalctl each time for an answer it already had.
+    global _journal_boots_cache
+    if _journal_boots_cache is not None:
+        return _journal_boots_cache
     if shutil.which("journalctl") is None:
         return None
     try:
@@ -1822,7 +1839,8 @@ def _journal_boots():
                 n += 1
             except ValueError:
                 pass
-    return n or None
+    _journal_boots_cache = n or None
+    return _journal_boots_cache
 
 
 @app.route("/logs/journal")
@@ -1847,8 +1865,12 @@ def journal_log():
     problems = request.args.get("problems") == "1"
     if ok and problems:
         # Filter what was already read; never a second journalctl.
+        # The truncation notice is not a log line and matches no marker, but
+        # dropping it hides that the window was cut, so the filtered view would
+        # look like the whole story.
         kept = [ln for ln in content.splitlines()
-                if any(m in ln for m in JOURNAL_MARKERS)]
+                if any(m in ln for m in JOURNAL_MARKERS)
+                or ln.startswith(_JOURNAL_TRUNC_PREFIX)]
         content = "\n".join(kept) or (
             "Nothing in this window matched " + " ".join(JOURNAL_MARKERS) + ".\n\n"
             "That is not the same as \"no problems\". These markers are the two "
@@ -2581,6 +2603,21 @@ def _pending_confirm():
 _QUIESCE_POLLS = 40
 
 
+def _note_sync_cancelled():
+    """Append one line to the newest sync run log, best-effort. The persistent
+    log is the only record that survives the reboot that follows."""
+    try:
+        logs = sorted(glob.glob(os.path.join(LOG_DIR, "sync-*.log")),
+                      key=os.path.getmtime, reverse=True)
+        if not logs:
+            return
+        with open(logs[0], "a") as f:
+            f.write("[INTERRUPT] cancelled to reboot, shut down or update"
+                    " the device" + chr(10))
+    except Exception as e:
+        app.logger.warning("Could not note the sync cancellation: %s", e)
+
+
 def _quiesce_for_destructive(busy):
     """Stop in-flight work the sanctioned way before taking the device down.
 
@@ -2593,8 +2630,14 @@ def _quiesce_for_destructive(busy):
     power the device off."""
     try:
         if busy == "sync":
+            # The sync's own closing line, because nothing else writes one: the
+            # daemon's interrupted flow covers a backup, but a cancelled sync
+            # only lands "sync_error" in the volatile runtime dir, which the
+            # reboot wipes. Without this the banner's promise that "the run log
+            # records why it ended" is true for a backup and false for a sync.
+            _note_sync_cancelled()
             _cancel_sync_cleanly()
-            return
+            return True
         _stop_backup_cleanly()
         # The daemon only clears the sentinel once idevicebackup2 has exited, so
         # wait for it to go rather than racing that log write against the
@@ -2602,10 +2645,16 @@ def _quiesce_for_destructive(busy):
         stop_file = os.path.join(RUNTIME_DIR, "stop_requested")
         for _ in range(_QUIESCE_POLLS):
             if not os.path.exists(stop_file):
-                break
+                return True
             time.sleep(0.25)
+        # Budget spent with the sentinel still there: the daemon is dead or
+        # wedged, so nothing wrote the reason. Proceed, but say so.
+        app.logger.warning("Backup did not stop within the quiesce budget; "
+                           "its log may end without a reason")
+        return False
     except Exception as e:
         app.logger.warning("Could not stop in-flight work cleanly: %s", e)
+        return False
 
 
 @app.route("/api/reboot", methods=["POST"])
@@ -2619,7 +2668,9 @@ def api_reboot():
         flash(_BUSY_REFUSAL[busy], "error")
         return redirect(url_for("index", confirm="reboot"))
     if busy:
-        _quiesce_for_destructive(busy)
+        if not _quiesce_for_destructive(busy):
+            flash(f"Could not stop the running {busy} cleanly; its log may end "
+                  "without a reason. Continuing anyway.", "warning")
     flash("Rebooting... Refresh the page in about a minute.", "success")
     subprocess.Popen(["shutdown", "-r", "+0"], start_new_session=True)
     return redirect(url_for("index"))
@@ -2635,7 +2686,9 @@ def api_shutdown():
         flash(_BUSY_REFUSAL[busy], "error")
         return redirect(url_for("index", confirm="shutdown"))
     if busy:
-        _quiesce_for_destructive(busy)
+        if not _quiesce_for_destructive(busy):
+            flash(f"Could not stop the running {busy} cleanly; its log may end "
+                  "without a reason. Continuing anyway.", "warning")
     flash("Shutting down...", "success")
     subprocess.Popen(["shutdown", "-h", "+0"], start_new_session=True)
     return redirect(url_for("index"))

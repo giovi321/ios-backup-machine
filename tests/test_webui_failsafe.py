@@ -779,6 +779,10 @@ def _journal_client(monkeypatch, tail=None, boots=None, which="/usr/bin/journalc
     """Stand in for journalctl. The route makes two different calls - the tail
     and --list-boots - so the fake has to dispatch on argv rather than return one
     canned result. Returns (tail_calls, boots_calls) of (argv, kwargs)."""
+    # The boot count is cached for the life of the process so a live tail does
+    # not re-fork journalctl every refresh. Each scenario here is a fresh
+    # journal, so clear it.
+    webui._journal_boots_cache = None
     tail_calls = []
     boots_calls = []
 
@@ -1047,3 +1051,75 @@ def test_the_sync_limit_field_renders_the_saved_value(monkeypatch):
     body = _client().get("/settings/sync").data.decode()
     assert 'name="max_minutes"' in body
     assert 'value="480"' in body
+
+
+def test_the_boot_count_is_not_re_forked_on_every_render(monkeypatch):
+    """A live tail re-renders this page every 10 s. Retention does not change
+    between refreshes, so asking journald again each time is a wasted fork on a
+    board this size."""
+    _, boots_calls = _journal_client(monkeypatch)
+    for _ in range(4):
+        _client().get("/logs/journal")
+    assert len(boots_calls) == 1
+
+
+def test_the_flood_notice_survives_the_problem_filter(monkeypatch):
+    """Filtering a truncated window must not hide that it was truncated - the
+    filtered view would read as the whole story."""
+    monkeypatch.setattr(webui, "_read_journal",
+                        lambda unit, lines: (
+                            webui._JOURNAL_TRUNC_PREFIX + " to the last 256 KB ...]"
+                            + chr(10) + "[WARN] something" + chr(10), True))
+    webui._journal_boots_cache = None
+    body = _client().get("/logs/journal?problems=1").data.decode()
+    assert "truncated" in body
+    assert "[WARN] something" in body
+
+
+def test_the_problem_filter_matches_the_web_uis_own_warnings(monkeypatch):
+    """Flask leaves default_handler on app.logger, so app.logger.warning lands in
+    webui.service's journal as "[ts] WARNING in webui:" - which none of the
+    daemons' bracket tags match."""
+    line = "Sep 07 11:00:00 host webui[1]: [2026-09-07 11:00:00] WARNING in webui: could not save"
+    monkeypatch.setattr(webui, "_read_journal",
+                        lambda unit, lines: (line + chr(10) + "noise" + chr(10), True))
+    webui._journal_boots_cache = None
+    body = _client().get("/logs/journal?problems=1").data.decode()
+    assert "could not save" in body
+
+
+# --- the confirm banner's promise has to hold for a sync too --------------------
+# "This stops the backup or sync cleanly first, so the run log records why it
+# ended." A backup got that from the daemon's interrupted flow; a cancelled sync
+# only wrote sync_error into the volatile runtime dir, which the reboot wipes.
+
+def test_cancelling_a_sync_to_reboot_records_it_in_the_persistent_log(tmp_path, monkeypatch):
+    log = tmp_path / "sync-20260907-120000.log"
+    log.write_text("[SYNC] running" + chr(10))
+    monkeypatch.setattr(webui, "LOG_DIR", str(tmp_path))
+    monkeypatch.setattr(webui, "_cancel_sync_cleanly", lambda: None)
+    assert webui._quiesce_for_destructive("sync") is True
+    assert "[INTERRUPT]" in log.read_text()
+
+
+def test_a_sync_cancel_with_no_log_on_disk_does_not_raise(tmp_path, monkeypatch):
+    monkeypatch.setattr(webui, "LOG_DIR", str(tmp_path))
+    monkeypatch.setattr(webui, "_cancel_sync_cleanly", lambda: None)
+    assert webui._quiesce_for_destructive("sync") is True
+
+
+def test_a_backup_that_will_not_stop_reports_failure(monkeypatch):
+    """The daemon clears the sentinel only once idevicebackup2 has exited. If it
+    never does, nothing wrote the reason, and the caller must not claim it did."""
+    monkeypatch.setattr(webui, "_stop_backup_cleanly", lambda: None)
+    monkeypatch.setattr(webui.os.path, "exists", lambda p: True)
+    monkeypatch.setattr(webui.time, "sleep", lambda s: None)
+    monkeypatch.setattr(webui, "_QUIESCE_POLLS", 3)
+    assert webui._quiesce_for_destructive("backup") is False
+
+
+def test_a_backup_that_stops_reports_success(monkeypatch):
+    monkeypatch.setattr(webui, "_stop_backup_cleanly", lambda: None)
+    monkeypatch.setattr(webui.os.path, "exists", lambda p: False)
+    monkeypatch.setattr(webui.time, "sleep", lambda s: None)
+    assert webui._quiesce_for_destructive("backup") is True

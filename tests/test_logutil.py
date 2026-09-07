@@ -353,3 +353,29 @@ def test_an_unstamped_run_log_is_capped_too(tmp_path):
 def test_the_per_file_cap_is_below_the_aggregate_cap():
     """What keeps prune_logs' size sweep off a log that is still being written."""
     assert 0 < logutil.LOG_MAX_BYTES_PER_FILE <= logutil.LOG_MAX_BYTES_PER_KIND
+
+
+# --- the open run log is never pruned ------------------------------------------
+# prune_logs' docstring promises the freshest file survives all three rules. The
+# size sweep spared it; the age rule did not, so an appliance idle past
+# max_age_days could delete the log the daemon still holds open.
+
+def test_the_newest_log_survives_the_age_rule(tmp_path):
+    old = tmp_path / "backup-20200101-000000.log"
+    old.write_text("ancient" + chr(10))
+    os.utime(old, (0, 0))                      # far older than any max_age
+    logutil.prune_logs(str(tmp_path), keep_per_kind=50, max_age_days=90)
+    assert old.exists(), "the only (and open) log was deleted by the age rule"
+
+
+def test_older_logs_are_still_pruned_by_age(tmp_path):
+    for name in ("backup-20200101-000000.log", "backup-20200102-000000.log"):
+        p = tmp_path / name
+        p.write_text("x" + chr(10))
+        os.utime(p, (0, 0))
+    newest = tmp_path / "backup-20990101-000000.log"
+    newest.write_text("current" + chr(10))
+    logutil.prune_logs(str(tmp_path), keep_per_kind=50, max_age_days=90)
+    assert newest.exists()
+    assert not (tmp_path / "backup-20200101-000000.log").exists()
+    assert not (tmp_path / "backup-20200102-000000.log").exists()

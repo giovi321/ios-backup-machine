@@ -261,6 +261,14 @@ def prune_logs(log_dir=None, keep_per_kind=None, max_age_days=None,
             continue
         for i, path in enumerate(files):
             try:
+                if i == 0:
+                    # The newest file is the run that is open right now, and on an
+                    # idle appliance the daemon's backup log can go untouched for
+                    # longer than max_age_days while still being written to. The
+                    # size sweep below spares it for the same reason; unlinking it
+                    # frees nothing while the fd is held and only makes the live
+                    # run vanish from the Logs page.
+                    continue
                 too_many = i >= keep_per_kind
                 too_old = max_age_days > 0 and (now - os.path.getmtime(path)) > max_age
                 if too_many or too_old:
