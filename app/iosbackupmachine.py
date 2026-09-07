@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import os, re, sys, time, json, glob, signal, subprocess, threading
+import os, re, sys, time, json, glob, select, shutil, signal, subprocess, tempfile, threading
 from datetime import datetime
 from periphery.gpio import GPIOError
 
@@ -41,6 +41,13 @@ import logutil
 LOG_DIR = logutil.LOG_DIR
 RUNTIME_DIR = logutil.RUNTIME_DIR
 STATUS_FILE = os.path.join(RUNTIME_DIR, "backup_status.json")
+# The durable record of a SUCCESSFUL backup. On LOG_DIR (persistent rootfs) and
+# not RUNTIME_DIR, because backup_status.json lives on zram and main() overwrites
+# it with "waiting" on every start — so it cannot answer the one question the
+# quiet-device alert is built on ("when did a backup last succeed?"), which is
+# precisely the question that has to survive a reboot. Written once per completed
+# backup, not per progress tick, so it costs no meaningful SD wear.
+LAST_BACKUP_FILE = os.path.join(LOG_DIR, "last_backup.json")
 # Sentinels the web UI drops to drive the always-on daemon (which can no longer
 # be started/stopped by restarting its service — that would kill the EPD owner).
 START_FILE = os.path.join(RUNTIME_DIR, "start_requested")   # force a backup (auto-start off)
@@ -56,11 +63,25 @@ UPDATING_MAX_SEC = 1800   # safety valve: an update that dies without rebooting
 IDLE_REFRESH_SEC = 4
 WG_RECONCILE_SEC = 10   # how often the WireGuard auto-connect watcher re-checks
 WG_HANDSHAKE_GRACE_SEC = 45   # tolerate 'up but no handshake yet' this long before re-connecting
+DRAW_FAIL_REINIT_AFTER = 30   # consecutive draw failures before one panel re-init, then headless
+PANEL_RETRY_MIN_SEC = 30   # first re-init attempt after dropping to headless
+PANEL_RETRY_MAX_SEC = 900   # cap, so a unit built with no panel costs ~nothing
+BACKUP_SILENCE_TIMEOUT_SEC = 600   # idevicebackup2 silent this long -> hung; terminate it
+BACKUP_MAX_DURATION_SEC = 4 * 3600 # total cap for a single backup run
+STALE_AFTER_SEC = 7 * 24 * 3600    # no successful backup for this long -> one alert
+STALE_POLL_SEC = 900               # how often the quiet-device watcher re-checks
+STALE_BOOT_GRACE_SEC = 900   # iosbackupmachine.service is ordered only After=
+                             # local-fs.target usbmuxd.service, NOT after rtc-sync,
+                             # and ntp-sync.timer first fires at OnBootSec=2min, so
+                             # the clock can still be wrong minutes into a boot.
+STALE_CLOCK_FLOOR = 1767225600   # 2026-01-01 UTC. A board with a dead RTC cell and
+                             # no network boots reading 1970; anchoring the record to
+                             # that clock makes the next tick compute an age of
+                             # decades once NTP corrects it, and alert on a healthy
+                             # device. Guarding the WRITE is what closes that.
 TITLE = "iOS Backup Machine"
 
-def load_config(path):
-    with open(path, "r") as f:
-        cfg = yaml.safe_load(f) or {}
+def _apply_defaults(cfg):
     cfg.setdefault("backup_dir", "/media/iosbackup/")
     cfg.setdefault("marker_file", ".foldermarker")
     cfg.setdefault("disk_device", "/dev/mmcblk1")
@@ -75,7 +96,18 @@ def load_config(path):
     cfg["error_codes"] = ec
     return cfg
 
-CFG = load_config(CONFIG_PATH)
+def load_config(path):
+    with open(path, "r") as f:
+        cfg = yaml.safe_load(f) or {}
+    return _apply_defaults(cfg)
+
+try:
+    CFG = load_config(CONFIG_PATH)
+except Exception as e:
+    # A config that crashes the loader must not take the daemon down with it:
+    # fall back to the schema defaults so backups can still run.
+    print(f"[WARN] Could not load config {CONFIG_PATH} ({e}); using built-in defaults", flush=True)
+    CFG = _apply_defaults(_config_schema.apply_defaults({}) if _config_schema else {})
 for k, v in CFG.get("env", {}).items():
     os.environ[k] = str(v)
 
@@ -96,6 +128,61 @@ F_14 = font(14)
 # thread (the sole EPD drawer) notices it, paints the owner screen one last time,
 # sleeps the panel so the image persists after power-off, and exits.
 SHUTDOWN = threading.Event()
+
+
+# ---------------------------------------------------------------------------
+# Main-loop heartbeat watchdog. The main loop (and every long-running hold it
+# can legitimately sit in: backup output, post-backup holds) calls _heartbeat();
+# if no beat lands within stall_sec the process is wedged somewhere without a
+# watchdog of its own, so we log and exit 1 — Restart=on-failure brings back a
+# healthy daemon. Time and exit are injectable so tests can drive it without
+# threads or os._exit.
+# ---------------------------------------------------------------------------
+class LoopWatchdog:
+    def __init__(self, stall_sec, exit_fn=None, time_fn=None, log_fn=None):
+        self.stall_sec = stall_sec
+        self._exit = exit_fn or os._exit
+        self._time = time_fn or time.monotonic
+        self._log = log_fn or (lambda m: print(m, flush=True))
+        self._last_beat = self._time()
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self.thread = None
+
+    def beat(self):
+        with self._lock:
+            self._last_beat = self._time()
+
+    def check(self):
+        """One watchdog pass; returns True when the loop proved stalled."""
+        with self._lock:
+            stalled = (self._time() - self._last_beat) > self.stall_sec
+        if stalled:
+            self._log(f"[FATAL] main loop stalled (no heartbeat for >{int(self.stall_sec)}s)")
+            self._exit(1)
+            return True
+        return False
+
+    def _run(self):
+        while not self._stop.wait(5):
+            if self.check():
+                return
+
+    def start(self):
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+
+    def stop(self):
+        self._stop.set()
+
+
+_loop_watchdog = None
+
+def _heartbeat():
+    wd = _loop_watchdog
+    if wd is not None:
+        try: wd.beat()
+        except Exception: pass
 
 
 # ---------------------------------------------------------------------------
@@ -317,16 +404,41 @@ def get_free_disk_pct():
         return None
 
 
-def get_last_backup_str():
+def _newest_backup_mtime():
+    """Newest backup-folder mtime under backup_dir, or None. This is the last
+    WRITE, not the last completed backup — an interrupted run bumps it too —
+    which is why it is only the fallback below and the seed for the durable
+    record, never the thing the staleness verdict trusts once one exists."""
     bd = _normpath(CFG.get("backup_dir"))
     if not bd or not os.path.isdir(bd):
-        return "No backups"
+        return None
     try:
         mtimes = [e.stat(follow_symlinks=True).st_mtime
                   for e in os.scandir(bd) if e.is_dir(follow_symlinks=True)]
-        if not mtimes:
-            return "No backups"
-        return time.strftime("%H:%M / %d %b %Y", time.localtime(max(mtimes)))
+        return max(mtimes) if mtimes else None
+    except Exception:
+        return None
+
+
+def get_last_backup_str():
+    """The info screen's "Backup:" line. Reads the durable record first: the
+    folder scan reports the last write, so an interrupted run used to make this
+    screen claim a backup that never finished. "(stale)" is only appended off the
+    record — the mtime is not a completion signal, so calling it stale would be
+    asserting something no evidence supports — and this is the exact screen
+    someone taps when they wonder whether the thing is still working."""
+    suffix = ""
+    ts = _read_last_backup().get("completed_at")
+    if isinstance(ts, (int, float)) and ts > 0:
+        _, threshold = _stale_limits()
+        if threshold and (time.time() - ts) >= threshold:
+            suffix = " (stale)"
+    else:
+        ts = _newest_backup_mtime()
+    if not ts:
+        return "No backups"
+    try:
+        return time.strftime("%H:%M / %d %b %Y", time.localtime(ts)) + suffix
     except Exception:
         return "No backups"
 
@@ -842,6 +954,21 @@ class Panel:
             try: epdconfig.module_exit()
             except Exception: pass
 
+class NullPanel:
+    """Headless stand-in for Panel: same interface, every method a no-op, so a
+    display that can't init (or dies at runtime) doesn't take down backups,
+    sync and notifications with it."""
+    def __init__(self):
+        self.pw = self.ph = 0
+        self._mode = "none"
+        self._partial_ready = False
+
+    def prepare_partial(self, base_img=None): pass
+    def draw(self, **kw): pass
+    def draw_owner(self): pass
+    def draw_updating(self): pass
+    def sleep(self): pass
+
 class Animator:
     """The single EPD drawer. Runs at 1 Hz for the whole process lifetime:
     animated screens (waiting / backup / sync) are redrawn every tick so the
@@ -865,10 +992,15 @@ class Animator:
         }
         self.running = False
         self.thread = None
+        self.exit_code = 0          # fatal main-loop exit sets this to 1
+        self._draw_failures = 0     # consecutive draw exceptions (panel may be dying)
         self._last = None
         self._last_layout = None     # screen-type signature of the last drawn frame
         self._force_full = False     # one-shot: next draw is a clean full refresh
         self._pending = {}           # updates made while the info screen holds the panel
+        self._panel_retry_at = None                   # monotonic deadline for the next headless re-init
+        self._panel_retry_gap = PANEL_RETRY_MIN_SEC   # current backoff, doubling to PANEL_RETRY_MAX_SEC
+        self._panel_retry_err = None                  # last logged failure, so an absent panel logs once
 
     def set(self, _force=False, **kwargs):
         """Update what the next tick draws.
@@ -913,13 +1045,15 @@ class Animator:
         with self.lock:
             return dict(self.state)
 
-    def _do_shutdown(self):
+    def _do_shutdown(self, exit_code=None):
         # Paint the final screen one last time, crisp full refresh, then sleep
         # the panel so the e-paper holds the image after PiSugar cuts power.
         # A system update stops this daemon partway through, so it gets the
         # "Updating" screen rather than the power-off owner screen — painting it
         # here rather than relying on a tick landing first removes the race with
         # the installer's `systemctl stop`.
+        if exit_code is None:
+            exit_code = self.exit_code
         try:
             if _updating_requested():
                 self.panel.draw_updating()
@@ -931,12 +1065,83 @@ class Animator:
             self.panel.sleep()
         except Exception:
             pass
-        os._exit(0)
+        # Don't orphan a running idevicebackup2 on the way out (KillMode=mixed
+        # covers `systemctl stop`; this covers the os._exit paths).
+        try:
+            proc = _backup_proc
+            if proc is not None and proc.poll() is None:
+                proc.terminate()
+        except Exception:
+            pass
+        os._exit(exit_code)
+
+    def _handle_draw_failure_streak(self):
+        """The panel has failed DRAW_FAIL_REINIT_AFTER draws in a row: try one
+        full re-init (a stale SPI/GPIO handle can recover); if that also fails,
+        drop to a NullPanel so the journal isn't spammed 1 Hz forever."""
+        self._draw_failures = 0
+        print(f"[DRAW] {DRAW_FAIL_REINIT_AFTER} consecutive failures; re-initializing panel", flush=True)
+        try:
+            panel = Panel()
+            panel.prepare_partial()
+        except Exception as e:
+            print(f"[DRAW] panel re-init failed ({e}); running headless, will keep retrying", flush=True)
+            panel = NullPanel()
+        self.panel = panel
+        self._last = None
+        self._last_layout = None
+        self._force_full = True
+
+    def _retry_panel_init(self, now):
+        """Climb back out of headless.
+
+        NullPanel.draw never raises, so the draw-failure streak that owns
+        re-init can never fire once we are on the shim: a display that only
+        needed a moment (spidev/gpiochip not enumerated yet at boot, the
+        previous instance still holding the lines through its 20s stop timeout,
+        BUSY stuck from an interrupted refresh) stayed dark for the life of the
+        process. It used to self-heal because Panel() was outside any try and
+        Restart=on-failure brought back a healthy daemon.
+
+        Retry on the same backoff shape as the usbmuxd restart, so a wedge
+        clears in half a minute while a unit built with no panel pays one failed
+        SPI open every PANEL_RETRY_MAX_SEC. Failures are only logged when the
+        reason changes, so that unit prints one line for the whole run."""
+        if not isinstance(self.panel, NullPanel):
+            self._panel_retry_at = None
+            return
+        if self._panel_retry_at is None:
+            # Just went headless: the init that failed was moments ago, so wait
+            # a gap before asking it the same question again.
+            self._panel_retry_at = now + self._panel_retry_gap
+            return
+        if now < self._panel_retry_at:
+            return
+        try:
+            panel = Panel()
+            panel.prepare_partial()
+        except Exception as e:
+            self._panel_retry_gap = min(self._panel_retry_gap * 2, PANEL_RETRY_MAX_SEC)
+            self._panel_retry_at = now + self._panel_retry_gap
+            if str(e) != self._panel_retry_err:
+                print(f"[DRAW] display still unavailable ({e}); retrying in the background", flush=True)
+                self._panel_retry_err = str(e)
+            return
+        print("[DRAW] display back; leaving headless", flush=True)
+        self._panel_retry_err = None
+        self._panel_retry_at = None
+        self.panel = panel
+        self._last = None
+        self._last_layout = None
+        self._force_full = True
 
     def _tick(self):
         while self.running:
             if SHUTDOWN.is_set():
                 self._do_shutdown(); return
+            # Headless is a state, not a verdict: while the panel is the no-op
+            # shim, retry the real one on a backoff.
+            self._retry_panel_init(time.monotonic())
             with self.lock:
                 s = dict(self.state)
             # Auto-detect a screen change and force ONE full refresh on it, so the
@@ -966,8 +1171,17 @@ class Animator:
                 try:
                     self.panel.draw(full=full, **s)
                     self._last = s
+                    self._draw_failures = 0
+                    if not isinstance(self.panel, NullPanel):
+                        # A panel that actually painted has earned a fast retry
+                        # if it dies later; NullPanel's no-op draw proves nothing
+                        # and would pin the gap at the minimum forever.
+                        self._panel_retry_gap = PANEL_RETRY_MIN_SEC
                 except Exception as e:
+                    self._draw_failures += 1
                     print(f"[DRAW] {e}", flush=True)
+                    if self._draw_failures >= DRAW_FAIL_REINIT_AFTER:
+                        self._handle_draw_failure_streak()
             if SHUTDOWN.wait(1):    # wakes immediately when shutdown is requested
                 self._do_shutdown(); return
 
@@ -1014,6 +1228,60 @@ def write_status(state, **extra):
             except Exception:
                 pass
 
+def _read_last_backup():
+    """The durable last-successful-backup record, or {} when there isn't one yet.
+
+    Never raises. Every caller is either a guard or an alerter, and a probe that
+    failed must not be able to stop a backup or fire an alarm."""
+    try:
+        with open(LAST_BACKUP_FILE, "r") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _write_last_backup(**fields):
+    """Read-merge-write the durable record: same tmp + fsync + os.replace as
+    write_status, and the same never-raise contract. Returns False instead of
+    raising, so a full or read-only rootfs costs the record and never the
+    backup that was just completed."""
+    tmp = None
+    try:
+        ensure_dir(LOG_DIR)
+        data = _read_last_backup()
+        data.update(fields)
+        tmp = LAST_BACKUP_FILE + f".tmp.{os.getpid()}"
+        with open(tmp, "w") as f:
+            json.dump(data, f)
+            f.flush()
+            try:
+                os.fsync(f.fileno())
+            except Exception:
+                pass
+        os.replace(tmp, LAST_BACKUP_FILE)
+        return True
+    except Exception:
+        if tmp:
+            try:
+                if os.path.exists(tmp):
+                    os.remove(tmp)
+            except Exception:
+                pass
+        return False
+
+
+def record_backup_success(completed_at_str, verified=None):
+    """Stamp the record at the one point the daemon asserts a backup finished.
+
+    Clearing alerted_for is the ONLY thing that re-arms the quiet-device alert:
+    the episode key is the fact itself, so a device that starts backing up again
+    both closes its episode and becomes able to raise the next one."""
+    return _write_last_backup(completed_at=time.time(),
+                              completed_at_str=completed_at_str,
+                              verified=verified, seeded=False, alerted_for=None)
+
+
 def _boot_time():
     """Wall-clock time the kernel booted, from /proc/uptime. 0 if unreadable,
     which makes every sentinel look post-boot (fail towards showing the screen)."""
@@ -1045,14 +1313,33 @@ def _updating_requested():
         return False
     return (time.time() - mtime) < UPDATING_MAX_SEC
 
+_idevice_id_warned = False
+
 def get_connected_udids():
-    """Return list of currently connected iPhone UDIDs."""
+    """Return list of currently connected iPhone UDIDs.
+
+    Every probe failure (tool missing, hung, unstartable) reads as an empty
+    list — callers treat it as no-device and keep polling — but each failure
+    mode is logged distinctly, once, so 'idevice_id is broken' is never
+    mistaken for 'no phone plugged in'."""
+    global _idevice_id_warned
     try:
-        out = subprocess.run(["idevice_id", "-l"], capture_output=True, text=True).stdout.strip()
+        out = subprocess.run(["idevice_id", "-l"], capture_output=True, text=True,
+                             timeout=10).stdout.strip()
         if out:
             return [u.strip() for u in out.splitlines() if u.strip()]
     except FileNotFoundError:
-        pass
+        if not _idevice_id_warned:
+            _idevice_id_warned = True
+            print("[WARN] idevice_id not found (libimobiledevice not installed?)", flush=True)
+    except subprocess.TimeoutExpired:
+        if not _idevice_id_warned:
+            _idevice_id_warned = True
+            print("[WARN] idevice_id -l timed out; treating as no device", flush=True)
+    except OSError as e:
+        if not _idevice_id_warned:
+            _idevice_id_warned = True
+            print(f"[WARN] idevice_id -l failed: {e}", flush=True)
     return []
 
 def device_present():
@@ -1150,7 +1437,7 @@ def _sync_running():
     and a sync mutually exclusive (never run both / show both)."""
     try:
         return subprocess.run(["pgrep", "-f", "backup-sync.py"],
-                              capture_output=True).returncode == 0
+                              capture_output=True, timeout=5).returncode == 0
     except Exception:
         return False
 
@@ -1216,14 +1503,34 @@ def log_open():
     ensure_dir(LOG_DIR)
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
     path = os.path.join(LOG_DIR, f"backup-{ts}.log")
-    f = open(path, "a", buffering=1)
+    # Through logutil so the per-file byte cap applies: this is one file for
+    # the whole daemon lifetime, not one per backup, so it is the run log
+    # most able to fill the rootfs. stamp=False because these lines carry
+    # their own tags and the first one its own timestamp.
+    f = logutil.open_run_log(path, stamp=False)
     f.write(f"[{ts}] backup started\n")
     logutil.prune_logs()   # trim old per-run logs (count + age)
     return f, path
 
+def _backup_dir_writable(path):
+    """Probe-write a temp file and delete it. A backup dir that is read-only
+    (failed disk remounted ro, wrong mount options) must fail the pre-backup
+    gate here instead of crashing idevicebackup2 mid-run."""
+    try:
+        fd, tmp = tempfile.mkstemp(prefix=".wprobe-", dir=path)
+        try:
+            os.write(fd, b"0")
+        finally:
+            os.close(fd)
+        os.remove(tmp)
+        return True
+    except OSError:
+        return False
+
 def check_backup_mount(logf, ui):
-    """Return True if the backup folder is mounted; else show an error via the
-    Animator and return False. The daemon stays alive (single EPD owner)."""
+    """Return True if the backup folder is mounted and writable; else show an
+    error via the Animator and return False. The daemon stays alive (single EPD
+    owner)."""
     ensure_dir(CFG["backup_dir"])
     marker = os.path.join(CFG["backup_dir"], CFG["marker_file"])
     if not os.path.exists(marker):
@@ -1233,59 +1540,306 @@ def check_backup_mount(logf, ui):
         write_status("error", message=msg)
         ui.set(screen="normal", subtitle="Backup folder not found.", percent=None,
                animate=False, show_header=True)
+        # run_backup returns 2 and the main loop discards it, so without this the
+        # refusal is invisible to anyone not standing in front of the panel. One
+        # per plug event: the loop holds until unplug once run_backup returns.
+        send_notification("backup_error", {"error": msg, "reason_code": "mount_lost"})
+        return False
+    if not _backup_dir_writable(CFG["backup_dir"]):
+        msg = "Backup storage read-only / not writable"
+        print(f"[ERROR] {msg} ({CFG['backup_dir']})")
+        if logf: logf.write(f"[ERROR] {msg} ({CFG['backup_dir']})\n")
+        write_status("error", message=msg)
+        ui.set(screen="normal", subtitle="Backup storage is\nread-only.", percent=None,
+               animate=False, show_header=True)
+        send_notification("backup_error", {"error": msg, "reason_code": "mount_lost"})
         return False
     return True
 
-def check_disk_space(logf, ui):
-    """Check disk space on root and backup drive before starting."""
-    warnings = []
-    # Check root filesystem
-    try:
-        st = os.statvfs("/")
-        root_free_mb = (st.f_bavail * st.f_frsize) // (1024 * 1024)
-        if root_free_mb < 500:
-            warnings.append(f"Root disk low: {root_free_mb}MB free")
-    except Exception:
-        pass
-    # Check backup drive
-    try:
-        bd = CFG.get("backup_dir", "/media/iosbackup/")
-        st = os.statvfs(bd)
-        backup_free_gb = (st.f_bavail * st.f_frsize) / (1024 ** 3)
-        if backup_free_gb < 1:
-            warnings.append(f"Backup drive low: {backup_free_gb:.1f}GB free")
-    except Exception:
-        pass
-    if warnings:
-        msg = "\n".join(warnings)
-        if logf: logf.write(f"[WARN] Disk space: {msg}\n")
-        ui.set(subtitle=f"Warning:\n{msg}\nProceeding...", percent=None, animate=False, show_header=True)
-        time.sleep(4)
-    return len(warnings) == 0
+ROOT_MIN_FREE_MB = 200
+BACKUP_MIN_FREE_MB = 500   # floor below which a backup must not START; a configured
+                           # backup.min_free_mb reserve raises it when it is higher
 
-def verify_backup_integrity(backup_dir, logf):
-    """Check backup completed with valid Manifest.plist."""
+# In-run health probe (see _RunHealth). The two cadences differ because the probes
+# differ in cost: an os.stat, an os.path.exists and two statvfs calls are
+# sub-millisecond syscalls, while a PiSugar read is a socket round trip on the
+# thread pumping idevicebackup2's output. The abort keys double as the outcome
+# tee_and_parse returns and the reason_code that reaches MQTT/webhook, reusing
+# sync_manager.SYNC_REASONS' vocabulary so automation sees one set of names.
+BACKUP_HEALTH_POLL_SEC = 10
+HEALTH_BATTERY_EVERY_SEC = 60
+HEALTH_MOUNT_MISSES = 2             # os.path.exists returns False on ANY OSError, so one
+                                    # EIO from a drive under load reads exactly like an
+                                    # unmounted drive; killing a 40GB run on it is worse
+HEALTH_BATTERY_LOW_READS = 2
+HEALTH_BATTERY_UNREADABLE_MAX = 3   # then stop paying the socket cost for this run
+BACKUP_MIN_BATTERY_PCT = 35
+BACKUP_RESERVE_MB = 512
+# Values are the fallback sentence for when the probe has none of its own.
+BACKUP_ABORT_REASONS = {
+    "mount_lost": "Backup drive disappeared",
+    "disk_full": "Backup drive ran out of space",
+    "battery_abort": "Battery too low to finish",
+}
+BACKUP_HARD_KILL_OUTCOMES = frozenset({"mount_lost"})
+
+def _disk_space_problems(backup_dir, statvfs_fn=None, *, backup_min_mb=None):
+    """Free-space shortfalls that should block a backup from starting. An
+    unreadable filesystem fails open (empty list): statvfs lying is rarer than
+    the backup actually needing the space.
+
+    ``backup_min_mb`` overrides the backup-drive floor, so the pre-backup gate and
+    the in-run health probe share one helper and one message format. 0 disables
+    that half only; the ROOT_MIN_FREE_MB check stays live as the backstop for a
+    backup writing into an unmounted mountpoint on the rootfs."""
+    if backup_min_mb is None:
+        backup_min_mb = BACKUP_MIN_FREE_MB
+    if statvfs_fn is None:
+        statvfs_fn = getattr(os, "statvfs", None)   # absent on non-POSIX dev machines
+    if statvfs_fn is None:
+        return []
+    problems = []
     try:
-        # Find the most recently modified backup folder
-        entries = []
+        st = statvfs_fn("/")
+        root_free_mb = (st.f_bavail * st.f_frsize) // (1024 * 1024)
+        if root_free_mb < ROOT_MIN_FREE_MB:
+            problems.append(f"Root disk: {root_free_mb}MB free (need {ROOT_MIN_FREE_MB}MB)")
+    except Exception:
+        pass
+    try:
+        st = statvfs_fn(backup_dir)
+        backup_free_mb = (st.f_bavail * st.f_frsize) // (1024 * 1024)
+        if backup_free_mb < backup_min_mb:
+            problems.append(f"Backup drive: {backup_free_mb}MB free (need {backup_min_mb}MB)")
+    except Exception:
+        pass
+    return problems
+
+def check_disk_space(logf, ui):
+    """Pre-backup disk-space gate. Returns False (after explaining on the
+    display/status) when there is too little room to start; a backup that runs
+    into ENOSPC mid-way fails as a corrupt backup, not a clean error."""
+    _min_battery, reserve_mb = _backup_safety_limits()
+    # max(): a start floor below the mid-run reserve would let a run pass this gate
+    # and then abort on its own first health poll.
+    problems = _disk_space_problems(CFG.get("backup_dir", "/media/iosbackup/"),
+                                    backup_min_mb=max(BACKUP_MIN_FREE_MB, reserve_mb))
+    if not problems:
+        return True
+    msg = "Not enough disk space.\n" + "\n".join(problems)
+    print(f"[ERROR] {msg}", flush=True)
+    if logf: logf.write(f"[ERROR] Disk space gate: {msg}\n")
+    write_status("error", message=msg)
+    ui.set(screen="normal", subtitle=msg, percent=None, animate=False, show_header=True)
+    # Same reason as the mount gate: run_backup's return code goes nowhere.
+    send_notification("backup_error", {"error": msg, "reason_code": "disk_full"})
+    time.sleep(4)
+    return False
+
+
+def check_battery(logf, ui):
+    """Pre-backup battery gate. PiSugar hard-powers the board off at 30%
+    (auto_shutdown_level in its own config), so a backup started at 33% is a
+    backup cut mid-write, with no error anywhere and a half-written folder on the
+    drive. Refusing with a sentence on the panel is strictly better.
+
+    Fail-open in every direction the probe itself can fail: an unreadable pack, a
+    charging device, no power module, or a configured floor of 0 all allow the
+    run. power.sync_allowed owns that policy so the appliance keeps exactly one
+    copy of it."""
+    min_battery, _reserve_mb = _backup_safety_limits()
+    if not min_battery:
+        return True
+    try:
+        import power as _power
+    except ImportError:
+        return True
+    try:
+        ok, reason = _power.sync_allowed(min_battery)
+    except Exception:
+        return True
+    if ok:
+        return True
+    print(f"[ERROR] Battery gate: {reason}", flush=True)
+    if logf: logf.write(f"[ERROR] Battery gate: {reason}\n")
+    write_status("error", message=reason, reason_code="battery_low")
+    ui.set(screen="normal", subtitle=reason + "\nCharge the device, then re-plug.",
+           percent=None, animate=False, show_header=True)
+    send_notification("backup_error", {"error": reason, "reason_code": "battery_low"})
+    time.sleep(4)
+    return False
+
+# What a backup folder says about its own state. Only "uploading" is corroborated
+# in this tree - webui's Backups page treats exactly that value as "Backing up" -
+# so it is the only value allowed to fail a backup. "finished" is read from real
+# Status.plist files and is used to UPGRADE a verdict, never to require one: any
+# other string is echoed literally into the message and the check falls back to
+# the value-agnostic rules, so a state this appliance has never seen cannot turn
+# a good backup into a bad one.
+SNAPSHOT_STATE_IN_PROGRESS = ("uploading",)
+SNAPSHOT_STATE_FINISHED = ("finished",)
+# The file index. Manifest.mbdb is the iOS 9-and-earlier spelling. Presence and
+# size only, never opened: on an encrypted backup - the state _check_encryption
+# pushes the user towards - Manifest.db is encrypted, so an sqlite3 open or a
+# "SQLite format 3" header test would fail on exactly the healthy backups this
+# appliance is configured to produce.
+BACKUP_INDEX_FILES = ("Manifest.db", "Manifest.mbdb")
+# The two files mobilebackup2 rewrites when it closes a snapshot.
+COMPLETION_FILES = ("Manifest.plist", "Status.plist")
+
+def _latest_backup_dir(backup_dir, udid=None):
+    """The folder a backup went into: <backup_dir>/<udid> when the device told us
+    its UDID, otherwise the most recently modified subdirectory. None when neither
+    can be established.
+
+    The mtime scan is the original behaviour and stays as the fallback, but on its
+    own it verifies whatever is newest on the drive - a lost+found, a desktop's
+    .Trash-1000, a second phone - and then reports a perfectly good backup as
+    missing its Manifest.plist."""
+    if udid:
+        cand = os.path.join(backup_dir, str(udid))
+        if os.path.isdir(cand):
+            return cand
+    entries = []
+    try:
         for e in os.scandir(backup_dir):
             if e.is_dir(follow_symlinks=True):
                 try:
                     entries.append((e.stat().st_mtime, e.path))
                 except Exception:
                     pass
-        if not entries:
+    except Exception:
+        return None
+    if not entries:
+        return None
+    entries.sort(reverse=True)
+    return entries[0][1]
+
+def _completion_marks(dirpath):
+    """Fingerprint the completion files BEFORE a run, so afterwards we can tell
+    whether that run rewrote either of them. An interrupted run leaves the
+    PREVIOUS Manifest.plist sitting there, which is what a "Manifest.plist exists"
+    check happily passes.
+
+    Identity, not the wall clock: the board has no RTC and timesyncd can step the
+    clock mid-backup, so comparing mtimes against a run-start timestamp would read
+    a good backup as stale whenever the clock moved backwards. Comparing the files
+    against themselves never consults our clock at all. Anything unstattable is
+    recorded as None, which reads as "changed" afterwards and passes."""
+    if not dirpath:
+        return None
+    marks = {}
+    for name in COMPLETION_FILES:
+        try:
+            st = os.stat(os.path.join(dirpath, name))
+            marks[name] = (st.st_mtime_ns, st.st_size, st.st_ino)
+        except Exception:
+            marks[name] = None
+    return {"dir": dirpath, "files": marks}
+
+def verify_backup_integrity(backup_dir, logf, udid=None, before=None):
+    """Did this run actually finish a backup? Returns (ok, message).
+
+    "complete" means positive evidence was found: a parseable Manifest.plist, a
+    device that is not still uploading, a file index on disk, and completion
+    metadata this run rewrote. "assumed complete" means nothing disproved it - a
+    missing Status.plist, a SnapshotState we do not recognise or a missing pre-run
+    fingerprint are all named in the message and none of them fail the check. That
+    asymmetry is deliberate: reporting a good backup as bad would train the owner
+    to ignore the field, which is worse than the weak check this replaces.
+
+    Never proven: that the blobs the index points at are all there. The index is
+    never opened - see BACKUP_INDEX_FILES."""
+    import plistlib
+    notes = []
+    try:
+        latest = _latest_backup_dir(backup_dir, udid)
+        if not latest:
             return False, "No backup folders found"
-        entries.sort(reverse=True)
-        latest = entries[0][1]
+
         manifest = os.path.join(latest, "Manifest.plist")
         if not os.path.exists(manifest):
             return False, "Manifest.plist missing"
-        # Check it's parseable
-        import plistlib
-        with open(manifest, "rb") as f:
-            plistlib.load(f)
-        return True, "OK"
+        try:
+            with open(manifest, "rb") as f:
+                plistlib.load(f)
+        except Exception as e:
+            return False, f"Manifest.plist unreadable ({e})"
+
+        # Status.plist: the device's own record of how the snapshot ended.
+        state = full = None
+        status_path = os.path.join(latest, "Status.plist")
+        if os.path.exists(status_path):
+            try:
+                with open(status_path, "rb") as f:
+                    status = plistlib.load(f)
+                state = status.get("SnapshotState")
+                full = status.get("IsFullBackup")
+            except Exception as e:
+                notes.append(f"no readable Status.plist ({e})")
+        else:
+            notes.append("no readable Status.plist")
+        state_txt = state.strip().lower() if isinstance(state, str) else None
+        if state_txt in SNAPSHOT_STATE_IN_PROGRESS:
+            return False, f"device still reports SnapshotState={state}"
+        finished = state_txt in SNAPSHOT_STATE_FINISHED
+
+        # The file index. Both known layouts are checked: the drive also carries a
+        # Snapshot/ subtree (the sync-log docs show live paths through it) and
+        # which of the two holds Manifest.db is not settled anywhere in this tree.
+        index = None
+        for name in BACKUP_INDEX_FILES:
+            for cand in (os.path.join(latest, name),
+                         os.path.join(latest, "Snapshot", name)):
+                if os.path.exists(cand):
+                    index = cand
+                    break
+            if index:
+                break
+        if index is None:
+            if not finished:
+                return False, "no file index (Manifest.db/Manifest.mbdb missing)"
+            # The device said it finished, so a missing index is far more likely a
+            # layout this check does not know than a broken backup. Say so instead
+            # of crying wolf on every run.
+            notes.append("no Manifest.db found")
+        else:
+            try:
+                empty = os.path.getsize(index) == 0
+            except OSError:
+                empty = False       # a stat that raised is no evidence either way
+            if empty:
+                return False, f"file index is empty ({os.path.basename(index)})"
+
+        # Did THIS run write anything? Only fires on positive evidence: the same
+        # folder was fingerprinted, both files were already there, and neither
+        # moved. Every uncertainty - no fingerprint, a different folder, a file
+        # that did not exist beforehand, an inode that changed under a remount -
+        # reads as "changed" and passes.
+        if not before or before.get("dir") != latest:
+            notes.append("no pre-run fingerprint")
+        else:
+            was = before.get("files") or {}
+            now = (_completion_marks(latest) or {}).get("files") or {}
+            if all(was.get(n) is not None and now.get(n) == was.get(n)
+                   for n in COMPLETION_FILES):
+                return False, "this run wrote no new Manifest.plist or Status.plist"
+
+        # IsFullBackup is reported, never judged: it separates a full snapshot from
+        # an incremental one, and every run after the first is legitimately
+        # incremental. Gating on it would fail every good backup this device takes.
+        parts = []
+        if full is True:
+            parts.append("full")
+        elif full is False:
+            parts.append("incremental")
+        if finished:
+            parts.append(f"SnapshotState={state}")
+        elif state_txt:
+            notes.append(f"unrecognised SnapshotState={state!r}")
+        parts.extend(notes)
+        verdict = "assumed complete" if notes else "complete"
+        return True, verdict + (f" ({', '.join(parts)})" if parts else "")
     except Exception as e:
         return False, str(e)
 
@@ -1293,29 +1847,332 @@ def _is_progress_line(ln):
     """Check if a line is a progress bar (e.g. '[====] 42% Finished')."""
     return bool(re.match(r'\s*\[=*\s*\]\s*\d+%', ln))
 
-def tee_and_parse(proc, logf, on_line):
+def _backup_watchdog_limits():
+    """Silence timeout / total cap for a backup run. Configurable under the
+    `backup:` section (hang_timeout_sec, max_duration_sec); read defensively so
+    a config schema that doesn't know those keys yet can't break us."""
+    bk = CFG.get("backup", {})
+    if not isinstance(bk, dict):
+        bk = {}
+    try: silence = int(bk.get("hang_timeout_sec", BACKUP_SILENCE_TIMEOUT_SEC))
+    except (TypeError, ValueError): silence = BACKUP_SILENCE_TIMEOUT_SEC
+    try: cap = int(bk.get("max_duration_sec", BACKUP_MAX_DURATION_SEC))
+    except (TypeError, ValueError): cap = BACKUP_MAX_DURATION_SEC
+    return max(30, silence), max(300, cap)
+
+def _backup_safety_limits():
+    """Battery floor / free-space reserve for a backup run. Configurable under the
+    `backup:` section (min_battery_percent, min_free_mb); read defensively for the
+    same reason its neighbour is — the daemon's own load_config is raw YAML plus
+    setdefaults with no schema validation, so CFG can legitimately hold junk and a
+    guard that raised here would take the daemon down with it."""
+    bk = CFG.get("backup", {})
+    if not isinstance(bk, dict):
+        bk = {}
+    try: battery = int(bk.get("min_battery_percent", BACKUP_MIN_BATTERY_PCT))
+    except (TypeError, ValueError): battery = BACKUP_MIN_BATTERY_PCT
+    try: reserve = int(bk.get("min_free_mb", BACKUP_RESERVE_MB))
+    except (TypeError, ValueError): reserve = BACKUP_RESERVE_MB
+    # Clamped, not rejected: a 95% floor would refuse every backup forever, which
+    # is the one thing a guard must never be able to do.
+    return min(90, max(0, battery)), max(0, reserve)
+
+def _stale_limits():
+    """Whether the quiet-device alert is on, and how long counts as quiet.
+
+    Read LIVE from config.yaml rather than from CFG. The web UI restarts this
+    daemon only at setup completion — it never restarts on a settings save,
+    because this process owns the e-ink — so CFG is a snapshot from daemon start
+    and an alert switched off in the web UI would keep firing until the next
+    reboot. Same defensive shape as its neighbours: the daemon's own loader is
+    raw YAML plus setdefaults with no validation, so junk here must not raise."""
+    try:
+        with open(CONFIG_PATH, "r") as f:
+            live = yaml.safe_load(f) or {}
+    except Exception:
+        live = {}
+    bk = live.get("backup", {})
+    if not isinstance(bk, dict):
+        bk = {}
+    notify = bk.get("notify_stale", True)
+    if not isinstance(notify, bool):
+        notify = True
+    raw = bk.get("stale_after_sec", STALE_AFTER_SEC)
+    if isinstance(raw, bool):
+        raw = STALE_AFTER_SEC   # `true` is not a number of seconds
+    try:
+        after = int(raw)
+    except (TypeError, ValueError):
+        after = STALE_AFTER_SEC
+    if after < 0:
+        after = STALE_AFTER_SEC
+    # Clamped, not rejected: a fat-fingered 60 would alert hourly forever. 0 is
+    # the documented off switch and stays 0.
+    return notify, (max(3600, after) if after else 0)
+
+
+def _mount_identity(path):
+    """Device id of the backup mountpoint, or None when it can't be read. Recorded
+    before the run so the health probe has positive evidence to compare against: an
+    st_dev that changes mid-run means the drive went away and idevicebackup2 is now
+    writing into the empty mountpoint on the rootfs."""
+    try:
+        return os.stat(path).st_dev
+    except Exception:
+        return None
+
+class _RunHealth:
+    """Per-run health probe, ridden on the poll tee_and_parse already runs.
+
+    Battery, mount and free space fail the same way: something that was true when
+    the run started stops being true while it runs. A backup starting at 33% is
+    powered off mid-write by PiSugar at 30%; a drive that drops off the bus leaves
+    idevicebackup2 filling the rootfs through the empty mountpoint; 500MB free
+    passes the gate and then dies on ENOSPC 40GB in. One object on one poll,
+    rather than three loops of its own.
+
+    Called with no arguments; returns None (healthy) or ``(outcome, why)``, where
+    outcome is a BACKUP_ABORT_REASONS key. Every dependency is injected so this is
+    unit-testable with no hardware, no subprocess and no sleeping."""
+
+    def __init__(self, backup_dir, marker_path, base_st_dev, min_battery, reserve_mb,
+                 *, stat_fn=None, exists_fn=None, statvfs_fn=None, battery_fn=None,
+                 now=None, logf=None):
+        self.backup_dir = backup_dir
+        self.marker_path = marker_path
+        self.base_st_dev = base_st_dev
+        self.min_battery = min_battery
+        self.reserve_mb = reserve_mb
+        self.reason = ""            # the sentence run_backup reports
+        self._stat = stat_fn or os.stat
+        self._exists = exists_fn or os.path.exists
+        self._statvfs = statvfs_fn
+        self._battery = battery_fn
+        self._now = now or time.monotonic
+        self._logf = logf
+        self._mount_misses = 0
+        self._battery_low = 0
+        self._battery_unreadable = 0
+        self._battery_armed = bool(min_battery)
+        self._battery_due = self._now() + HEALTH_BATTERY_EVERY_SEC
+
+    def __call__(self):
+        verdict = self._check_mount()
+        if verdict is not None:
+            return self._trip(verdict)
+        if self._mount_misses:
+            # The marker missed this tick without confirming yet. statvfs on an
+            # unmounted mountpoint reports the ROOTFS, so letting the disk check
+            # run here would announce "Backup drive: 180MB free" for a drive that
+            # is gone — the wrong failure, and the wrong thing to tell the owner.
+            return None
+        verdict = self._check_disk()
+        if verdict is not None:
+            return self._trip(verdict)
+        verdict = self._check_battery()
+        if verdict is not None:
+            return self._trip(verdict)
+        return None
+
+    def _trip(self, verdict):
+        self.reason = verdict[1]
+        return verdict
+
+    def _check_mount(self):
+        if self.base_st_dev is not None:
+            try:
+                st_dev = self._stat(self.backup_dir).st_dev
+            except Exception:
+                st_dev = None       # a stat that raised is no evidence either way
+            if st_dev is not None and st_dev != self.base_st_dev:
+                # Positive evidence, so no debounce: the mountpoint is no longer the
+                # filesystem the run started on, and every further second is written
+                # to the rootfs.
+                return ("mount_lost", "Backup drive disappeared (mountpoint changed)")
+        try:
+            present = self._exists(self.marker_path)
+        except Exception:
+            return None
+        if present:
+            self._mount_misses = 0
+            return None
+        self._mount_misses += 1
+        if self._mount_misses >= HEALTH_MOUNT_MISSES:
+            return ("mount_lost", "Backup drive disappeared (marker file gone)")
+        return None
+
+    def _check_disk(self):
+        problems = _disk_space_problems(self.backup_dir, statvfs_fn=self._statvfs,
+                                        backup_min_mb=self.reserve_mb)
+        if problems:
+            return ("disk_full", problems[0])
+        return None
+
+    def _check_battery(self):
+        if not self._battery_armed:
+            return None
+        now = self._now()
+        if now < self._battery_due:
+            return None
+        self._battery_due = now + HEALTH_BATTERY_EVERY_SEC
+        try:
+            import power as _power
+            batt = self._battery() if self._battery is not None else _power.get_battery(timeout=2)
+            readable = batt.get("percent") is not None
+            ok, why = _power.sync_allowed(self.min_battery, battery=batt)
+        except Exception:
+            ok, why, readable = True, "", False
+        if not readable:
+            self._battery_low = 0
+            self._battery_unreadable += 1
+            if self._battery_unreadable >= HEALTH_BATTERY_UNREADABLE_MAX:
+                # No PiSugar, or a server that accepts and never answers. Stop
+                # paying up to 4s of socket per minute on the thread pumping
+                # idevicebackup2's output; the backup itself is fine.
+                self._battery_armed = False
+                self._log("[HEALTH] battery unreadable "
+                          f"{self._battery_unreadable}x; battery guard off for this run")
+            return None
+        self._battery_unreadable = 0
+        if ok:
+            self._battery_low = 0
+            return None
+        self._battery_low += 1
+        # Two reads a minute apart before killing a run: rsync resumes from its
+        # --partial-dir, so sync_manager can abort on the first reading, but an
+        # idevicebackup2 run has no equivalent and 60s from the floor is still far
+        # from PiSugar's 30% cutoff.
+        if self._battery_low >= HEALTH_BATTERY_LOW_READS:
+            return ("battery_abort", why or f"Battery below {self.min_battery:g}%")
+        return None
+
+    def _log(self, msg):
+        print(msg, flush=True)
+        if self._logf:
+            try: self._logf.write(msg + "\n")
+            except Exception: pass
+
+def _terminate_then_kill(proc, logf, why, hard=False):
+    verb = "killing" if hard else "terminating"
+    print(f"[WATCHDOG] {why}; {verb} idevicebackup2", flush=True)
+    if logf: logf.write(f"[WATCHDOG] {why}; {verb} idevicebackup2\n")
+    if hard:
+        # No SIGTERM grace. The only caller is the vanished backup drive, where
+        # every second of grace is another second of writing into the empty
+        # mountpoint on the rootfs. For the other aborts the grace IS the feature:
+        # idevicebackup2 finishes the file in flight, so the partial backup stays
+        # resumable.
+        try: proc.kill()
+        except Exception: return
+        try: proc.wait(timeout=5)
+        except Exception: pass
+        return
+    try: proc.terminate()
+    except Exception: return
+    try:
+        proc.wait(timeout=5)
+        return
+    except Exception:
+        pass
+    try: proc.kill()
+    except Exception: pass
+    try: proc.wait(timeout=5)
+    except Exception: pass
+
+def tee_and_parse(proc, logf, on_line, silence_timeout=BACKUP_SILENCE_TIMEOUT_SEC,
+                  total_cap=BACKUP_MAX_DURATION_SEC, device_gone=None, device_poll_sec=30,
+                  health_check=None, health_poll_sec=BACKUP_HEALTH_POLL_SEC):
+    """Pump idevicebackup2's merged stdout/stderr to the journal, the run log and
+    the parser (char-at-a-time; the parser tracks progress-bar rewrites via \\r).
+
+    Watchdogs, mirroring sync_manager's SCAN_KILL_SEC/STALL_KILL_SEC pattern:
+    `silence_timeout` seconds without ANY output means the backup hung (device
+    still attached, nothing progressing) and a run past `total_cap` is bounded;
+    both terminate, then SIGKILL 5s later. `device_gone` (polled every
+    device_poll_sec) is the third unplug layer: the phone vanished but the
+    process is still alive. `health_check` (polled every health_poll_sec) is the
+    fourth: a callable returning None or (outcome, why) for the conditions that
+    were true at the start and stopped being true mid-run — see _RunHealth.
+    Returns "eof" | "silent" | "overtime" | "unplugged", or a
+    BACKUP_ABORT_REASONS key, so the caller can report why the stream ended."""
+    fd = proc.stdout.fileno()
     cur_line = ""
+    start = time.monotonic()
+    last_output = start
+    last_dev_poll = start
+    last_health = start
+    outcome = "eof"
+    reasons = {
+        "silent": f"no output for {silence_timeout}s",
+        "overtime": f"backup exceeded {total_cap}s",
+        "unplugged": "device vanished mid-backup but process still running",
+    }
     while True:
-        ch = proc.stdout.read(1)
-        if ch == "" or ch is None:
+        now = time.monotonic()
+        if now - last_output > silence_timeout:
+            outcome = "silent"; break
+        if now - start > total_cap:
+            outcome = "overtime"; break
+        if device_gone is not None and now - last_dev_poll >= device_poll_sec:
+            last_dev_poll = now
+            try:
+                gone = device_gone()
+            except Exception:
+                gone = False
+            if gone and proc.poll() is None:
+                outcome = "unplugged"; break
+        if health_check is not None and now - last_health >= health_poll_sec:
+            last_health = now
+            # A probe blocked on a wedged PiSugar socket must not read as a stalled
+            # main loop: LoopWatchdog is armed at hang_timeout+100 and a legitimately
+            # silent backup already spends most of that without a beat.
+            _heartbeat()
+            try:
+                verdict = health_check()
+            except Exception:
+                verdict = None      # the probe failing is not the backup failing
+            if verdict and proc.poll() is None:
+                outcome, why = verdict
+                reasons[outcome] = why
+                break
+        wait = max(0.05, min(1.0, silence_timeout - (now - last_output)))
+        try:
+            ready, _, _ = select.select([fd], [], [], wait)
+        except (OSError, ValueError):
             break
-        sys.stdout.write(ch); sys.stdout.flush()
-        if ch in ["\n", "\r"]:
-            # Only log non-progress lines (progress bars are noise)
-            if cur_line and logf and not _is_progress_line(cur_line):
-                logf.write(cur_line + "\n")
-            on_line("__LINE_BREAK__")
-            cur_line = ""
-        else:
-            cur_line += ch
-            on_line(ch)
+        if not ready:
+            continue
+        try:
+            chunk = os.read(fd, 4096)
+        except OSError:
+            break
+        if not chunk:
+            break
+        last_output = time.monotonic()
+        _heartbeat()
+        text = chunk.decode("utf-8", "replace")
+        sys.stdout.write(text); sys.stdout.flush()
+        for ch in text:
+            if ch in ("\n", "\r"):
+                # Only log non-progress lines (progress bars are noise)
+                if cur_line and logf and not _is_progress_line(cur_line):
+                    logf.write(cur_line + "\n")
+                on_line("__LINE_BREAK__")
+                cur_line = ""
+            else:
+                cur_line += ch
+                on_line(ch)
     # Flush remaining
     if cur_line and logf and not _is_progress_line(cur_line):
         logf.write(cur_line + "\n")
+    if outcome != "eof":
+        _terminate_then_kill(proc, logf, reasons[outcome],
+                             hard=outcome in BACKUP_HARD_KILL_OUTCOMES)
+    return outcome
 
 def get_disk_usage_pct(device_path: str):
     try:
-        out = subprocess.run(["df", "-P", device_path], capture_output=True, text=True, check=True).stdout.splitlines()
+        out = subprocess.run(["df", "-P", device_path], capture_output=True, text=True, check=True, timeout=5).stdout.splitlines()
         if len(out) >= 2:
             tokens = out[-1].split()
             for tok in tokens:
@@ -1373,7 +2230,8 @@ def _check_encryption(logf, ui):
             if logf: logf.write(f"[ENC] Could not check encryption status: {e}\n")
             return None
 
-def run_backup(panel, logf, ui, _retry=0):
+def run_backup(panel, logf, ui, _retry=0, udid=None):
+    global _backup_proc
     if _retry == 0:
         # Fresh backup — clear any stale stop request from a previous run.
         try:
@@ -1383,12 +2241,32 @@ def run_backup(panel, logf, ui, _retry=0):
             pass
     if not check_backup_mount(logf, ui):
         return 2
-    check_disk_space(logf, ui)
+    if not check_disk_space(logf, ui):
+        return 2
+    if not check_battery(logf, ui):
+        return 2
+    if shutil.which("idevicebackup2") is None:
+        msg = "idevicebackup2 not installed"
+        print(f"[ERROR] {msg}", flush=True)
+        if logf: logf.write(f"[ERROR] {msg}\n")
+        write_status("error", message=msg)
+        ui.set(screen="normal", subtitle=f"Error:\n{msg}", percent=None,
+               animate=False, show_header=True)
+        return 2
     _check_encryption(logf, ui)
+    # Baseline for the in-run mount probe: whatever filesystem the backup dir is on
+    # right now is the one the whole run must keep writing to.
+    base_st_dev = _mount_identity(CFG["backup_dir"])
+    # Fingerprint the completion files while they are still the PREVIOUS run's.
+    # A run that exits 0 without closing a new snapshot leaves the old
+    # Manifest.plist in place, and "Manifest.plist exists" cannot tell that apart
+    # from a backup that finished.
+    before_marks = _completion_marks(_latest_backup_dir(CFG["backup_dir"], udid))
     cmd = ["idevicebackup2", "backup", CFG["backup_dir"]]
     print(f"[CMD] {' '.join(cmd)}", flush=True)
     if logf: logf.write(f"[CMD] {' '.join(cmd)}\n")
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=0, universal_newlines=True)
+    _backup_proc = proc
     pct, encrypted, last_ui = None, False, 0
     last_pct = None
     cur_line = ""
@@ -1440,6 +2318,7 @@ def run_backup(panel, logf, ui, _retry=0):
         # cannot be running here, since a backup is what got us to this line.
         print("[ERROR] Holding error screen (unplug, new request, or shutdown)...", flush=True)
         while not SHUTDOWN.is_set():
+            _heartbeat()
             if uipolicy.should_release_hold(device_present=device_present(),
                                             sync_running=False,
                                             manual_start=_manual_start_requested()):
@@ -1505,12 +2384,59 @@ def run_backup(panel, logf, ui, _retry=0):
     except Exception as _e:
         if logf: logf.write(f"[NOTIFY] could not prime webhook auth: {_e}\n")
     send_notification("backup_start")
-    tee_and_parse(proc, logf, feed_parser)
+    silence_sec, cap_sec = _backup_watchdog_limits()
+    min_battery, reserve_mb = _backup_safety_limits()
+    health = _RunHealth(CFG["backup_dir"],
+                        os.path.join(CFG["backup_dir"], CFG["marker_file"]),
+                        base_st_dev, min_battery, reserve_mb, logf=logf)
+    outcome = tee_and_parse(proc, logf, feed_parser, silence_timeout=silence_sec,
+                            total_cap=cap_sec,
+                            device_gone=lambda: not device_present(),
+                            health_check=health)
     proc.wait(); rc = proc.returncode
     ts_end = datetime.now().strftime("%H:%M / %d %b %Y")
+    if outcome in ("silent", "overtime") or outcome in BACKUP_ABORT_REASONS:
+        # Watchdog killed a hung/runaway backup, or the health probe stopped one
+        # whose drive vanished, whose filesystem filled or whose battery drained.
+        # In every one of those the phone may still be plugged, so the
+        # device_present() check below can't catch it — report it here, through
+        # the same interrupted flow as a mid-backup unplug.
+        if outcome == "silent":
+            reason_txt = "Backup hung (no progress)"
+        elif outcome == "overtime":
+            reason_txt = "Backup exceeded time limit"
+        else:
+            reason_txt = health.reason or BACKUP_ABORT_REASONS[outcome]
+        # A stop request that arrived just before the abort must not outlive it:
+        # webui._quiesce_for_destructive waits for this sentinel to disappear, and
+        # this branch returns without ever reaching the code that clears it.
+        try:
+            if os.path.exists(STOP_FILE):
+                os.remove(STOP_FILE)
+        except Exception:
+            pass
+        if logf: logf.write(f"[INTERRUPT] {reason_txt}; watchdog killed idevicebackup2\n")
+        write_status("interrupted", reason=reason_txt, reason_code=outcome)
+        if outcome in BACKUP_ABORT_REASONS:
+            # The interrupted screen has room for a header and a timestamp and
+            # nothing else, so the aborts that have something specific to say use
+            # the normal error screen every other error already uses.
+            ui.set(screen="normal", subtitle="Backup stopped.\n" + reason_txt,
+                   percent=None, animate=False, show_header=True)
+        else:
+            ui.set(screen="interrupted", subtitle=ts_end, percent=None, animate=False)
+        send_notification("backup_error", {"error": reason_txt, "reason_code": outcome})
+        return 0
+    # outcome "unplugged": rc!=0 with the device gone — the interrupted branch
+    # below reports it through the existing flow.
     if rc == 0:
         # Verify backup integrity
-        ok, integrity_msg = verify_backup_integrity(CFG["backup_dir"], logf)
+        ok, integrity_msg = verify_backup_integrity(CFG["backup_dir"], logf,
+                                                    udid=udid, before=before_marks)
+        # Logged on success too, not only on failure: the run log is the only place
+        # a real device can confirm the SnapshotState vocabulary the check assumes,
+        # and "assumed complete (...)" says which signal was missing.
+        if logf: logf.write(f"[VERIFY] {integrity_msg}\n")
         if not ok:
             if logf: logf.write(f"[WARN] Backup integrity check: {integrity_msg}\n")
 
@@ -1523,7 +2449,21 @@ def run_backup(panel, logf, ui, _retry=0):
             f"  \n"
             f"{owner[0]}\n{owner[1]}\n{owner[2]}\n{owner[3]}"
         )
-        write_status("complete", usage=usage_str, completed_at=ts_end, verified=ok)
+        write_status("complete", usage=usage_str, completed_at=ts_end, verified=ok,
+                     verify_detail=integrity_msg)
+        # The durable half of the same assertion, written at the same single point
+        # so the status file and the record can never disagree about whether a
+        # backup finished. Note run_backup also `return 0`s for the "silent" /
+        # "overtime" / abort outcomes above, so its return value is NOT the
+        # completion signal: this has to stay inside `if rc == 0:` and nowhere else.
+        # The previous record is read FIRST because record_backup_success clears
+        # alerted_for — this is the last moment a quiet episode can be seen closing,
+        # and reporting the recovery on an event that already fires here beats
+        # minting a thirteenth one for an automation to subscribe to.
+        was_stale = _read_last_backup().get("alerted_for")
+        stale_days = (round(max(0.0, time.time() - was_stale) / 86400.0, 1)
+                      if isinstance(was_stale, (int, float)) else None)
+        record_backup_success(ts_end, verified=ok)
         ui.set(screen="complete", subtitle="", percent=None, animate=False,
                center_block=center, show_header=False)
         ui.request_full()   # clean transition from backup progress
@@ -1532,6 +2472,9 @@ def run_backup(panel, logf, ui, _retry=0):
             "usage": usage_str, "timestamp": ts_end,
             "device": CFG.get("owner_lines", [""])[0],
             "verified": ok,
+            "verify_detail": integrity_msg,
+            "was_stale": bool(was_stale),
+            "stale_days": stale_days,
         })
 
         # Auto-sync decision. Claim the sync slot (status=syncing) BEFORE the
@@ -1663,7 +2606,7 @@ def run_backup(panel, logf, ui, _retry=0):
             ui.set(screen="normal", subtitle="Backup failed.\nRetrying...", percent=None,
                    animate=True, show_header=True)
             time.sleep(3)
-            return run_backup(panel, logf, ui, _retry=1)
+            return run_backup(panel, logf, ui, _retry=1, udid=udid)
         send_notification("backup_error", {"error": "Unknown error, rc!=0"})
         error_and_wait("Unknown error.\nCheck logs.", None, "rc!=0")
 
@@ -1671,6 +2614,16 @@ def run_backup(panel, logf, ui, _retry=0):
 # PiSugar button listener (single-tap → system-info screen for 30s)
 # ---------------------------------------------------------------------------
 _backup_running = False
+# Last verdict from device_allowed(), for the quiet-device alert. Its vocabulary
+# — no_device, auto_start_disabled, device_rejected — is exactly the failure set
+# that makes a device stop backing up without anything failing loudly, so the
+# alert can name a probable cause without one new probe. A hint only: written by
+# the main loop, read by the watcher thread, and stale while a backup or a hold
+# blocks the loop, so it never gates the alert.
+_last_device_reason = None
+# Live idevicebackup2 process (or None) — _do_shutdown terminates it so a
+# daemon exit can't orphan a running backup.
+_backup_proc = None
 # The single authority on whether the single-tap info screen is up. Enforced in
 # Animator.set(), so no drawing path has to remember to check it.
 _info_window = uipolicy.InfoWindow()
@@ -1751,6 +2704,145 @@ def _status_icon_updater(ui):
             return
 
 # ---------------------------------------------------------------------------
+# Quiet-device watcher (backup_stale)
+# ---------------------------------------------------------------------------
+# Every other notification is edge-triggered: something happened, so something is
+# sent. Nothing anywhere reports the absence of events, so a device that quietly
+# stops backing up — the phone stops being plugged in, auto_start gets switched
+# off, the filter starts rejecting, usbmuxd breaks in a way usbmux-refresh cannot
+# fix — tells nobody, and the owner finds out when they need a restore.
+
+# Set once per daemon lifetime when the alert went out but its flag could not be
+# persisted. An unwritable rootfs must not be able to silence the alert, and must
+# not be able to make it repeat every poll either.
+_stale_alerted_in_process = False
+
+
+def _stale_verdict(state, now, threshold_sec):
+    """Pure staleness verdict. Returns (should_alert, age_sec, ever, episode_key).
+
+    The episode key IS the fact being measured, so a reboot, a Restart=on-failure
+    or a system update cannot re-fire an alert that already went out, and a real
+    backup moves the key forward and re-arms it. That one rule is the whole answer
+    to the owner who is away for three weeks: no repeat interval, no escalation
+    and no snooze to get wrong."""
+    state = state or {}
+    if not threshold_sec or threshold_sec <= 0:
+        return False, None, False, None          # the documented off switch
+    key = state.get("completed_at")
+    ever = isinstance(key, (int, float)) and key > 0
+    if not ever:
+        key = state.get("first_seen")
+    if not isinstance(key, (int, float)) or key <= 0:
+        return False, None, ever, None           # nothing anchored yet
+    age = now - key
+    if age < 0:
+        return False, age, ever, key             # clock stepped backwards
+    if age < threshold_sec:
+        return False, age, ever, key
+    if state.get("alerted_for") == key:
+        return False, age, ever, key             # already alerted for this episode
+    return True, age, ever, key
+
+
+def _seed_last_backup(now, logf=None):
+    """Anchor the record on the first tick of a device that has none.
+
+    Without a seed, every already-working device would report "never backed up"
+    the first time this version runs. The seed comes from the newest backup
+    folder, which an interrupted run also bumps — bounded, because it delays the
+    first alert by at most one threshold and self-corrects at the first real
+    completion, where seeded flips false.
+
+    The write is REFUSED while the clock reads before STALE_CLOCK_FLOOR: see the
+    constant. Deferring costs one poll interval; anchoring to a 1970 clock costs a
+    false alarm on a healthy device, and a false alarm destroys every later true
+    one."""
+    if now < STALE_CLOCK_FLOOR:
+        if logf:
+            try: logf.write("[STALE] clock not set yet; deferring the first record\n")
+            except Exception: pass
+        return False
+    newest = _newest_backup_mtime()
+    return _write_last_backup(
+        completed_at=newest,
+        completed_at_str=(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(newest))
+                          if newest else None),
+        verified=None, seeded=True, first_seen=now, alerted_for=None)
+
+
+def _stale_tick(logf=None, now_fn=None):
+    """One pass of the quiet-device watcher, split out of the loop so it can be
+    driven directly instead of waiting on SHUTDOWN.
+
+    Fails SILENT, which is the mirror of the fail-open rule the guards follow: a
+    guard that cannot probe must let work through, an alerter that cannot probe
+    must say nothing, because a false alarm here poisons every later true one."""
+    global _stale_alerted_in_process
+    try:
+        if _backup_running:
+            return False   # a running backup is not a quiet device, and if it
+                           # succeeds the record refreshes anyway
+        if _updating_requested():
+            return False   # the installer is about to stop this daemon and reboot
+        now = (now_fn or time.time)()
+        if now - _boot_time() < STALE_BOOT_GRACE_SEC:
+            return False   # the clock may not be corrected yet — see the constant
+        notify, threshold = _stale_limits()
+        if not notify or not threshold:
+            return False
+        state = _read_last_backup()
+        alert, age, ever, key = _stale_verdict(state, now, threshold)
+        if key is None:
+            _seed_last_backup(now, logf)
+            return False
+        if not alert or _stale_alerted_in_process:
+            return False
+        # Persisted BEFORE the send, so an alert that went out is never repeated
+        # even if the send is what takes the daemon down.
+        if not _write_last_backup(alerted_for=key):
+            _stale_alerted_in_process = True
+            if logf:
+                try: logf.write("[STALE] could not persist the alert flag; "
+                                "sending once for this daemon's lifetime\n")
+                except Exception: pass
+        payload = {
+            "last_backup": state.get("completed_at_str"),
+            "last_backup_ts": state.get("completed_at"),
+            "age_seconds": int(age),
+            "age_days": round(age / 86400.0, 1),
+            "threshold_seconds": int(threshold),
+            "ever_completed": bool(ever),
+            "seeded": bool(state.get("seeded")),
+        }
+        if _last_device_reason:
+            payload["likely_cause"] = _last_device_reason
+        send_notification("backup_stale", payload)
+        if logf:
+            try: logf.write(f"[STALE] no successful backup in {payload['age_days']} days"
+                            f" (cause: {payload.get('likely_cause', 'unknown')})\n")
+            except Exception: pass
+        return True
+    except Exception:
+        return False
+
+
+def _stale_watcher(logf):
+    """Fire exactly one backup_stale notification per quiet episode.
+
+    A thread and not the main loop: run_backup blocks that loop for up to four
+    hours, and both holds around it (error_and_wait and the post-backup hold) wait
+    on uipolicy.should_release_hold, which for an idle plugged-in phone never
+    returns True. A phone left plugged in after a failed backup parks the loop
+    indefinitely with backups stopped — which is exactly the state this alert
+    exists to report. Takes no ui on purpose: it must never paint the panel."""
+    while not SHUTDOWN.is_set():
+        _stale_tick(logf)
+        if SHUTDOWN.wait(STALE_POLL_SEC):
+            return
+
+
+# ---------------------------------------------------------------------------
 # WireGuard auto-connect reconciler
 # ---------------------------------------------------------------------------
 def _wg_should_connect_for(triggers):
@@ -1805,7 +2897,12 @@ def _wg_autoconnect_watcher(logf):
                 # not within the grace window, tear it down so the next tick
                 # reconnects cleanly. A tunnel that handshaked at least once is
                 # left alone (its handshake time stays set even when idle).
-                if _wg.latest_handshake(iface) > 0:
+                ts = _wg.latest_handshake(iface)
+                if ts is None:
+                    # Could not read handshake state (wg missing/error/timeout):
+                    # leave the tunnel alone — cycling it would not fix the probe.
+                    dead_since = None
+                elif ts > 0:
                     last_err = None
                     dead_since = None
                 else:
@@ -1864,7 +2961,7 @@ def _setup_completed():
 
 
 def main():
-    global _backup_running
+    global _backup_running, _loop_watchdog, _last_device_reason
 
     # Single EPD owner: on shutdown the Animator paints the owner screen and sleeps
     # the panel so the image persists after PiSugar cuts power.
@@ -1874,9 +2971,14 @@ def main():
     except Exception:
         pass
 
-    logf, logpath = log_open()
-    print(f"[LOG] writing to {logpath}")
-    if logf: logf.write(f"[LOG] writing to {logpath}\n")
+    try:
+        logf, logpath = log_open()
+        print(f"[LOG] writing to {logpath}")
+        if logf: logf.write(f"[LOG] writing to {logpath}\n")
+    except OSError as e:
+        # A broken log dir must not stop the daemon; journal stdout still works.
+        logf = None
+        print(f"[WARN] could not open run log ({e}); logging to journal only", flush=True)
 
     # Try NTP sync in background
     _try_ntp_sync()
@@ -1886,8 +2988,14 @@ def main():
     # connection appears — including the iPhone hotspot being toggled on after
     # the phone is already plugged in, not just at boot.
 
-    p = Panel()
-    p.prepare_partial()  # enable partial for text screens
+    try:
+        p = Panel()
+        p.prepare_partial()  # enable partial for text screens
+    except Exception as e:
+        # No display (panel missing, SPI/GPIO wedged, stuck BUSY): run headless.
+        # Backups, sync and notifications all still work without the EPD.
+        print(f"[WARN] display init failed ({e}); running headless, will keep retrying", flush=True)
+        p = NullPanel()
 
     ui = Animator(p)
     ui.start()
@@ -1906,6 +3014,10 @@ def main():
     # Status-icon updater: samples VPN/internet/WiFi/iPhone for the on-screen icons.
     status_thread = threading.Thread(target=_status_icon_updater, args=(ui,), daemon=True)
     status_thread.start()
+
+    # Quiet-device watcher: the only check that fires because nothing happened.
+    stale_thread = threading.Thread(target=_stale_watcher, args=(logf,), daemon=True)
+    stale_thread.start()
 
     _last_reject_udid = None
     _sync_dead_logged = False     # so we don't spam the log
@@ -1930,6 +3042,26 @@ def main():
             except OSError:
                 pass
 
+        # Pre-flight: without idevicebackup2 every backup would crash on the
+        # first plug-in. Fail loudly now (journal + status) instead.
+        if shutil.which("idevicebackup2") is None:
+            msg = "idevicebackup2 not installed"
+            print(f"[ERROR] {msg}", flush=True)
+            if logf: logf.write(f"[ERROR] {msg}\n")
+            write_status("error", message=msg)
+
+        # Failsafe against a wedged main loop: every long-running hold beats,
+        # so silence past the backup hang timeout + margin means a genuine
+        # wedge -> exit 1 and let Restart=on-failure bring back a healthy daemon.
+        def _wd_log(m):
+            print(m, flush=True)
+            if logf:
+                try: logf.write(m + "\n")
+                except Exception: pass
+        _silence_sec, _ = _backup_watchdog_limits()
+        _loop_watchdog = LoopWatchdog(stall_sec=_silence_sec + 100, log_fn=_wd_log)
+        _loop_watchdog.start()
+
         def show(**kw):
             # Passive redraw. Animator.set() is what holds the info screen back,
             # so this no longer needs its own guard.
@@ -1937,6 +3069,7 @@ def main():
 
         while True:
             # The Animator owns the EPD; this loop only decides what state to show.
+            _heartbeat()
             if SHUTDOWN.is_set():
                 time.sleep(0.2); continue   # Animator paints owner + exits
 
@@ -1970,7 +3103,7 @@ def main():
                 if _age > 60:
                     try:
                         _pg = subprocess.run(["pgrep", "-f", "backup-sync.py"],
-                                             capture_output=True, text=True)
+                                             capture_output=True, text=True, timeout=5)
                         _alive = _pg.returncode == 0
                     except Exception:
                         _alive = True
@@ -2034,6 +3167,7 @@ def main():
                 allowed, udid, reason = device_allowed()
             else:
                 allowed, udid, reason = False, None, "setup_pending"
+            _last_device_reason = reason
 
             # usbmuxd hotplug workaround: device_allowed() found no device, but the
             # phone may be plugged and just invisible to usbmux (plugged after boot).
@@ -2067,9 +3201,9 @@ def main():
                 ui.set(screen="normal", subtitle="Device detected. Preparing...",
                        percent=None, animate=True, show_header=True)
                 ui.request_full()   # clean transition from the boot/idle screen
-                try: subprocess.run(["idevicepair", "validate"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                try: subprocess.run(["idevicepair", "validate"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)
                 except Exception: pass
-                run_backup(p, logf, ui)
+                run_backup(p, logf, ui, udid=udid)
                 _backup_running = False
                 # Keep the result screen (complete/interrupted/error) up until the
                 # iPhone is unplugged, so we don't immediately re-back-up the same
@@ -2080,6 +3214,7 @@ def main():
                 # the mutual-exclusion check above still refuses to re-backup a
                 # device while a sync is live.
                 while not SHUTDOWN.is_set():
+                    _heartbeat()
                     if uipolicy.should_release_hold(
                             device_present=device_present(),
                             sync_running=_sync_running(),
@@ -2117,9 +3252,15 @@ def main():
     except Exception as e:
         if logf:
             logf.write(f"[FATAL] main loop: {e}\n")
-        # Let the Animator paint the owner screen and exit; the unit restarts on failure.
+        print(f"[FATAL] main loop: {e}", flush=True)
+        # Fatal must exit NON-ZERO (the old unconditional os._exit(0) meant
+        # Restart=on-failure never restarted a crashed daemon): the Animator
+        # paints the final screen and exits 1, and the os._exit(1) below is the
+        # fallback for when the Animator thread itself is wedged.
+        ui.exit_code = 1
         SHUTDOWN.set()
         time.sleep(2)
+        os._exit(1)
     finally:
         _backup_running = False
         try: logf.close()

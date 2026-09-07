@@ -32,7 +32,7 @@ import config_schema
 import power
 import logutil
 
-VERSION = "4.8.1"
+VERSION = "4.9.0"
 
 CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/iosbackupmachine/config.yaml")
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webui_static")
@@ -45,9 +45,24 @@ app = Flask(
     static_url_path="/static"
 )
 
+# The only upload is /api/import-config, and an exported config.yaml is a few KB
+# (the shipped example is 5 KB). Without a cap, picking the wrong file in the
+# browser — a photo, a backup archive — has api_import_config read the whole body
+# into RAM and hand it to PyYAML on a 512 MB board. 256 KB is ~50x a real config
+# and stays under Flask's own 500 KB form-field limit, so this is always the
+# limit that bites first and the number in the 413 message is always the true one.
+MAX_UPLOAD_BYTES = 256 * 1024
+app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_BYTES
+
+# A wholesale wrong file can mistype every key in DEFAULTS; show the first few
+# and leave the rest to webui.log rather than burying the page in banners.
+IMPORT_WARNING_LIMIT = 10
+
 @app.context_processor
 def inject_version():
-    return {"app_version": VERSION}
+    return {"app_version": VERSION,
+            "config_warnings": config_schema.get_load_warnings(),
+            "pending_confirm": _pending_confirm()}
 
 # Persistent logs on the rootfs; runtime status/flags on the volatile zram
 # /var/log. See logutil.py for the rationale.
@@ -115,6 +130,18 @@ def save_config(cfg):
     config_schema.atomic_save(cfg, CONFIG_PATH)
 
 
+def _try_save_config(cfg):
+    """Persist config from a request handler; on failure flash the reason and
+    return False so the caller can re-render/redirect instead of 500ing."""
+    try:
+        save_config(cfg)
+        return True
+    except Exception as e:
+        app.logger.exception("Could not save configuration")
+        flash(f"Could not save configuration: {e}", "error")
+        return False
+
+
 # ---------------------------------------------------------------------------
 # WiFi multi-network helpers
 # ---------------------------------------------------------------------------
@@ -159,15 +186,55 @@ def _ensure_secret_key():
         new_key = secrets.token_hex(32)
         webui["secret_key"] = new_key
         cfg["webui"] = webui
-        save_config(cfg)
-        app.logger.info("Auto-generated new secret key.")
+        try:
+            save_config(cfg)
+            app.logger.info("Auto-generated new secret key.")
+        except Exception as e:
+            # Keep serving with the in-memory key; sessions just won't survive
+            # a restart until the config becomes writable again.
+            app.logger.error("Could not persist new secret key: %s", e)
         return new_key
     return current
 
 def _setup_needed():
     """Return True if the guided first-start wizard should be shown."""
     cfg = load_config()
+    # A missing/corrupt config means the saved setup state (and password hash)
+    # is gone; the wizard is the recovery path, so re-engage it rather than
+    # leaving an open UI that pretends setup was done.
+    if config_schema.was_load_degraded():
+        return True
     return not cfg.get("setup_completed", False)
+
+# ---------------------------------------------------------------------------
+# Global error handler
+# ---------------------------------------------------------------------------
+
+@app.errorhandler(Exception)
+def _unhandled_error(e):
+    """Log the full traceback and render a friendly page instead of the Werkzeug
+    500. Debug stays off, so nothing internal leaks to the browser."""
+    from werkzeug.exceptions import HTTPException
+    if isinstance(e, HTTPException):
+        return e
+    app.logger.exception("Unhandled error on %s %s", request.method, request.path)
+    try:
+        return render_template("error.html"), 500
+    except Exception:
+        return "Something went wrong — see the Logs page.", 500
+
+@app.errorhandler(413)
+def _upload_too_large(e):
+    """_unhandled_error hands HTTPExceptions straight back, so an oversized POST
+    lands on Werkzeug's bare "Request Entity Too Large" page with no sidebar and
+    no way back. Refuse it the way every other refused action is refused: a flash
+    and a redirect to the page the user was on."""
+    app.logger.warning("Rejected oversized %s to %s (%s bytes)",
+                       request.method, request.path, request.content_length)
+    flash(f"Upload rejected: the request was larger than the "
+          f"{MAX_UPLOAD_BYTES // 1024} KB limit. An exported config.yaml is only "
+          "a few KB, so check you picked the right file.", "error")
+    return redirect(request.referrer or url_for("settings_general"))
 
 # ---------------------------------------------------------------------------
 # Routes
@@ -351,7 +418,8 @@ def setup():
             session["authenticated"] = True
 
         cfg["setup_completed"] = True
-        save_config(cfg)
+        if not _try_save_config(cfg):
+            return redirect(url_for("setup"))
 
         # If iPhone is connected, restart the backup service so it picks up
         # the newly-completed setup without requiring a re-plug.
@@ -459,8 +527,8 @@ def settings_general():
         for i in range(4):
             owner.append(request.form.get(f"owner_line_{i}", ""))
         cfg["owner_lines"] = owner
-        save_config(cfg)
-        flash("General settings saved.", "success")
+        if _try_save_config(cfg):
+            flash("General settings saved.", "success")
         return redirect(url_for("settings_general"))
     return render_template("settings_general.html", cfg=cfg)
 
@@ -509,8 +577,8 @@ def settings_datetime():
             servers = request.form.get("ntp_servers", "").strip().splitlines()
             ntp["servers"] = [s.strip() for s in servers if s.strip()]
             cfg["ntp"] = ntp
-            save_config(cfg)
-            flash("NTP settings saved.", "success")
+            if _try_save_config(cfg):
+                flash("NTP settings saved.", "success")
         elif action == "set_timezone":
             tz = request.form.get("timezone", "").strip()
             if tz:
@@ -580,7 +648,8 @@ def settings_wifi():
         wifi["ssid"] = networks[0]["ssid"] if networks else ""
         wifi["password"] = networks[0]["password"] if networks else ""
         cfg["wifi"] = wifi
-        save_config(cfg)
+        if not _try_save_config(cfg):
+            return redirect(url_for("settings_wifi"))
         if wifi["enabled"] and networks:
             ok, msg = _apply_wifi_networks(networks)
             flash(f"WiFi settings saved. {msg}" if ok
@@ -675,7 +744,8 @@ def settings_notifications():
         mq["events"] = mq_events
         notif["mqtt"] = mq
         cfg["notifications"] = notif
-        save_config(cfg)
+        if not _try_save_config(cfg):
+            return redirect(url_for("settings_notifications"))
         # Drop the cached auth header: the URL, the header name or the secret
         # itself may have just changed, and a stale cached value would keep
         # being sent (and rejected) until the next reboot.
@@ -765,7 +835,8 @@ def settings_wireguard():
             cred_enc = cfg.get("credential_encryption", {})
             cred_enc["passphrase_mode"] = request.form.get("passphrase_mode", "udid")
             cfg["credential_encryption"] = cred_enc
-            save_config(cfg)
+            if not _try_save_config(cfg):
+                return redirect(url_for("settings_wireguard"))
             # Apply (or clear) the full-tunnel routing right away if the VPN is
             # already up; otherwise it takes effect on the next connect.
             if wg_manager.is_interface_up(iface):
@@ -822,8 +893,8 @@ def settings_sync():
             sync["allowed_network"] = request.form.get("allowed_network", "any")
             sync["allowed_ssid"] = request.form.get("allowed_ssid", "").strip()
             cfg["sync"] = sync
-            save_config(cfg)
-            flash("Sync settings saved.", "success")
+            if _try_save_config(cfg):
+                flash("Sync settings saved.", "success")
         elif action == "upload_credentials":
             mode = cfg.get("credential_encryption", {}).get("passphrase_mode", "udid")
             pw = wg_crypto.get_iphone_serial() if mode == "udid" else request.form.get("master_password", "").strip()
@@ -898,6 +969,12 @@ def settings_sync():
             _cur = _read_backup_status() or {}
             if _cur.get("state") == "syncing":
                 flash("Sync is already in progress.", "error")
+            # Mutual exclusion, same check the dashboard button makes. backup-sync.py
+            # still refuses to run during a backup, but its guard no longer writes the
+            # status file (that write clobbered the backup's own state), so the
+            # launcher is now the only place the user can be told.
+            elif _backup_in_progress():
+                flash("A backup is in progress. Wait for it to finish (or use auto-sync).", "error")
             else:
                 # Nuke leftovers from a cancelled/crashed sync before relaunching
                 try:
@@ -909,12 +986,11 @@ def settings_sync():
                 except Exception:
                     pass
                 sync_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "backup-sync.py")
-                subprocess.Popen(
-                    [sys.executable, sync_script],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                    env={**os.environ, "IOSBACKUP_CONFIG": CONFIG_PATH},
-                )
-                flash("Sync started. Check the dashboard for progress.", "success")
+                try:
+                    _launch_sync_detached(sync_script)
+                    flash("Sync started. Check the dashboard for progress.", "success")
+                except Exception as e:
+                    flash(f"Failed to start sync: {e}", "error")
         return redirect(url_for("settings_sync"))
     mode = cfg.get("credential_encryption", {}).get("passphrase_mode", "udid")
     saved_cred = None
@@ -948,7 +1024,12 @@ def api_sync_decrypt():
     pw = wg_crypto.get_iphone_serial() if mode == "udid" else None
     if not pw:
         return jsonify({"error": "iPhone not connected"}), 400
-    dec = sync_crypto.decrypt_sync_config(passphrase=pw)
+    try:
+        dec = sync_crypto.decrypt_sync_config(passphrase=pw)
+    except Exception as e:
+        # A corrupt sync.enc must surface as a clean JSON error, not a 500.
+        app.logger.exception("Failed to decrypt sync credentials")
+        return jsonify({"error": f"Cannot decrypt credentials: {e}"}), 400
     if not dec:
         return jsonify({"error": "Cannot decrypt credentials"}), 400
     return jsonify({
@@ -1010,8 +1091,8 @@ def settings_webui():
         webui["bind_interfaces"] = bind if bind else ["all"]
         webui["secret_key"] = request.form.get("secret_key", webui.get("secret_key", ""))
         cfg["webui"] = webui
-        save_config(cfg)
-        flash("Web UI settings saved. Restart the service to apply binding changes.", "success")
+        if _try_save_config(cfg):
+            flash("Web UI settings saved. Restart the service to apply binding changes.", "success")
         return redirect(url_for("settings_webui"))
     interfaces = netutil.get_all_interfaces()
     return render_template("settings_webui.html", cfg=cfg, interfaces=interfaces)
@@ -1045,7 +1126,8 @@ def settings_password():
             auth = cfg.get("auth", {})
             auth["password_hash"] = _hash_password(new_pw)
             cfg["auth"] = auth
-            save_config(cfg)
+            if not _try_save_config(cfg):
+                return redirect(url_for("settings_password"))
             session["authenticated"] = True
             flash("Password updated successfully.", "success")
         elif action == "remove_password":
@@ -1057,8 +1139,8 @@ def settings_password():
             auth = cfg.get("auth", {})
             auth["password_hash"] = ""
             cfg["auth"] = auth
-            save_config(cfg)
-            flash("Password removed. Web UI is now open.", "success")
+            if _try_save_config(cfg):
+                flash("Password removed. Web UI is now open.", "success")
         return redirect(url_for("settings_password"))
     return render_template("settings_password.html", cfg=cfg, has_password=has_password)
 
@@ -1084,8 +1166,8 @@ def settings_devices():
         if action == "save_filter":
             df["enabled"] = request.form.get("filter_enabled") == "on"
             cfg["device_filter"] = df
-            save_config(cfg)
-            flash("Device filter settings saved.", "success")
+            if _try_save_config(cfg):
+                flash("Device filter settings saved.", "success")
         elif action == "add_connected":
             if not connected_udid:
                 flash("No iPhone connected.", "error")
@@ -1099,8 +1181,8 @@ def settings_devices():
                     allowed.append({"udid": connected_udid, "name": name})
                     df["allowed_devices"] = allowed
                     cfg["device_filter"] = df
-                    save_config(cfg)
-                    flash(f"Added device: {name} ({connected_udid})", "success")
+                    if _try_save_config(cfg):
+                        flash(f"Added device: {name} ({connected_udid})", "success")
         elif action == "add_manual":
             udid = request.form.get("manual_udid", "").strip()
             name = request.form.get("manual_name", "").strip() or "Manual entry"
@@ -1115,15 +1197,15 @@ def settings_devices():
                     allowed.append({"udid": udid, "name": name})
                     df["allowed_devices"] = allowed
                     cfg["device_filter"] = df
-                    save_config(cfg)
-                    flash(f"Added device: {name} ({udid})", "success")
+                    if _try_save_config(cfg):
+                        flash(f"Added device: {name} ({udid})", "success")
         elif action == "remove_device":
             rm_udid = request.form.get("remove_udid", "")
             allowed = df.get("allowed_devices", [])
             df["allowed_devices"] = [d for d in allowed if d.get("udid") != rm_udid]
             cfg["device_filter"] = df
-            save_config(cfg)
-            flash(f"Device {rm_udid} removed.", "success")
+            if _try_save_config(cfg):
+                flash(f"Device {rm_udid} removed.", "success")
         return redirect(url_for("settings_devices"))
     return render_template("settings_devices.html", cfg=cfg, df=df,
                            connected_udid=connected_udid, connected_name=connected_name)
@@ -1138,8 +1220,8 @@ def settings_backup():
         bk["auto_start"] = request.form.get("auto_start") == "on"
         bk["notify_on_rejected"] = request.form.get("notify_on_rejected") == "on"
         cfg["backup"] = bk
-        save_config(cfg)
-        flash("Backup settings saved.", "success")
+        if _try_save_config(cfg):
+            flash("Backup settings saved.", "success")
         return redirect(url_for("settings_backup"))
     return render_template("settings_backup.html", cfg=cfg)
 
@@ -1204,8 +1286,8 @@ def settings_encryption():
                     if r.returncode == 0 or "enabled" in out.lower():
                         enc["encryption_confirmed"] = True
                         cfg["backup_encryption"] = enc
-                        save_config(cfg)
-                        flash("Backup encryption enabled on device. The password was NOT stored - remember it for restores.", "success")
+                        if _try_save_config(cfg):
+                            flash("Backup encryption enabled on device. The password was NOT stored - remember it for restores.", "success")
                     else:
                         flash(f"Failed to enable encryption: {out[:200]}", "error")
                 except subprocess.TimeoutExpired:
@@ -1458,6 +1540,70 @@ def backups():
                            backup_dir=backup_dir, sync_enabled=sync_enabled)
 
 # --- Log Viewer ---
+# The Logs page is what the user opens once something has already gone wrong,
+# so it must not be the next thing to break: view_log used to f.read() the whole
+# file and hand it to Jinja to escape and to buffer, which costs several times
+# the file in RAM on a board that has 512 MB of it, and a single runaway run can
+# leave a very large log. A run log is read from both ends anyway - a backup's
+# gates ([CMD], mount, free space, encryption) are at the top and what it died
+# of is at the bottom - so the viewer shows both and the download link covers
+# the middle.
+LOG_VIEW_HEAD_LINES = int(os.getenv("IOSBACKUP_LOG_VIEW_HEAD_LINES", "40"))
+LOG_VIEW_TAIL_LINES = int(os.getenv("IOSBACKUP_LOG_VIEW_TAIL_LINES", "500"))
+# Hard ceiling on the read whatever the lines look like: a writer wedged
+# mid-line leaves a file with no newline in it at all, and a line-counting tail
+# on that one reads the whole thing - the exact failure being bounded here.
+LOG_VIEW_MAX_BYTES = int(os.getenv("IOSBACKUP_LOG_VIEW_MAX_BYTES",
+                                   str(256 * 1024)))
+
+def _decode_lines(raw):
+    # Read as bytes and decode with "replace": a window that opens or closes
+    # inside a multi-byte character then renders one U+FFFD instead of raising.
+    return raw.decode("utf-8", "replace").splitlines(True)
+
+def _read_bounded(path, head_lines, tail_lines, max_bytes):
+    """Read the head and the tail of a log without holding the file in memory.
+
+    Returns (text, truncated, size). When truncated, the two halves are
+    separated by one notice line naming what is not shown.
+    """
+    head_bytes = max(1, max_bytes // 8)           # the failure is at the end,
+    tail_bytes = max(1, max_bytes - head_bytes)   # so the tail gets the bulk
+    with open(path, "rb") as f:
+        # fstat on the handle rather than a separate getsize: the size then
+        # always describes the inode the bytes came from.
+        size = os.fstat(f.fileno()).st_size
+        if size <= max_bytes:
+            head, tail, windowed = _decode_lines(f.read()), [], False
+        else:
+            head = _decode_lines(f.read(head_bytes))
+            f.seek(size - tail_bytes)
+            tail, windowed = _decode_lines(f.read(tail_bytes)), True
+    if windowed:
+        # Drop the half lines the two windows end and start in, but only while a
+        # whole line survives: a log with no newline in it would otherwise come
+        # back empty, which is worse than a fragment.
+        if len(head) > 1 and not head[-1].endswith("\n"):
+            head.pop()
+        if len(tail) > 1:
+            tail.pop(0)
+    elif len(head) <= head_lines + tail_lines:
+        return "".join(head), False, size         # short enough to show whole
+    else:
+        # Under the byte ceiling but past what anyone reads on a phone: split
+        # the lines already in hand rather than returning the head alone.
+        whole = head
+        head, tail = whole[:head_lines], whole[-tail_lines:]
+    head = head[:head_lines]
+    tail = tail[-tail_lines:]
+    text = "".join(head)
+    if text and not text.endswith("\n"):
+        text += "\n"
+    text += ("\n[web UI] showing the first %d and the last %d lines of this "
+             "%s log; download it for what is in between\n\n"
+             % (len(head), len(tail), _human_size(size)))
+    return text + "".join(tail), True, size
+
 @app.route("/logs")
 @login_required
 def logs():
@@ -1492,15 +1638,37 @@ def view_log(filename):
     safe = os.path.basename(filename)
     path = os.path.join(LOG_DIR, safe)
     content = ""
+    truncated = False
+    size = 0
     if os.path.isfile(path):
         try:
-            with open(path, "r", errors="replace") as f:
-                content = f.read()
+            content, truncated, size = _read_bounded(
+                path, LOG_VIEW_HEAD_LINES, LOG_VIEW_TAIL_LINES,
+                LOG_VIEW_MAX_BYTES)
         except Exception as e:
             content = f"Error reading log: {e}"
     else:
         content = "Log file not found."
-    return render_template("log_view.html", filename=safe, content=content)
+    if request.args.get("raw"):
+        # What the live tail re-fetches: the same bounded text the page already
+        # shows, as plain text, so following a log costs one bounded read
+        # instead of a full template render and a DOM parse every two seconds.
+        return app.response_class(content, mimetype="text/plain")
+    return render_template("log_view.html", filename=safe, content=content,
+                           truncated=truncated, size=size)
+
+@app.route("/logs/<filename>/download")
+@login_required
+def download_log(filename):
+    """The whole file, for what the bounded view leaves out. send_from_directory
+    streams it in 8 KB chunks through the WSGI file wrapper, so the escape hatch
+    cannot reintroduce the buffering the bounded read exists to avoid."""
+    safe = os.path.basename(filename)
+    if not os.path.isfile(os.path.join(LOG_DIR, safe)):
+        flash(f"Log file not found: {safe}", "error")
+        return redirect(url_for("logs"))
+    return send_from_directory(LOG_DIR, safe, as_attachment=True,
+                               mimetype="text/plain")
 
 @app.route("/logs/<filename>/delete", methods=["POST"])
 @login_required
@@ -1523,6 +1691,10 @@ def purge_logs():
     count = 0
     if os.path.isdir(LOG_DIR):
         for f in glob.glob(os.path.join(LOG_DIR, "*.log")):
+            # The running process holds webui.log open; deleting it would
+            # silently kill web UI logging until the next restart.
+            if os.path.basename(f) == "webui.log":
+                continue
             try:
                 os.remove(f)
                 count += 1
@@ -1530,6 +1702,154 @@ def purge_logs():
                 pass
     flash(f"Purged {count} log file(s).", "success")
     return redirect(url_for("logs"))
+
+# --- System journal ---
+# Both long-running units log with StandardOutput=journal, and the hardening
+# pass put much of its diagnostics only there: "[WARN] display init failed",
+# "[DRAW] display still unavailable", "[WATCHDOG] ...", "[FATAL] main loop
+# stalled". Without this page that whole class of daemon-level degradation is
+# reachable only over SSH, on a device whose premise is that the web UI is the
+# only interface anyone needs. webui.service runs as root, so journalctl sees
+# every unit.
+JOURNAL_ALL = "*"          # not a legal unit name, so it cannot collide with one
+JOURNAL_UNITS = [
+    ("iosbackupmachine",   "Display daemon (iosbackupmachine)"),
+    ("webui",              "Web UI (webui)"),
+    ("backup-sync",        "Sync, started by the button (backup-sync)"),
+    ("iosbackup-web-sync", "Sync, started from the web UI (iosbackup-web-sync)"),
+    ("iosbackup-update",   "Update (iosbackup-update)"),
+    ("usbmuxd",            "iPhone USB daemon (usbmuxd)"),
+    ("pisugar-server",     "Battery (pisugar-server)"),
+    (JOURNAL_ALL,          "Everything (all units and the kernel)"),
+]
+JOURNAL_LINE_CHOICES = [200, 500, 1000, 2000]
+JOURNAL_DEFAULT_LINES = 500
+# journalctl walks backwards from the tail; for a unit that logs rarely that
+# walk can cross the whole journal. Flask's server is threaded, so an overrun
+# costs one worker thread rather than the UI, but it still has to end by itself.
+JOURNAL_TIMEOUT = 10
+# Reading the journal header is cheap, so it gets the same 5s the other probes
+# in this file use.
+JOURNAL_BOOTS_TIMEOUT = 5
+# One journal line has no length bound (a traceback, an rsync path). Cap what is
+# handed to Jinja so opening this page during a flood is not what finally takes
+# the web UI out.
+JOURNAL_MAX_CHARS = 256 * 1024
+# The daemons' own vocabulary, not journalctl's. These lines are plain print()
+# to stdout, which systemd records at SyslogLevel= (info) unless the text starts
+# with a "<N>" prefix - none do - so "journalctl -p warning" would look correct
+# and return nothing. Match on what is actually written instead.
+JOURNAL_MARKERS = ("[FATAL]", "[ERROR]", "[WATCHDOG]", "[WARN]", "[DRAW]",
+                   "[WG]", "Traceback")
+
+
+def _read_journal(unit, lines):
+    """Tail one unit's journal. Returns (text, ok).
+
+    Never raises. This is the page a user opens when something is already
+    broken, so a missing, wedged or unhappy journalctl has to render as a
+    sentence that explains itself, not as the generic 500 page.
+    """
+    if shutil.which("journalctl") is None:
+        return ("journalctl is not available on this system, so the journal "
+                "cannot be shown. The log files on the Logs page are unaffected.",
+                False)
+    argv = ["journalctl", "-n", str(lines), "--no-pager", "--output=short-iso"]
+    if unit != JOURNAL_ALL:
+        argv += ["-u", unit]
+    try:
+        r = subprocess.run(argv, capture_output=True, text=True,
+                           errors="replace", timeout=JOURNAL_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return (f"journalctl did not answer within {JOURNAL_TIMEOUT}s; journald "
+                f"may be wedged. Try a smaller line count, or read it over SSH "
+                f"with: {' '.join(argv)}", False)
+    except Exception as e:
+        return (f"Could not run journalctl: {e}", False)
+    if r.returncode != 0:
+        return ((r.stderr or r.stdout or "").strip()
+                or f"journalctl exited {r.returncode}", False)
+    out = r.stdout
+    if len(out) > JOURNAL_MAX_CHARS:
+        # Keep the tail: the newest lines are the ones explaining the failure.
+        out = (f"[... truncated to the last {JOURNAL_MAX_CHARS // 1024} KB ...]\n"
+               + out[-JOURNAL_MAX_CHARS:])
+    return (out.strip() or "No journal entries for this unit.", True)
+
+
+def _journal_boots():
+    """How many boots the journal still holds, or None if it cannot be asked.
+
+    Nothing in this repo configures journald storage and /var/log is the zram
+    RAM disk (see logutil's docstring), so on a stock image the journal is
+    probably current-boot-only. That is worth measuring rather than asserting: a
+    page that silently shows nothing from before the last restart is worse than
+    one that says so.
+    """
+    # Guarded here too, not only in _read_journal: opening this page must not
+    # fork anything at all on a system that has no journalctl.
+    if shutil.which("journalctl") is None:
+        return None
+    try:
+        r = subprocess.run(["journalctl", "--list-boots", "--no-pager"],
+                           capture_output=True, text=True, errors="replace",
+                           timeout=JOURNAL_BOOTS_TIMEOUT)
+    except Exception:
+        return None
+    if r.returncode != 0:
+        return None
+    n = 0
+    for line in r.stdout.splitlines():
+        # systemd >= 254 prints a table header ("IDX BOOT ID ..."); older
+        # versions print the boot offset alone. Both start a data row with that
+        # integer offset, so count those and let any header fall out. Parsing
+        # beats passing --no-legend, which an older journalctl would reject as
+        # an unknown option and exit non-zero on.
+        head = line.split()[:1]
+        if head:
+            try:
+                int(head[0])
+                n += 1
+            except ValueError:
+                pass
+    return n or None
+
+
+@app.route("/logs/journal")
+@login_required
+def journal_log():
+    # The unit is looked up in the table, never passed through: a hand-edited
+    # ?unit= starting with "-" would land in journalctl's argv as an option, and
+    # an unknown option is a non-zero exit with nothing useful on the page.
+    units = [u for u, _ in JOURNAL_UNITS]
+    unit = request.args.get("unit") or units[0]
+    if unit not in units:
+        unit = units[0]
+    try:
+        lines = int(request.args.get("lines", JOURNAL_DEFAULT_LINES))
+    except (TypeError, ValueError):
+        lines = JOURNAL_DEFAULT_LINES
+    if lines not in JOURNAL_LINE_CHOICES:
+        # Snap rather than clamp: the selector and the output must agree, and a
+        # bookmarked ?lines=100000 must not be a way to ask for the whole journal.
+        lines = JOURNAL_DEFAULT_LINES
+    content, ok = _read_journal(unit, lines)
+    problems = request.args.get("problems") == "1"
+    if ok and problems:
+        # Filter what was already read; never a second journalctl.
+        kept = [ln for ln in content.splitlines()
+                if any(m in ln for m in JOURNAL_MARKERS)]
+        content = "\n".join(kept) or (
+            "Nothing in this window matched " + " ".join(JOURNAL_MARKERS) + ".\n\n"
+            "That is not the same as \"no problems\". These markers are the two "
+            "daemons\' own vocabulary; a unit that reports trouble some other way "
+            "(werkzeug, usbmuxd, the kernel) will not match. Turn the filter off "
+            "to read the window in full.")
+    return render_template("journal_view.html", journal_units=JOURNAL_UNITS,
+                           unit=unit, lines=lines,
+                           line_choices=JOURNAL_LINE_CHOICES,
+                           problems=problems, boots=_journal_boots(),
+                           content=content, ok=ok)
 
 # --- System Update ---
 REPO_DIR = os.getenv("IOSBACKUP_REPO", "/root/ios-backup-machine")
@@ -1609,6 +1929,30 @@ def _update_launch_command(script, log_file, have_systemd_run=None):
     argv += ["bash", "-c", inner]
     return argv
 
+
+def _launch_sync_detached(sync_script):
+    """Launch backup-sync.py detached from webui.service.
+
+    A plain Popen child sits in webui.service's cgroup, so a webui restart
+    (e.g. after a settings change or an update) SIGTERMs the rsync mid-run —
+    the same failure mode the updater had. systemd-run puts the sync in its own
+    transient unit; without systemd we fall back to cutting the session tie so
+    at least a SIGHUP can't reach it.
+    """
+    env = {**os.environ, "IOSBACKUP_CONFIG": CONFIG_PATH}
+    if shutil.which("systemd-run"):
+        argv = ["systemd-run", "--unit=iosbackup-web-sync", "--collect",
+                f"--setenv=IOSBACKUP_CONFIG={CONFIG_PATH}",
+                sys.executable, sync_script]
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=30, env=env)
+        if r.returncode == 0:
+            return
+        app.logger.warning("systemd-run sync launch failed (%s); falling back to Popen",
+                           (r.stderr or r.stdout or "").strip())
+    subprocess.Popen([sys.executable, sync_script],
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                     env=env, start_new_session=True)
+
 @app.route("/update", methods=["GET", "POST"])
 @login_required
 def system_update():
@@ -1662,12 +2006,26 @@ def system_update():
             # Run update.sh detached — the installer restarts the web UI and
             # then reboots the device, so we can't wait for it to finish.
             update_script = os.path.join(REPO_DIR, "update.sh")
+            # update.sh stops every service, and iosbackupmachine.service's
+            # KillMode=mixed reaps idevicebackup2 with it — the same destruction
+            # as a reboot, so the same refusal. Ahead of _mark_updating() so a
+            # refused update never strands "Updating" on the e-ink.
+            busy = _busy_with()
+            if busy and not _confirmed():
+                app.logger.info("Refused update: %s in progress", busy)
+                flash(_BUSY_REFUSAL[busy], "error")
+                # A redirect rather than the fall-through render so base.html
+                # picks the offer up from ?confirm=. Content-identical: the
+                # update branch never sets remote_version or recent_commits.
+                return redirect(url_for("system_update", confirm="update"))
             if not os.path.isfile(update_script):
                 flash("update.sh not found in repo directory.", "error")
             else:
                 log_file = os.path.join(LOG_DIR, "update.log")
                 try:
                     os.makedirs(LOG_DIR, exist_ok=True)
+                    if busy:
+                        _quiesce_for_destructive(busy)
                     # Paint the e-ink notice before anything is stopped, so the
                     # panel is already showing "Updating" when the daemon dies.
                     _mark_updating()
@@ -1750,13 +2108,21 @@ def _iso_from_mtime(ts):
 
 
 def _last_backup_info():
-    """Current backup state + newest backup folder time (best-effort)."""
+    """Current backup state + newest backup folder time (best-effort), plus the
+    daemon's durable record of the last SUCCESSFUL backup and whether it has gone
+    stale. Folder mtimes report the last write — an interrupted run bumps them
+    too — so they cannot answer "is this device still backing up".
+    """
     st = _read_backup_status() or {}
     info = {
         "state": st.get("state"),
         "timestamp": st.get("timestamp"),
         "completed_at": st.get("completed_at"),
         "last_backup_time": None,
+        "last_success": None,
+        "last_success_ts": None,
+        "stale": False,
+        "age_seconds": None,
     }
     try:
         bd = load_config().get("backup_dir", "/media/iosbackup/")
@@ -1769,6 +2135,22 @@ def _last_backup_info():
                         latest = m
         if latest:
             info["last_backup_time"] = _iso_from_mtime(latest)
+    except Exception:
+        pass
+    # Its own try: a missing or corrupt record must degrade to nulls, never turn
+    # /api/health (the surface an external poller watches) into a 500.
+    try:
+        with open(os.path.join(LOG_DIR, "last_backup.json"), "r") as f:
+            rec = json.load(f)
+        ts = rec.get("completed_at") if isinstance(rec, dict) else None
+        if isinstance(ts, (int, float)) and not isinstance(ts, bool) and ts > 0:
+            age = time.time() - ts
+            info["last_success_ts"] = ts
+            info["last_success"] = _iso_from_mtime(ts)
+            info["age_seconds"] = int(max(0.0, age))
+            thr = load_config().get("backup", {}).get("stale_after_sec", 604800)
+            thr = int(thr) if isinstance(thr, int) and not isinstance(thr, bool) else 604800
+            info["stale"] = bool(thr > 0 and age >= thr)
     except Exception:
         pass
     return info
@@ -1830,6 +2212,12 @@ def api_health():
         status = "warning"; warnings.append("no internet")
     if backup.get("state") == "error" and status != "error":
         status = "warning"; warnings.append("last backup error")
+    # The pull half of the quiet-device alert: a poller catches both "up but
+    # quiet" here and "unreachable" from the poll failing, which together cover
+    # the case a push notification from the device itself never can.
+    if backup.get("stale") and status != "error":
+        days = int((backup.get("age_seconds") or 0) // 86400)
+        status = "warning"; warnings.append(f"no backup in {days} days")
 
     return jsonify({
         "status": status,
@@ -1887,6 +2275,33 @@ def api_backup_status():
     status = _read_backup_status()
     return jsonify(status or {"state": "idle"})
 
+def _cancel_sync_cleanly():
+    """Kill any running rsync + backup-sync.py so a stuck/stalled sync stops
+    immediately. Shared with the destructive actions, which cancel a sync this
+    way before they take the device down."""
+    # SIGKILL both — SIGTERM on the python process can leave it in the proc
+    # table long enough that the very next "Sync Now" gets blocked by its
+    # own another_sync_running() guard.
+    subprocess.run(["pkill", "-9", "-f", "/usr/bin/rsync"],
+                   capture_output=True, timeout=5)
+    subprocess.run(["pkill", "-9", "-f", "backup-sync.py"],
+                   capture_output=True, timeout=5)
+    time.sleep(0.5)  # give the kernel a moment to reap
+    # Mark the sync as cancelled so the dashboard / e-ink reflect it.
+    try:
+        os.makedirs(RUNTIME_DIR, exist_ok=True)
+        from datetime import datetime as _dt
+        data = {"state": "sync_error",
+                "message": "Cancelled by user.",
+                "timestamp": _dt.now().isoformat()}
+        tmp = os.path.join(RUNTIME_DIR, "backup_status.json.tmp")
+        with open(tmp, "w") as f:
+            json.dump(data, f)
+        os.replace(tmp, os.path.join(RUNTIME_DIR, "backup_status.json"))
+    except Exception:
+        pass
+
+
 @app.route("/sync/cancel", methods=["POST"])
 @login_required
 def sync_cancel():
@@ -1896,27 +2311,7 @@ def sync_cancel():
         flash("No sync is running.", "error")
         return redirect(request.referrer or url_for("index"))
     try:
-        # SIGKILL both — SIGTERM on the python process can leave it in the proc
-        # table long enough that the very next "Sync Now" gets blocked by its
-        # own another_sync_running() guard.
-        subprocess.run(["pkill", "-9", "-f", "/usr/bin/rsync"],
-                       capture_output=True, timeout=5)
-        subprocess.run(["pkill", "-9", "-f", "backup-sync.py"],
-                       capture_output=True, timeout=5)
-        time.sleep(0.5)  # give the kernel a moment to reap
-        # Mark the sync as cancelled so the dashboard / e-ink reflect it.
-        try:
-            os.makedirs(RUNTIME_DIR, exist_ok=True)
-            from datetime import datetime as _dt
-            data = {"state": "sync_error",
-                    "message": "Cancelled by user.",
-                    "timestamp": _dt.now().isoformat()}
-            tmp = os.path.join(RUNTIME_DIR, "backup_status.json.tmp")
-            with open(tmp, "w") as f:
-                json.dump(data, f)
-            os.replace(tmp, os.path.join(RUNTIME_DIR, "backup_status.json"))
-        except Exception:
-            pass
+        _cancel_sync_cleanly()
         flash("Sync cancelled.", "success")
     except Exception as e:
         flash(f"Failed to cancel sync: {e}", "error")
@@ -1954,11 +2349,7 @@ def sync_start():
     except Exception:
         pass
     try:
-        subprocess.Popen(
-            [sys.executable, sync_script],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            env={**os.environ, "IOSBACKUP_CONFIG": CONFIG_PATH},
-        )
+        _launch_sync_detached(sync_script)
         flash("Sync started. Watch the dashboard or live log for progress.", "success")
     except Exception as e:
         flash(f"Failed to start sync: {e}", "error")
@@ -1983,6 +2374,8 @@ def api_backup_sizes():
 def api_export_config():
     """Download config.yaml as a file."""
     from flask import send_file
+    if not os.path.isfile(CONFIG_PATH):
+        return jsonify({"error": "No config file on disk to export."}), 404
     return send_file(CONFIG_PATH, as_attachment=True, download_name="config.yaml",
                      mimetype="text/yaml")
 
@@ -2003,9 +2396,23 @@ def api_import_config():
             return redirect(url_for("settings_general"))
         # Migrate + default-fill the imported config, then save atomically so a
         # bad upload or power loss can't leave a half-written config.yaml.
-        cfg = config_schema.apply_defaults(config_schema.migrate(cfg))
+        # Collect what the merge had to correct: apply_defaults silently swaps a
+        # wrong-typed value for the default, and we save the corrected tree — so
+        # the next load is clean, the degraded-config banner never fires, and the
+        # user would never learn which of their settings the import dropped.
+        warnings = []
+        cfg = config_schema.apply_defaults(config_schema.migrate(cfg), warnings)
         save_config(cfg)
         flash("Config imported. Restart services to apply.", "success")
+        if warnings:
+            app.logger.warning("Config import reset %d invalid value(s): %s",
+                               len(warnings), "; ".join(warnings))
+            for w in warnings[:IMPORT_WARNING_LIMIT]:
+                flash(f"Imported config: {w}", "warning")
+            extra = len(warnings) - IMPORT_WARNING_LIMIT
+            if extra > 0:
+                flash(f"Imported config: {extra} more invalid value(s) were reset "
+                      "to defaults; the full list is in webui.log.", "warning")
     except Exception as e:
         flash(f"Import failed: {e}", "error")
     return redirect(url_for("settings_general"))
@@ -2024,8 +2431,11 @@ def _backup_in_progress():
     if (_read_backup_status() or {}).get("state") in ("backing_up", "connected"):
         return True
     try:
+        # Timeout: this runs inside a request, so a wedged pgrep would hold a
+        # worker open. Failing open here is deliberate — backup-sync.py's own
+        # guard fails closed, so the worst case is a launch that then refuses.
         return subprocess.run(["pgrep", "-f", "idevicebackup2"],
-                              capture_output=True).returncode == 0
+                              capture_output=True, timeout=5).returncode == 0
     except Exception:
         return False
 
@@ -2055,35 +2465,151 @@ def api_start_backup():
         flash(f"Error: {e}", "error")
     return redirect(url_for("index"))
 
+def _stop_backup_cleanly():
+    """Signal the always-on display daemon to abort the current backup (it owns
+    the e-ink and renders the interrupted screen) instead of stopping its
+    service. Shared with the destructive actions, which stop a backup this way
+    before they take the device down."""
+    os.makedirs(RUNTIME_DIR, exist_ok=True)
+    open(os.path.join(RUNTIME_DIR, "stop_requested"), "w").close()
+    subprocess.run(["pkill", "-f", "idevicebackup2"],
+                   capture_output=True, timeout=5)
+    # Reflect the stop on the dashboard immediately (atomic write).
+    try:
+        status_file = os.path.join(RUNTIME_DIR, "backup_status.json")
+        tmp = status_file + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump({"state": "interrupted", "reason": "Stopped from web UI",
+                       "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S")}, f)
+        os.replace(tmp, status_file)
+    except Exception:
+        pass
+
+
 @app.route("/api/stop-backup", methods=["POST"])
 @login_required
 def api_stop_backup():
     """Abort the current backup. Signals the always-on display daemon (which owns
     the e-ink and renders the interrupted screen) instead of stopping its service."""
     try:
-        os.makedirs(RUNTIME_DIR, exist_ok=True)
-        open(os.path.join(RUNTIME_DIR, "stop_requested"), "w").close()
-        subprocess.run(["pkill", "-f", "idevicebackup2"],
-                       capture_output=True, timeout=5)
-        # Reflect the stop on the dashboard immediately (atomic write).
-        try:
-            status_file = os.path.join(RUNTIME_DIR, "backup_status.json")
-            tmp = status_file + ".tmp"
-            with open(tmp, "w") as f:
-                json.dump({"state": "interrupted", "reason": "Stopped from web UI",
-                           "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S")}, f)
-            os.replace(tmp, status_file)
-        except Exception:
-            pass
+        _stop_backup_cleanly()
         flash("Backup stopped.", "success")
     except Exception as e:
         flash(f"Error: {e}", "error")
     return redirect(url_for("index"))
 
+# ---------------------------------------------------------------------------
+# Destructive actions
+# ---------------------------------------------------------------------------
+# Reboot, shutdown and update are the three actions that end in-flight work: the
+# first two cut the power out from under idevicebackup2, and update.sh stops
+# every service — iosbackupmachine.service's KillMode=mixed then reaps the
+# idevicebackup2 child with it. A backup killed that way leaves a half-copied
+# snapshot the next run has to redo, and no [INTERRUPT] line in the run log to
+# say why. The harmless actions already refuse while the other one runs; these
+# three did not, so one mistimed click threw the work away silently.
+#
+# Refuse once, then offer an explicit override — never a hard block. The owner
+# must always be able to power the device off from the web UI, and
+# _backup_in_progress() deliberately fails open precisely because a wedged pgrep
+# must not lock them out. The override is carried by the ?confirm= argument the
+# refusal redirects with, not by server-side state: it is scoped to the page the
+# user lands on, disappears the moment they navigate anywhere else, and there is
+# nothing to expire, leak between browsers, or clean up after a crash.
+_BUSY_REFUSAL = {
+    "backup": "A backup is in progress. Stop it first with Stop Backup on the "
+              "dashboard, or use the button below to reboot, shut down or "
+              "update anyway.",
+    "sync": "A sync is in progress. Stop it first with Cancel Sync on the "
+            "dashboard, or use the button below to reboot, shut down or "
+            "update anyway.",
+}
+
+_CONFIRM_ACTIONS = {
+    "reboot":   {"endpoint": "api_reboot",    "label": "Reboot anyway",
+                 "fields": {}},
+    "shutdown": {"endpoint": "api_shutdown",  "label": "Shut down anyway",
+                 "fields": {}},
+    "update":   {"endpoint": "system_update", "label": "Update anyway",
+                 "fields": {"action": "update"}},
+}
+
+
+def _busy_with():
+    """'backup', 'sync' or None — the in-flight work a destructive action would
+    end. Sync is checked first: a leftover idevicebackup2 still matches
+    _backup_in_progress()'s pgrep during a sync, and naming the wrong job sends
+    the user to a button that cannot help. Fails open like the probes it wraps."""
+    try:
+        if (_read_backup_status() or {}).get("state") == "syncing":
+            return "sync"
+        if _backup_in_progress():
+            return "backup"
+    except Exception:
+        return None
+    return None
+
+
+def _confirmed():
+    """True if this request is the second, explicit press."""
+    return request.form.get("confirm") == "1"
+
+
+def _pending_confirm():
+    """The "do it anyway" offer for base.html, or None. Runs on every render,
+    including the 500 page, so it never raises."""
+    try:
+        action = request.args.get("confirm")
+        spec = _CONFIRM_ACTIONS.get(action)
+        return dict(spec, action=action) if spec else None
+    except Exception:
+        return None
+
+
+# 40 x 0.25s. Bounded by iterations rather than wall clock, so a test that stubs
+# time.sleep finishes instantly instead of spinning for ten seconds.
+_QUIESCE_POLLS = 40
+
+
+def _quiesce_for_destructive(busy):
+    """Stop in-flight work the sanctioned way before taking the device down.
+
+    Left to systemd, the daemon's SIGTERM handler paints the owner screen and
+    os._exit()s without running its interrupted flow, so the per-run backup log
+    on the rootfs — the one that survives the reboot — just stops mid-line, with
+    no [INTERRUPT] entry and no recorded reason. Dropping the stop sentinel first
+    makes the daemon take that flow and write the line. Best-effort and bounded
+    throughout: a stop that fails or drags must never leave the owner unable to
+    power the device off."""
+    try:
+        if busy == "sync":
+            _cancel_sync_cleanly()
+            return
+        _stop_backup_cleanly()
+        # The daemon only clears the sentinel once idevicebackup2 has exited, so
+        # wait for it to go rather than racing that log write against the
+        # shutdown. A dead or wedged daemon just burns the budget and we proceed.
+        stop_file = os.path.join(RUNTIME_DIR, "stop_requested")
+        for _ in range(_QUIESCE_POLLS):
+            if not os.path.exists(stop_file):
+                break
+            time.sleep(0.25)
+    except Exception as e:
+        app.logger.warning("Could not stop in-flight work cleanly: %s", e)
+
+
 @app.route("/api/reboot", methods=["POST"])
 @login_required
 def api_reboot():
-    """Reboot the device."""
+    """Reboot the device. Refuses once while a backup or sync is running, then
+    offers an explicit override that stops it cleanly first."""
+    busy = _busy_with()
+    if busy and not _confirmed():
+        app.logger.info("Refused reboot: %s in progress", busy)
+        flash(_BUSY_REFUSAL[busy], "error")
+        return redirect(url_for("index", confirm="reboot"))
+    if busy:
+        _quiesce_for_destructive(busy)
     flash("Rebooting... Refresh the page in about a minute.", "success")
     subprocess.Popen(["shutdown", "-r", "+0"], start_new_session=True)
     return redirect(url_for("index"))
@@ -2091,7 +2617,15 @@ def api_reboot():
 @app.route("/api/shutdown", methods=["POST"])
 @login_required
 def api_shutdown():
-    """Shut down the device."""
+    """Shut down the device. Refuses once while a backup or sync is running, then
+    offers an explicit override that stops it cleanly first."""
+    busy = _busy_with()
+    if busy and not _confirmed():
+        app.logger.info("Refused shutdown: %s in progress", busy)
+        flash(_BUSY_REFUSAL[busy], "error")
+        return redirect(url_for("index", confirm="shutdown"))
+    if busy:
+        _quiesce_for_destructive(busy)
     flash("Shutting down...", "success")
     subprocess.Popen(["shutdown", "-h", "+0"], start_new_session=True)
     return redirect(url_for("index"))

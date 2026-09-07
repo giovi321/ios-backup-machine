@@ -5,7 +5,10 @@ Requires=pisugar-server.service
 
 [Service]
 Type=oneshot
+ExecStartPre=/bin/mkdir -p /var/lib/iosbackupmachine
 ExecStart=/bin/sh -c 'echo "rtc_rtc2pi" | nc -q 1 127.0.0.1 8423'
+StandardOutput=append:/var/lib/iosbackupmachine/autostart.log
+StandardError=append:/var/lib/iosbackupmachine/autostart.log
 
 [Install]
 WantedBy=multi-user.target

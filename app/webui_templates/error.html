@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Error - iOS Backup Machine{% endblock %}
+{% block content %}
+<h1>Something went wrong</h1>
+<p class="subtitle">An unexpected error occurred while handling your request.</p>
+<div class="card">
+    <p>The error has been logged. See the <a href="{{ url_for('logs') }}">Logs page</a> (webui.log) for details.</p>
+    <div class="btn-group">
+        <a class="btn btn-primary" href="{{ url_for('index') }}">Back to Dashboard</a>
+    </div>
+</div>
+{% endblock %}

@@ -5,6 +5,9 @@ netutil.py - Shared network utilities for iOS Backup Machine.
 Provides IP detection for WiFi and USB iPhone hotspot interfaces.
 """
 import subprocess, re, socket
+import logging
+
+log = logging.getLogger(__name__)
 
 # Common interface name patterns
 WIFI_IFACES = ["wlan0", "wlan1"]
@@ -25,8 +28,10 @@ def get_all_interfaces():
                 m = re.search(r"inet\s+(\d+\.\d+\.\d+\.\d+)", line)
                 if m:
                     result.setdefault(iface, []).append(m.group(1))
-    except Exception:
-        pass
+    except Exception as e:
+        # Foundational probe — most getters below read through this, so one
+        # failure blinds them all; worth a warning rather than silence.
+        log.warning("could not list interfaces (`ip addr show` failed): %s", e)
     return result
 
 def get_wifi_ip():
@@ -53,8 +58,8 @@ def _wireless_iface():
     try:
         for path in sorted(glob.glob("/sys/class/net/*/wireless")):
             return path.split("/")[-2]
-    except Exception:
-        pass
+    except Exception as e:
+        log.debug("could not scan sysfs for a wireless interface: %s", e)
     return None
 
 def get_wifi_ssid():
@@ -69,8 +74,8 @@ def get_wifi_ssid():
         ).stdout.strip()
         if ssid:
             return ssid
-    except Exception:
-        pass
+    except Exception as e:
+        log.debug("iwgetid failed: %s", e)
 
     iface = _wireless_iface()
     if not iface:
@@ -86,8 +91,8 @@ def get_wifi_ssid():
                 ssid = line[len("SSID:"):].strip()
                 if ssid:
                     return ssid
-    except Exception:
-        pass
+    except Exception as e:
+        log.debug("`iw dev %s link` failed: %s", iface, e)
 
     try:
         out = subprocess.run(
@@ -98,8 +103,8 @@ def get_wifi_ssid():
                 ssid = line[len("ssid="):].strip()
                 if ssid:
                     return ssid
-    except Exception:
-        pass
+    except Exception as e:
+        log.debug("`wpa_cli -i %s status` failed: %s", iface, e)
     return None
 
 def get_wireguard_ip(iface="wg0"):
@@ -158,6 +163,7 @@ def have_connectivity(timeout=4):
             s = socket.create_connection((host, 53), timeout=timeout)
             s.close()
             return True
-        except OSError:
+        except OSError as e:
+            log.debug("connectivity probe to %s failed: %s", host, e)
             continue
     return False

@@ -20,6 +20,15 @@
 </div>
 {% endif %}
 
+<div class="card">
+    <h2>System Journal</h2>
+    <p style="font-size:13px; color:var(--text-muted); margin-bottom:12px;">
+        Display-daemon and web UI diagnostics - panel failures, watchdog trips, a
+        stalled main loop - go to the systemd journal, not to the files below.
+    </p>
+    <a href="{{ url_for('journal_log') }}" class="btn btn-primary btn-sm">View System Journal</a>
+</div>
+
 {% if log_files %}
 <div class="card">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:8px;">

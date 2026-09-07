@@ -53,9 +53,9 @@ def _parse_value(reply, key):
     return None
 
 
-def get_battery_percent():
+def get_battery_percent(timeout=5):
     """Return battery charge as a float 0..100, or None if unreadable."""
-    val = _parse_value(_query("get battery"), "battery")
+    val = _parse_value(_query("get battery", timeout=timeout), "battery")
     if val is None:
         return None
     try:
@@ -64,17 +64,24 @@ def get_battery_percent():
         return None
 
 
-def is_charging():
+def is_charging(timeout=5):
     """Return True/False if the charging state is known, else None."""
-    val = _parse_value(_query("get battery_charging"), "battery_charging")
+    val = _parse_value(_query("get battery_charging", timeout=timeout), "battery_charging")
     if val is None:
         return None
     return val.strip().lower() in ("true", "1", "yes")
 
 
-def get_battery():
-    """Return ``{'percent': float|None, 'charging': bool|None}``."""
-    return {"percent": get_battery_percent(), "charging": is_charging()}
+def get_battery(timeout=5):
+    """Return ``{'percent': float|None, 'charging': bool|None}``.
+
+    ``timeout`` is exposed because this is TWO socket round trips: against a
+    PiSugar server that accepts the connection and never answers, the default
+    costs up to 20s. The backup's in-run health probe runs on the thread
+    pumping idevicebackup2's output, so it asks for a shorter one.
+    """
+    return {"percent": get_battery_percent(timeout=timeout),
+            "charging": is_charging(timeout=timeout)}
 
 
 def sync_allowed(threshold, battery=None):

@@ -27,7 +27,9 @@ StandardError=journal
 # (so the e-paper holds it after power-off); TimeoutStopSec covers the full refresh.
 Restart=on-failure
 RestartSec=5
-KillMode=process
+# mixed (not process): on stop, the control group is SIGTERMed after the main
+# process exits, so a running idevicebackup2 child can't be orphaned.
+KillMode=mixed
 KillSignal=SIGTERM
 TimeoutStopSec=20s
 

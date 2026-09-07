@@ -30,3 +30,24 @@ def test_sync_allowed_low_battery_refuses():
 def test_sync_allowed_above_threshold():
     ok, _ = power.sync_allowed(35, battery={"percent": 80, "charging": False})
     assert ok is True
+
+
+def test_the_battery_timeout_reaches_the_socket(monkeypatch):
+    # get_battery is TWO socket round trips, so on a PiSugar server that accepts
+    # and never answers the 5s default costs up to 20s. The backup's in-run health
+    # probe runs on the thread pumping idevicebackup2's output and asks for less.
+    seen = []
+    monkeypatch.setattr(power, "_query",
+                        lambda cmd, timeout=5: seen.append(timeout) or "battery: 50")
+    power.get_battery_percent(timeout=2)
+    power.is_charging(timeout=2)
+    power.get_battery(timeout=2)
+    assert seen == [2, 2, 2, 2]
+
+
+def test_the_default_call_shape_is_unchanged(monkeypatch):
+    seen = []
+    monkeypatch.setattr(power, "_query",
+                        lambda cmd, timeout=5: seen.append(timeout) or "battery: 50")
+    power.get_battery()
+    assert seen == [5, 5]

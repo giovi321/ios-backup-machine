@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block title %}System Journal - iOS Backup Machine{% endblock %}
+{% block content %}
+<h1>System Journal</h1>
+<p class="subtitle">Service output that never reaches a log file</p>
+
+<div class="card">
+    <form method="GET" action="{{ url_for('journal_log') }}" style="display:flex; align-items:flex-end; gap:12px; flex-wrap:wrap; margin:0;">
+        <div class="form-group" style="margin-bottom:0; flex:1 1 260px;">
+            <label for="unit">Unit</label>
+            <select name="unit" id="unit">
+                {% for value, label in journal_units %}
+                <option value="{{ value }}" {% if value == unit %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="form-group" style="margin-bottom:0; flex:0 0 120px;">
+            <label for="lines">Lines</label>
+            <select name="lines" id="lines">
+                {% for n in line_choices %}
+                <option value="{{ n }}" {% if n == lines %}selected{% endif %}>{{ n }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
+            <input type="checkbox" name="problems" value="1" {% if problems %}checked{% endif %} style="width:16px;height:16px;accent-color:var(--primary);">
+            Warnings only
+        </label>
+        <button type="submit" class="btn btn-primary btn-sm">Show</button>
+    </form>
+</div>
+
+<div style="display:flex; align-items:center; gap:16px; margin-bottom:24px; flex-wrap:wrap;">
+    <a href="{{ url_for('logs') }}" style="color:var(--primary); text-decoration:none; font-size:14px;">&larr; Back to logs</a>
+    <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
+        <input type="checkbox" id="auto-refresh" style="width:16px;height:16px;accent-color:var(--primary);">
+        Live tail (auto-refresh)
+    </label>
+</div>
+
+{% if not ok %}
+<div class="flash flash-warning">
+    The journal could not be read; the reason is below. The log files on the Logs page are unaffected.
+</div>
+{% endif %}
+
+<div class="card">
+    <pre id="log-content" style="
+        background: #1a1a1a;
+        color: #d0d0d0;
+        padding: 16px;
+        border-radius: 6px;
+        font-size: 12px;
+        font-family: 'Consolas', 'Monaco', monospace;
+        overflow-x: auto;
+        white-space: pre-wrap;
+        word-break: break-all;
+        max-height: 600px;
+        overflow-y: auto;
+    ">{{ content }}</pre>
+    <p style="font-size:12px; color:var(--text-muted); margin:12px 0 0;">
+        {% if boots == 1 %}
+        Only the current boot is in the journal, so nothing from before the last
+        restart is shown here. /var/log is a RAM disk on this device, so that is
+        the expected state.
+        {% elif boots %}
+        The journal holds {{ boots }} boots.
+        {% else %}
+        Could not determine how far back the journal goes.
+        {% endif %}
+        systemd owns this retention, not this app. If the web UI itself is down,
+        read the journal over SSH with journalctl.
+    </p>
+</div>
+
+<script>
+(function() {
+    var logEl = document.getElementById('log-content');
+    var checkbox = document.getElementById('auto-refresh');
+    var timer = null;
+    var busy = false;
+
+    logEl.scrollTop = logEl.scrollHeight;
+
+    // Slower than the file log viewer's 2s: every tick forks two journalctls on
+    // a board with one core to spare. The busy flag stops a slow journal from
+    // stacking requests behind each other. The search string is preserved so
+    // the selected unit, line count and filter survive a refresh.
+    function refreshLog() {
+        if (busy) return;
+        busy = true;
+        fetch(window.location.pathname + window.location.search, {cache: 'no-store'})
+            .then(function(r) { return r.text(); })
+            .then(function(html) {
+                var doc = new DOMParser().parseFromString(html, 'text/html');
+                var newPre = doc.getElementById('log-content');
+                if (newPre && logEl) {
+                    logEl.textContent = newPre.textContent;
+                    logEl.scrollTop = logEl.scrollHeight;
+                }
+            })
+            .catch(function() {})
+            .then(function() { busy = false; });
+    }
+
+    function startLive() {
+        logEl.scrollTop = logEl.scrollHeight;
+        timer = setInterval(refreshLog, 10000);
+    }
+
+    function stopLive() {
+        if (timer) clearInterval(timer);
+        timer = null;
+    }
+
+    checkbox.addEventListener('change', function() {
+        if (this.checked) {
+            startLive();
+        } else {
+            stopLive();
+        }
+    });
+})();
+</script>
+{% endblock %}

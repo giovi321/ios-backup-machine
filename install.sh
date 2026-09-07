@@ -83,6 +83,7 @@ ENABLE_SERVICES=(
     iosbackupmachine.service
     webui.service
     ntp-sync.service
+    ntp-sync.timer
     rtc-sync.service
     wg-autoconnect.service
 )
@@ -93,6 +94,7 @@ ALL_SERVICES=(
     owner-message.service
     shutdown-display.service
     ntp-sync.service
+    ntp-sync.timer
     rtc-sync.service
     last-backup.service
     unplug-notify.service
@@ -125,12 +127,61 @@ warn()    { echo -e "${YELLOW}  ⚠ $1${NC}"; }
 error()   { echo -e "${RED}  ✗ $1${NC}"; }
 detail()  { echo -e "    $1"; }
 
+SERVICES_STOPPED=0
+RECOVERY_DONE=0
+
+# Best-effort rollback: restore the newest backup into the install dir and
+# restart the two core services so the appliance is not left dead.
+recover_install() {
+    local newest
+    newest=$(ls -1dt "${BACKUP_ARCHIVE_DIR}"/*/ 2>/dev/null | head -n 1 || true)
+    if [ -n "${newest}" ]; then
+        warn "Restoring previous install from ${newest}..."
+        cp "${newest}"* "${INSTALL_DIR}/" 2>/dev/null || true
+        for d in webui_templates webui_static; do
+            if [ -d "${newest}${d}" ]; then
+                rm -rf "${INSTALL_DIR:?}/${d}" 2>/dev/null || true
+                cp -r "${newest}${d}" "${INSTALL_DIR}/${d}" 2>/dev/null || true
+            fi
+        done
+    else
+        warn "No backup found in ${BACKUP_ARCHIVE_DIR} - nothing to restore"
+    fi
+    systemctl restart webui.service 2>/dev/null || true
+    systemctl restart iosbackupmachine.service 2>/dev/null || true
+}
+
+print_recovery_instructions() {
+    error "Install aborted AFTER services were stopped. Recovery was attempted:"
+    error "  previous install restored from the newest backup (if one existed) and"
+    error "  webui.service + iosbackupmachine.service restarted."
+    error "Check: journalctl -u webui.service -u iosbackupmachine.service"
+    error "Fix the error above, then re-run: bash $0"
+}
+
 fail() {
     error "$1"
+    if [ "${SERVICES_STOPPED}" = "1" ] && [ "${RECOVERY_DONE}" = "0" ]; then
+        RECOVERY_DONE=1
+        recover_install
+        print_recovery_instructions
+    fi
     # Remove lock on failure
     rm -f "${LOCK_FILE}"
     exit 1
 }
+
+# Covers set -e aborts that bypass fail() (apt, pip, git clone, migration).
+on_error() {
+    local rc=$?
+    if [ "${SERVICES_STOPPED}" = "1" ] && [ "${RECOVERY_DONE}" = "0" ]; then
+        RECOVERY_DONE=1
+        error "Install failed unexpectedly (exit ${rc})."
+        recover_install
+        print_recovery_instructions
+    fi
+}
+trap on_error ERR
 
 cleanup() {
     rm -f "${LOCK_FILE}"
@@ -213,6 +264,7 @@ if [ -n "${STILL_RUNNING}" ]; then
 fi
 
 info "All services stopped"
+SERVICES_STOPPED=1
 
 # ---------------------------------------------------------------------------
 # Step: Backup current installation (upgrades only)
@@ -466,7 +518,7 @@ find "${INSTALL_DIR}" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null 
 # Copy webui directories from app/ (remove first to avoid cp -r nesting)
 for d in webui_templates webui_static; do
     if [ -d "${REPO_DIR}/app/${d}" ]; then
-        rm -rf "${INSTALL_DIR}/${d}"
+        rm -rf "${INSTALL_DIR:?}/${d}"
         cp -r "${REPO_DIR}/app/${d}" "${INSTALL_DIR}/${d}"
         info "Copied ${d}/"
     fi
@@ -494,7 +546,7 @@ done
 
 # Build list of service files from repo
 REPO_SERVICES=()
-for f in "${REPO_DIR}"/services/*.service; do
+for f in "${REPO_DIR}"/services/*.service "${REPO_DIR}"/services/*.timer; do
     [ -f "$f" ] || continue
     cp "$f" /etc/systemd/system/
     REPO_SERVICES+=("$(basename "$f")")
@@ -530,6 +582,22 @@ for svc in "${ENABLE_SERVICES[@]}"; do
         else
             warn "Could NOT enable ${svc} — it will not start at boot"
         fi
+        # Timers also need starting. The stop loop above stopped them and this
+        # loop only enables, so on an upgrade a new or changed timer would sit
+        # inactive until the next boot - and an upgrade only reboots when
+        # REBOOT_EPOCH bumped. Services are deliberately NOT started here: the
+        # oneshots would fire mid-install (wg-autoconnect can cut the network
+        # this script is running over) and the two long-running units are
+        # restarted further down.
+        case "${svc}" in
+            *.timer)
+                if systemctl start "${svc}" 2>/dev/null; then
+                    detail "Started ${svc}"
+                else
+                    warn "Could NOT start ${svc} — it will start at the next boot"
+                fi
+                ;;
+        esac
     else
         warn "Service file not found: ${svc}"
     fi
@@ -562,11 +630,17 @@ fi
 step "Prepare backup storage"
 
 mkdir -p "${BACKUP_DIR}"
-if [ ! -f "${BACKUP_DIR}/${MARKER_FILE}" ]; then
-    touch "${BACKUP_DIR}/${MARKER_FILE}"
-    info "Created ${BACKUP_DIR}/${MARKER_FILE}"
+if mountpoint -q "${BACKUP_DIR}"; then
+    if [ ! -f "${BACKUP_DIR}/${MARKER_FILE}" ]; then
+        touch "${BACKUP_DIR}/${MARKER_FILE}"
+        info "Created ${BACKUP_DIR}/${MARKER_FILE}"
+    else
+        info "Marker file already exists"
+    fi
 else
-    info "Marker file already exists"
+    warn "Backup storage is NOT mounted at ${BACKUP_DIR} - marker file NOT created"
+    warn "Backups would silently land on the rootfs. Mount the backup SD and"
+    warn "re-run install.sh (or: touch ${BACKUP_DIR}/${MARKER_FILE} once mounted)."
 fi
 
 mkdir -p "${LOG_DIR}" "${RUNTIME_DIR}"
@@ -640,7 +714,7 @@ fi
 if command -v nc &>/dev/null; then
     info "Syncing system clock to RTC..."
     # Wait for PiSugar server to be ready after restart
-    for i in 1 2 3 4 5; do
+    for _ in 1 2 3 4 5; do
         if echo "rtc_pi2rtc" | nc -q 1 127.0.0.1 8423 2>/dev/null; then
             info "RTC synced"
             break
@@ -653,11 +727,6 @@ if [ -f /etc/systemd/system/rtc-sync.service ]; then
     systemctl enable rtc-sync.service 2>/dev/null
     info "Enabled rtc-sync.service"
 fi
-
-# ---------------------------------------------------------------------------
-# Step: Write version file
-# ---------------------------------------------------------------------------
-echo "${REPO_VERSION}" > "${VERSION_FILE}"
 
 # ---------------------------------------------------------------------------
 # Post-install health check
@@ -705,14 +774,20 @@ fi
 
 if [ "${HEALTH_OK}" = true ]; then
     info "All health checks passed"
+    # Mark the install complete only when every health check passed; otherwise
+    # the next run sees the old version (or none) and treats this as unfinished.
+    echo "${REPO_VERSION}" > "${VERSION_FILE}"
 else
     warn "Some health checks failed - review the output above"
+    error "INSTALL INCOMPLETE: version file NOT written."
+    error "Fix the errors above and re-run: bash $0"
 fi
 
 # ---------------------------------------------------------------------------
 # Done
 # ---------------------------------------------------------------------------
 echo ""
+if [ "${HEALTH_OK}" = true ]; then
 echo -e "${GREEN}╔══════════════════════════════════════════════════════════════╗${NC}"
 if [ "${IS_UPGRADE}" = true ]; then
 echo -e "${GREEN}║           Update to v${REPO_VERSION} complete!                          ║${NC}"
@@ -720,6 +795,11 @@ else
 echo -e "${GREEN}║                Installation complete!                        ║${NC}"
 fi
 echo -e "${GREEN}╚══════════════════════════════════════════════════════════════╝${NC}"
+else
+echo -e "${YELLOW}╔══════════════════════════════════════════════════════════════╗${NC}"
+echo -e "${YELLOW}║     Install finished but INCOMPLETE - see errors above       ║${NC}"
+echo -e "${YELLOW}╚══════════════════════════════════════════════════════════════╝${NC}"
+fi
 echo ""
 echo -e "  ${GREEN}✓${NC} Version: ${REPO_VERSION}"
 echo -e "  ${GREEN}✓${NC} Application installed to ${INSTALL_DIR}"

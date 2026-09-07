@@ -8,7 +8,10 @@ and every per-script loader. Provides:
 - ``DEFAULTS``      : the canonical default tree (every key the app reads).
 - ``apply_defaults``: deep-merge defaults under a config (existing values win).
 - ``migrate``       : versioned, ordered migration step run once on update.
-- ``load_config``   : read + migrate + default-fill.
+- ``load_config``   : read + migrate + default-fill. Fail-safe: a missing,
+                      corrupt, or non-dict file yields defaults (the bad file is
+                      preserved as config.yaml.bad-*) and the problems are
+                      recorded in ``LAST_LOAD_WARNINGS`` / ``LAST_LOAD_DEGRADED``.
 - ``atomic_save``   : tmp + fsync + os.replace, so a power loss can't truncate
                       config.yaml (the bug this module fixes).
 
@@ -17,13 +20,44 @@ can be unit-tested on any machine.
 """
 import os
 import copy
+import shutil
+import threading
+import time
 
 import yaml
 
 CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/iosbackupmachine/config.yaml")
 
 # Bump whenever the schema changes in a way that needs a migration step below.
-CONFIG_VERSION = 2
+CONFIG_VERSION = 3
+
+# Result of the most recent load_config(): problems found (and repaired) while
+# reading the file, and whether the on-disk config had to be discarded entirely.
+# load_config keeps returning a plain dict; readers that care about the degraded
+# state (the web UI banner, the setup-wizard gate) use the accessors below.
+_STATE_LOCK = threading.Lock()
+LAST_LOAD_WARNINGS = []
+LAST_LOAD_DEGRADED = False
+
+
+def get_load_warnings():
+    with _STATE_LOCK:
+        return list(LAST_LOAD_WARNINGS)
+
+
+def was_load_degraded():
+    """True when the last load found the file missing/unreadable/non-dict and
+    fell back to defaults — i.e. any saved settings (including setup state) are
+    gone, not just one mistyped key."""
+    with _STATE_LOCK:
+        return LAST_LOAD_DEGRADED
+
+
+def _record_load_result(warnings, degraded):
+    global LAST_LOAD_WARNINGS, LAST_LOAD_DEGRADED
+    with _STATE_LOCK:
+        LAST_LOAD_WARNINGS = list(warnings)
+        LAST_LOAD_DEGRADED = degraded
 
 # Canonical defaults. Every key the app reads should appear here so a fresh or
 # partial config becomes a complete, valid tree after apply_defaults().
@@ -39,7 +73,26 @@ DEFAULTS = {
     "error_codes": {},
     "env": {},
     "auth": {"password_hash": ""},
-    "backup": {"auto_start": True, "notify_on_rejected": True},
+    "backup": {"auto_start": True, "notify_on_rejected": True,
+               # hang_timeout_sec: idevicebackup2 silent this long -> considered hung, killed.
+               # max_duration_sec: total cap for one backup run.
+               "hang_timeout_sec": 600, "max_duration_sec": 4 * 3600,
+               # min_battery_percent: a backup started below this is a backup cut
+               # mid-write by PiSugar's own 30% auto-shutdown. Same value and same
+               # reasoning as sync.min_battery_percent below; 0 disables.
+               "min_battery_percent": 35,
+               # min_free_mb: mid-run free-space reserve for the backup drive. Also
+               # raises the pre-backup floor when set above it, so a run can never
+               # start and then abort on its own first poll. 0 disables the drive
+               # check, never the rootfs one.
+               "min_free_mb": 512,
+               # notify_stale / stale_after_sec: every other notification is edge-
+               # triggered, so a device that quietly stops backing up (phone no longer
+               # plugged in, auto_start switched off, the filter rejecting) tells nobody
+               # until a restore is needed. One alert per quiet episode, re-armed by the
+               # next successful backup. 0 seconds disables the check entirely.
+               "notify_stale": True,
+               "stale_after_sec": 7 * 24 * 3600},
     "backup_encryption": {"encryption_confirmed": False},
     "device_filter": {"enabled": False, "allowed_devices": []},
     # networks: list of {nickname, ssid, password}. The legacy single ssid/password
@@ -48,10 +101,12 @@ DEFAULTS = {
     "ntp": {"enabled": True, "servers": ["pool.ntp.org", "time.google.com"]},
     "webui": {"enabled": True, "port": 8080, "bind_interfaces": ["all"], "secret_key": "change-me"},
     "notifications": {
-        "webhook": {"enabled": False, "url": "", "events": ["backup_complete", "backup_error"],
+        "webhook": {"enabled": False, "url": "",
+                    "events": ["backup_complete", "backup_error", "backup_stale"],
                     "auth_enabled": False, "auth_header": "Authorization"},
         "mqtt": {"enabled": False, "broker": "", "port": 1883, "username": "", "password": "",
-                 "topic_prefix": "iosbackupmachine", "events": ["backup_complete", "backup_error"]},
+                 "topic_prefix": "iosbackupmachine",
+                 "events": ["backup_complete", "backup_error", "backup_stale"]},
     },
     # full_tunnel: route ALL traffic (incl. the local subnet) through the VPN, so a
     # sync server whose IP overlaps the WiFi subnet is reachable over the tunnel.
@@ -61,25 +116,47 @@ DEFAULTS = {
     "credential_encryption": {"passphrase_mode": "udid"},
     # min_battery_percent: power-aware sync refuses to start / auto-aborts below
     # this when not charging. Comfortably above PiSugar's 30% auto-shutdown.
-    "sync": {"enabled": False, "auto_sync": False, "allowed_network": "any", "min_battery_percent": 35},
+    "sync": {"enabled": False, "auto_sync": False, "allowed_network": "any", "min_battery_percent": 35,
+             # max_seconds: total cap for one sync run (the stall watchdog is separate).
+             "max_seconds": 3600},
 }
 
 
-def _deep_merge(defaults, current):
+def _types_match(default, value):
+    # bool is a subclass of int in Python — keep them distinct so `true` in
+    # config.yaml doesn't pass where a port number is expected (or vice versa).
+    if isinstance(default, bool):
+        return isinstance(value, bool)
+    if isinstance(default, int):
+        return isinstance(value, int) and not isinstance(value, bool)
+    return isinstance(value, type(default))
+
+
+def _deep_merge(defaults, current, warnings=None, path=""):
     """Recursively merge ``defaults`` under ``current`` — existing values win.
-    Returns a new dict; inputs are not mutated."""
+    Returns a new dict; inputs are not mutated. A user value whose type doesn't
+    match the default's (or that is null) is replaced by the default, with a
+    note appended to ``warnings`` when a list is given."""
     result = copy.deepcopy(defaults)
     for k, v in (current or {}).items():
-        if k in result and isinstance(result[k], dict) and isinstance(v, dict):
-            result[k] = _deep_merge(result[k], v)
+        key_path = f"{path}.{k}" if path else k
+        if k in result:
+            d = result[k]
+            if isinstance(d, dict) and isinstance(v, dict):
+                result[k] = _deep_merge(d, v, warnings, key_path)
+            elif v is None or not _types_match(d, v):
+                if warnings is not None:
+                    warnings.append(f"'{key_path}' has an invalid value; using the default")
+            else:
+                result[k] = copy.deepcopy(v)
         else:
             result[k] = copy.deepcopy(v)
     return result
 
 
-def apply_defaults(cfg):
+def apply_defaults(cfg, warnings=None):
     """Return ``cfg`` with every missing default filled in (existing values win)."""
-    return _deep_merge(DEFAULTS, cfg or {})
+    return _deep_merge(DEFAULTS, cfg or {}, warnings)
 
 
 # --- Migrations -------------------------------------------------------------
@@ -109,9 +186,34 @@ def _migrate_1_to_2(cfg):
     return cfg
 
 
+def _migrate_2_to_3(cfg):
+    # v3 introduces the backup_stale event (no successful backup for a week).
+    # Adding it to DEFAULTS alone reaches FRESH INSTALLS ONLY: _deep_merge treats a
+    # saved events list as type-matching and copies it wholesale, and install.sh
+    # merges with the saved config winning — so every device that already has
+    # notifications configured, i.e. every device that would benefit, would never
+    # see the event. Only lists that already opted into backup_error are touched: a
+    # list deliberately narrowed to successes is a choice, and an empty list already
+    # means all events. Idempotent.
+    notif = cfg.get("notifications")
+    if not isinstance(notif, dict):
+        return cfg
+    for channel in ("webhook", "mqtt"):
+        ch = notif.get(channel)
+        if not isinstance(ch, dict):
+            continue
+        events = ch.get("events")
+        if not isinstance(events, list):
+            continue
+        if "backup_error" in events and "backup_stale" not in events:
+            events.append("backup_stale")
+    return cfg
+
+
 _MIGRATIONS = {
     0: _migrate_0_to_1,
     1: _migrate_1_to_2,
+    2: _migrate_2_to_3,
 }
 
 
@@ -132,36 +234,101 @@ def migrate(cfg):
     return cfg
 
 
+def _backup_corrupt_config(path, warnings):
+    """Best-effort copy of the unreadable config next to the original."""
+    dst = f"{path}.bad-{time.strftime('%Y%m%d-%H%M%S')}"
+    try:
+        shutil.copy2(path, dst)
+        warnings.append(f"the original file was saved as {os.path.basename(dst)}")
+    except OSError:
+        pass
+
+
 def load_config(path=None):
-    """Read, migrate, and default-fill the config at ``path``."""
+    """Read, migrate, and default-fill the config at ``path``.
+
+    Fail-safe: any read/parse/shape failure (corrupt YAML, a truncated file
+    that parses to a scalar, a non-dict document) yields defaults + migration
+    instead of an exception. The bad file is preserved as ``config.yaml.bad-*``
+    and the problems are recorded for get_load_warnings()/was_load_degraded().
+    """
     path = path or CONFIG_PATH
+    warnings = []
+    degraded = False
     try:
         with open(path, "r") as f:
-            cfg = yaml.safe_load(f) or {}
+            cfg = yaml.safe_load(f)
     except FileNotFoundError:
+        warnings.append(f"{os.path.basename(path)} was not found; defaults are in effect")
+        degraded = True
         cfg = {}
-    cfg = migrate(cfg)
-    cfg = apply_defaults(cfg)
+    except (yaml.YAMLError, AttributeError, TypeError, OSError) as e:
+        warnings.append(f"{os.path.basename(path)} could not be parsed ({e}); defaults are in effect")
+        _backup_corrupt_config(path, warnings)
+        degraded = True
+        cfg = {}
+    if cfg is None:
+        cfg = {}
+    if not isinstance(cfg, dict):
+        # Valid YAML that isn't a mapping (e.g. a truncated file parsing to a
+        # scalar or list) is just as unusable as unparseable YAML.
+        warnings.append(f"{os.path.basename(path)} did not contain a settings mapping; defaults are in effect")
+        _backup_corrupt_config(path, warnings)
+        degraded = True
+        cfg = {}
+    try:
+        cfg = migrate(cfg)
+    except (AttributeError, TypeError) as e:
+        warnings.append(f"migrating {os.path.basename(path)} failed ({e}); defaults are in effect")
+        _backup_corrupt_config(path, warnings)
+        degraded = True
+        cfg = migrate({})
+    cfg = apply_defaults(cfg, warnings)
+    _record_load_result(warnings, degraded)
     return cfg
+
+
+_SAVE_LOCK = threading.Lock()
 
 
 def atomic_save(cfg, path=None):
     """Write config atomically: tmp file + fsync + os.replace.
-    A power loss mid-write leaves the previous config intact."""
+    A power loss mid-write leaves the previous config intact. Serialized across
+    threads, with a per-call tmp name, so concurrent saves can't clobber each
+    other's temp file."""
     path = path or CONFIG_PATH
-    tmp = f"{path}.tmp.{os.getpid()}"
+    tmp = f"{path}.tmp.{os.getpid()}.{threading.get_ident()}.{os.urandom(4).hex()}"
     try:
-        d = os.path.dirname(path)
-        if d:
-            os.makedirs(d, exist_ok=True)
-        with open(tmp, "w") as f:
-            yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
-            f.flush()
+        with _SAVE_LOCK:
+            d = os.path.dirname(path)
+            if d:
+                os.makedirs(d, exist_ok=True)
+            with open(tmp, "w") as f:
+                yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+                f.flush()
+                try:
+                    os.fsync(f.fileno())
+                except OSError:
+                    pass
+            # Windows briefly locks the destination (AV/indexer) right after a
+            # replace; retry the rename a few times. Never triggers on Linux.
+            for attempt in range(5):
+                try:
+                    os.replace(tmp, path)
+                    break
+                except PermissionError:
+                    if attempt == 4:
+                        raise
+                    time.sleep(0.05)
+            # fsync the directory so the rename itself survives a power loss.
             try:
-                os.fsync(f.fileno())
+                dfd = os.open(d or ".", os.O_RDONLY)
+                try:
+                    os.fsync(dfd)
+                finally:
+                    os.close(dfd)
             except OSError:
                 pass
-        os.replace(tmp, path)
     except Exception:
         try:
             if os.path.exists(tmp):

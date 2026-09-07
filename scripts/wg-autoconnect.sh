@@ -29,6 +29,15 @@ if [ "$SHOULD_CONNECT" != "yes" ]; then
     exit 0
 fi
 
+# Serialize with the boot service / other dispatcher invocations: the
+# `ip link show` check below is TOCTOU without a lock. Timeout so a stuck
+# holder cannot block future connects forever; skip quietly if we lose.
+LOCK=/run/iosbackupmachine-wg.lock
+exec 9>"$LOCK"
+if ! flock -w 30 9; then
+    exit 0
+fi
+
 IFACE=$("$PY" -c "
 import yaml
 with open('$CFG') as f:

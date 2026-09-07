@@ -1,10 +1,15 @@
 # Continuous append logs only.
 #
 # Per-run logs (backup-*.log / sync-*.log) are NOT listed here: they are one
-# file per run and are pruned by the app (logutil.prune_logs, by count + age),
-# so logrotate must not rename them — renaming is what used to make them vanish
-# from the web UI. webui.log is also omitted: it self-rotates via Python's
-# RotatingFileHandler, and letting logrotate touch it too would race.
+# file per run and are pruned by the app (logutil.prune_logs, by count + age +
+# an aggregate 100 MB cap per kind), so logrotate must not rename them —
+# renaming is what used to make them vanish from the web UI. webui.log is also
+# omitted: it self-rotates via Python's RotatingFileHandler (2 MB x 3 backups),
+# and letting logrotate touch it too would race.
+#
+# Total log budget, worst case: per-run logs 2 x 100 MB, webui.log 8 MB, and
+# the continuous logs below ~75 MB (5 MB maxsize x (1 + 4 rotations) x 3 files,
+# before compression) — about 280 MB in /var/lib/iosbackupmachine.
 /var/lib/iosbackupmachine/ntp-sync.log
 /var/lib/iosbackupmachine/autostart.log
 /var/lib/iosbackupmachine/update.log {

@@ -6,7 +6,7 @@ Supports two passphrase modes:
 - "udid": uses iPhone UDID (auto-decrypt when iPhone connected)
 - "custom": uses a user-chosen password (manual entry required)
 """
-import os, sys, json, hashlib, base64, subprocess
+import os, sys, json, hashlib, base64, binascii, subprocess
 
 ENC_FILE = os.getenv("WG_ENC_FILE", "/root/iosbackupmachine/wireguard.enc")
 SALT = b"iosbackupmachine-credential-salt-v2"
@@ -64,11 +64,17 @@ def _decrypt_file(passphrase, enc_file):
     if not passphrase or not os.path.exists(enc_file):
         return None
     key = derive_key(passphrase)
-    with open(enc_file, "r") as f:
-        payload = json.load(f)
+    try:
+        with open(enc_file, "r") as f:
+            payload = json.load(f)
+        nonce = base64.b64decode(payload["nonce"])
+        data = base64.b64decode(payload["data"])
+    except (json.JSONDecodeError, ValueError, binascii.Error, KeyError,
+            TypeError, OSError):
+        # Corrupt, truncated or unreadable store: degrade to "no credentials",
+        # exactly like a wrong passphrase or an AES-GCM failure below.
+        return None
     method = payload.get("method", "")
-    nonce = base64.b64decode(payload["nonce"])
-    data = base64.b64decode(payload["data"])
     if method == "aes-gcm":
         try:
             from cryptography.hazmat.primitives.ciphers.aead import AESGCM

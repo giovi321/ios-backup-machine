@@ -1,6 +1,7 @@
 [Unit]
 Description=iOS Backup Machine Web UI
-After=network.target
+Wants=network-online.target
+After=network.target network-online.target
 
 [Service]
 Type=simple

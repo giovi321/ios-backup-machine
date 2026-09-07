@@ -101,7 +101,7 @@ def build_netplan(networks, iface):
 
 
 def _write_managed(content):
-    os.makedirs(NETPLAN_DIR, exist_ok=True)
+    os.makedirs(os.path.dirname(MANAGED_FILE), exist_ok=True)
     tmp = MANAGED_FILE + ".tmp"
     with open(tmp, "w") as f:
         f.write(content)
@@ -119,6 +119,20 @@ def _restore(prev):
             _write_managed(prev)
     except Exception:
         pass
+
+
+def _apply_failed(prev, out):
+    """Roll back after a failed `netplan apply` and build the failure message.
+
+    Restores the previous managed file and re-applies it. When that rollback
+    apply also fails, the device may have no working WiFi config at all — the
+    message says so explicitly, because the original error alone would hide it."""
+    _restore(prev)
+    rc, _ = _run(["netplan", "apply"], timeout=90)
+    msg = f"netplan apply failed: {out[:200]}"
+    if rc != 0:
+        msg += " — rollback also failed, WiFi may be down"
+    return False, msg
 
 
 def apply_networks(networks):
@@ -145,9 +159,11 @@ def apply_networks(networks):
         try:
             if os.path.exists(MANAGED_FILE):
                 os.remove(MANAGED_FILE)
-            _run(["netplan", "apply"], timeout=90)
-        except Exception:
-            pass
+        except Exception as e:
+            return False, f"Could not remove netplan config: {e}"
+        rc, out = _run(["netplan", "apply"], timeout=90)
+        if rc != 0:
+            return _apply_failed(prev, out)
         return True, "No WiFi networks configured."
 
     try:
@@ -162,9 +178,7 @@ def apply_networks(networks):
 
     rc, out = _run(["netplan", "apply"], timeout=90)
     if rc != 0:
-        _restore(prev)
-        _run(["netplan", "apply"], timeout=90)   # bring the previous config back up
-        return False, f"netplan apply failed: {out[:200]}"
+        return _apply_failed(prev, out)   # bring the previous config back up
 
     return True, f"Applied {len(nets)} network(s) on {iface}."
 

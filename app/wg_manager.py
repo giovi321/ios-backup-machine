@@ -115,17 +115,20 @@ def is_interface_up(iface="wg0"):
         return False
 
 def latest_handshake(iface="wg0"):
-    """Newest peer handshake as a unix epoch (int), or 0 if none has completed.
+    """Newest peer handshake as a unix epoch (int), 0 if none has completed, or
+    None when the handshake state could not be read (wg missing, error, timeout).
 
     A wg interface can exist ('up') without ever handshaking — e.g. brought up
     while the endpoint is unreachable, or before the clock is NTP-synced (a wrong
     clock makes the server reject the handshake). 0 means 'up but not actually
-    connected'; any positive value means at least one handshake succeeded."""
+    connected'; any positive value means at least one handshake succeeded. None
+    is deliberately distinct from 0: the probe itself failed, which says nothing
+    about the tunnel, so callers must not treat it as 'no handshake'."""
     try:
         r = subprocess.run(["wg", "show", iface, "latest-handshakes"],
                            capture_output=True, text=True, timeout=5)
         if r.returncode != 0:
-            return 0
+            return None
         best = 0
         for line in r.stdout.splitlines():
             parts = line.split()
@@ -136,11 +139,14 @@ def latest_handshake(iface="wg0"):
                     pass
         return best
     except Exception:
-        return 0
+        return None
 
 def start_wireguard(iface="wg0", passphrase=None):
     """Decrypt WireGuard config and bring up the interface.
-    Returns (success: bool, error: str or None)."""
+    Returns (success: bool, error: str or None). On success, error is None, or a
+    warning string when the tunnel came up but full-tunnel enforcement failed —
+    routing may be half-applied, so callers should surface it rather than treat
+    the connect as clean."""
     cfg = wg_crypto.decrypt_wg_config(passphrase=passphrase)
     if not cfg:
         serial = wg_crypto.get_iphone_serial()
@@ -171,14 +177,17 @@ def start_wireguard(iface="wg0", passphrase=None):
             # Force every connect (incl. reconnects after errors/disconnects) to
             # route everything through the tunnel when full_tunnel is enabled,
             # while keeping local SSH / web UI access. Otherwise clear any leftover.
+            warning = None
             try:
                 if _full_tunnel_enabled():
                     enforce_full_tunnel(iface)
                 else:
                     clear_full_tunnel(iface)
             except Exception as e:
-                print(f"[WG] Full-tunnel enforcement error: {e}", flush=True)
-            return True, None
+                warning = (f"full-tunnel rule enforcement failed: {e} — the tunnel is "
+                           f"up but routing may be half-applied")
+                print(f"[WG] WARNING: {warning}", flush=True)
+            return True, warning
         else:
             # wg-quick prints commands to stderr; the actual error is usually the last few lines
             output = (r.stderr or "") + (r.stdout or "")
@@ -189,15 +198,16 @@ def start_wireguard(iface="wg0", passphrase=None):
     except FileNotFoundError:
         return False, "wg-quick not found. Install wireguard-tools."
     except subprocess.TimeoutExpired:
-        return False, "wg-quick timed out after 15s."
+        return False, "wg-quick timed out after 30s."
     except Exception as e:
         return False, f"Unexpected error: {e}"
 
 def stop_wireguard(iface="wg0"):
     try:
         clear_full_tunnel(iface)   # remove the LAN-access exception rules
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[WG] WARNING: could not clear full-tunnel rules before "
+              f"disconnect: {e} — stale iptables/ip rules may linger", flush=True)
     try:
         return subprocess.run(["wg-quick", "down", iface], capture_output=True, text=True, timeout=15).returncode == 0
     except Exception:

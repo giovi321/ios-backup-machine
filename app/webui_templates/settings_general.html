@@ -65,7 +65,7 @@
         <div class="form-group">
             <label for="config_file">Import Config</label>
             <input type="file" id="config_file" name="config_file" accept=".yaml,.yml" style="font-size:13px;">
-            <div class="hint">Upload a previously exported config.yaml to restore settings.</div>
+            <div class="hint">Upload a previously exported config.yaml to restore settings (max {{ config.MAX_CONTENT_LENGTH // 1024 }} KB).</div>
         </div>
         <div class="btn-group">
             <button type="submit" class="btn btn-secondary" onclick="return confirm('This will replace your current config. Continue?')">Import Config</button>
