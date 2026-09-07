@@ -833,13 +833,16 @@ def _resolve_min_battery(min_battery):
 
 
 def _resolve_max_seconds():
-    """Overall cap for one sync run: config ``sync.max_seconds``, default 3600.
-    A missing, invalid or non-positive value falls back to the default."""
+    """Overall cap for one sync run, from config ``sync.max_seconds``. 0 means no
+    cap, and is the default: SCAN_KILL_SEC and STALL_KILL_SEC already kill a sync
+    that has genuinely stopped moving, while a first sync of a large backup set
+    legitimately runs for many hours - capping that aborts a transfer that was
+    working. A missing or unparseable value reads as 0."""
     try:
-        cap = int(_load_config().get("sync", {}).get("max_seconds", 3600))
+        cap = int(_load_config().get("sync", {}).get("max_seconds", 0))
     except Exception:
-        cap = 3600
-    return cap if cap > 0 else 3600
+        return 0
+    return cap if cap > 0 else 0
 
 
 def run_sync(passphrase=None, backup_dir=None):
@@ -998,9 +1001,10 @@ def run_sync_with_progress(passphrase=None, backup_dir=None, on_progress=None, l
                     logw.write(value)
 
         while True:
-            # Total run cap: terminate rsync gracefully, then hard-kill if it
-            # ignores SIGTERM for 5s. The partial transfer resumes next time.
-            if time.time() - start >= max_seconds:
+            # Optional overall cap: terminate rsync gracefully, then hard-kill if
+            # it ignores SIGTERM for 5s. The partial transfer resumes next time.
+            # 0 disables it; the silence watchdogs below are what stop a wedge.
+            if max_seconds and time.time() - start >= max_seconds:
                 killed_for_timeout = True
                 logw.write(f"[ABORT] sync exceeded its {fmt_duration(max_seconds)} "
                            f"limit — killing rsync (last file: {logw.last_file or 'unknown'})")

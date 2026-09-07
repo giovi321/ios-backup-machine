@@ -1008,3 +1008,42 @@ def test_health_degrades_to_nulls_when_the_record_is_missing_or_corrupt(monkeypa
     backup, _ = _health_backup(monkeypatch, tmp_path, "{not json")
     assert backup["last_success"] is None
     assert backup["stale"] is False
+
+
+# --- the sync time limit is settable, and blank means no limit ------------------
+# It shipped as a file-only 3600 that nobody could change from the UI, and a
+# 130 GB first sync aborted at 20% looking like a failure.
+
+def _save_sync_settings(monkeypatch, form):
+    _write_config("setup_completed: true\nsync:\n  enabled: true\n")
+    saved = {}
+    monkeypatch.setattr(webui, "save_config", lambda cfg: saved.update(cfg))
+    data = {"action": "save_settings", "sync_enabled": "on"}
+    data.update(form)
+    _client().post("/settings/sync", data=data, follow_redirects=True)
+    return saved
+
+
+def test_the_sync_limit_is_stored_in_seconds(monkeypatch):
+    saved = _save_sync_settings(monkeypatch, {"max_minutes": "480"})
+    assert saved["sync"]["max_seconds"] == 480 * 60
+
+
+def test_a_blank_sync_limit_means_no_limit(monkeypatch):
+    saved = _save_sync_settings(monkeypatch, {"max_minutes": ""})
+    assert saved["sync"]["max_seconds"] == 0
+
+
+def test_a_junk_sync_limit_does_not_reinstate_a_cap(monkeypatch):
+    """Anything unparseable reads as no cap. A surprise abort on a transfer that
+    was working is worse than no bound - the stall watchdogs cover a real wedge."""
+    for junk in ("soon", "-30", "abc"):
+        saved = _save_sync_settings(monkeypatch, {"max_minutes": junk})
+        assert saved["sync"]["max_seconds"] == 0, junk
+
+
+def test_the_sync_limit_field_renders_the_saved_value(monkeypatch):
+    _write_config("setup_completed: true\nsync:\n  enabled: true\n  max_seconds: 28800\n")
+    body = _client().get("/settings/sync").data.decode()
+    assert 'name="max_minutes"' in body
+    assert 'value="480"' in body

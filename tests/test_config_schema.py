@@ -255,14 +255,14 @@ def test_the_migration_does_not_choke_on_a_junk_shape():
     config_schema._migrate_2_to_3({})
 
 
-def test_a_v2_config_comes_out_at_v3_with_the_new_keys(tmp_path):
+def test_a_v2_config_comes_out_current_with_the_new_keys(tmp_path):
     p = tmp_path / "config.yaml"
     p.write_text(yaml.safe_dump({
         "config_version": 2, "setup_completed": True,
         "notifications": {"webhook": {"events": ["backup_error"]}},
     }))
     cfg = config_schema.load_config(str(p))
-    assert cfg["config_version"] == 3
+    assert cfg["config_version"] == config_schema.CONFIG_VERSION
     assert cfg["backup"]["notify_stale"] is True
     assert cfg["backup"]["stale_after_sec"] == 7 * 24 * 3600
     assert "backup_stale" in cfg["notifications"]["webhook"]["events"]
@@ -273,3 +273,37 @@ def test_a_junk_stale_threshold_falls_back_to_the_default(tmp_path):
     p.write_text(yaml.safe_dump({"backup": {"stale_after_sec": "soon"}}))
     cfg = config_schema.load_config(str(p))
     assert cfg["backup"]["stale_after_sec"] == 7 * 24 * 3600
+
+
+# --- v4: the overall sync cap is off by default ---------------------------------
+# v3 shipped max_seconds: 3600 as a value nobody could change without editing the
+# file. A 130 GB first sync aborted at 20%, which reads as a failure rather than
+# as the cap doing its job.
+
+def test_the_old_one_hour_sync_cap_is_cleared_on_upgrade(tmp_path):
+    p = tmp_path / "config.yaml"
+    p.write_text(yaml.safe_dump({"config_version": 3, "sync": {"max_seconds": 3600}}))
+    cfg = config_schema.load_config(str(p))
+    assert cfg["sync"]["max_seconds"] == 0
+
+
+def test_a_deliberately_chosen_sync_cap_survives_the_upgrade(tmp_path):
+    """Only the exact old default is cleared; any other number was a choice."""
+    p = tmp_path / "config.yaml"
+    p.write_text(yaml.safe_dump({"config_version": 3, "sync": {"max_seconds": 7200}}))
+    cfg = config_schema.load_config(str(p))
+    assert cfg["sync"]["max_seconds"] == 7200
+
+
+def test_a_fresh_config_has_no_sync_cap(tmp_path):
+    p = tmp_path / "config.yaml"
+    p.write_text("setup_completed: true" + chr(10))
+    assert config_schema.load_config(str(p))["sync"]["max_seconds"] == 0
+
+
+def test_clearing_the_cap_is_idempotent(tmp_path):
+    p = tmp_path / "config.yaml"
+    p.write_text(yaml.safe_dump({"config_version": 3, "sync": {"max_seconds": 3600}}))
+    once = config_schema.load_config(str(p))
+    config_schema.atomic_save(once, str(p))
+    assert config_schema.load_config(str(p))["sync"]["max_seconds"] == 0

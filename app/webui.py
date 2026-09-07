@@ -32,7 +32,7 @@ import config_schema
 import power
 import logutil
 
-VERSION = "4.9.0"
+VERSION = "4.10.0"
 
 CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/iosbackupmachine/config.yaml")
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webui_static")
@@ -892,6 +892,16 @@ def settings_sync():
             sync["auto_sync"] = request.form.get("auto_sync") == "on"
             sync["allowed_network"] = request.form.get("allowed_network", "any")
             sync["allowed_ssid"] = request.form.get("allowed_ssid", "").strip()
+            # Entered in minutes, stored in seconds. Blank or 0 means no cap, which
+            # is the default: the stall watchdogs already kill a sync that has
+            # stopped moving, and a first sync of a large backup set legitimately
+            # runs for hours. Anything unparseable is treated as no cap rather than
+            # silently reinstating one.
+            try:
+                _cap_min = int(float(request.form.get("max_minutes", "0") or 0))
+            except (TypeError, ValueError):
+                _cap_min = 0
+            sync["max_seconds"] = max(0, _cap_min) * 60
             cfg["sync"] = sync
             if _try_save_config(cfg):
                 flash("Sync settings saved.", "success")

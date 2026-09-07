@@ -81,6 +81,16 @@
                 document.getElementById('allowed_network').value === 'wifi_ssid' ? 'block' : 'none';
         }
         </script>
+        <div class="form-group">
+            <label for="max_minutes">Time limit (minutes)</label>
+            <input type="number" id="max_minutes" name="max_minutes" min="0" step="1"
+                   value="{{ ((cfg.sync.get('max_seconds', 0) or 0) // 60) or '' }}"
+                   placeholder="No limit">
+            <p class="hint">Leave empty for no limit. A sync that has stopped moving is
+            killed after 30 minutes of silence regardless, so this is only for bounding
+            one that is still working - a first sync of a large backup set can take many
+            hours legitimately.</p>
+        </div>
         <p class="hint" style="margin-bottom:12px;">Manual sync via double-tap on the PiSugar button.</p>
         <div class="btn-group">
             <button type="submit" class="btn btn-primary">Save Settings</button>

@@ -75,6 +75,12 @@ Once the transfer is running, rsync going quiet for 5 minutes puts a yellow "Sta
 
 The file-list scan has its own limit, because it produces no progress output at all: if rsync writes nothing for 30 minutes during that phase, the sync is aborted with "No progress 30 min, aborted.".
 
+## Overall time limit
+
+Off by default. Remote Sync settings has a **Time limit** field in minutes; leave it empty for no limit.
+
+There is deliberately no default. The stall watchdogs above already abort a sync that has stopped moving, so a limit here only bounds a transfer that is still working - and a first sync of a large backup set legitimately runs for many hours. A limit that fires mid-transfer reports `run_timeout` and reads like a failure, even though nothing failed. The partial transfer resumes on the next run either way, because `--partial-dir` is always in use.
+
 ## Cancelling
 
 While a sync is in progress, a Cancel Sync button appears on the dashboard and the Remote Sync settings page. It kills `rsync` and `backup-sync.py` immediately and reports "Cancelled by user.". The end state (complete, failed, or cancelled) stays on the e-ink until another event, such as a new sync, a backup start, or a service restart.

@@ -29,7 +29,7 @@ import yaml
 CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/iosbackupmachine/config.yaml")
 
 # Bump whenever the schema changes in a way that needs a migration step below.
-CONFIG_VERSION = 3
+CONFIG_VERSION = 4
 
 # Result of the most recent load_config(): problems found (and repaired) while
 # reading the file, and whether the on-disk config had to be discarded entirely.
@@ -117,8 +117,11 @@ DEFAULTS = {
     # min_battery_percent: power-aware sync refuses to start / auto-aborts below
     # this when not charging. Comfortably above PiSugar's 30% auto-shutdown.
     "sync": {"enabled": False, "auto_sync": False, "allowed_network": "any", "min_battery_percent": 35,
-             # max_seconds: total cap for one sync run (the stall watchdog is separate).
-             "max_seconds": 3600},
+             # max_seconds: overall cap for one sync run. 0 = no cap, the default:
+             # the scan/stall watchdogs already kill a sync that has stopped moving,
+             # and a first sync of a large backup set legitimately runs for many
+             # hours. Settable in the web UI (Remote Sync).
+             "max_seconds": 0},
 }
 
 
@@ -210,10 +213,23 @@ def _migrate_2_to_3(cfg):
     return cfg
 
 
+def _migrate_3_to_4(cfg):
+    # v4 turns the overall sync cap off by default. v3 shipped 3600 as a value
+    # nobody could change without editing the file by hand, and a first sync of a
+    # large backup set hits it while rsync is still nowhere near done - the abort
+    # then reads as a failure. Clear only that exact value; any other number was
+    # chosen deliberately and is left alone. Idempotent.
+    sync = cfg.get("sync")
+    if isinstance(sync, dict) and sync.get("max_seconds") == 3600:
+        sync["max_seconds"] = 0
+    return cfg
+
+
 _MIGRATIONS = {
     0: _migrate_0_to_1,
     1: _migrate_1_to_2,
     2: _migrate_2_to_3,
+    3: _migrate_3_to_4,
 }
 
 

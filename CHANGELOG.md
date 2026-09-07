@@ -4,6 +4,28 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses a
 single version constant in `app/webui.py`.
 
+## [4.10.0] - 2026-09-07
+
+### Fixed
+
+- The overall sync time limit was a hard-coded 3600 s that nothing in the web UI
+  could change, so a first sync of a large backup set aborted mid-transfer and
+  reported a failure. A 130 GB set stopped at 20% after an hour. There is now no
+  default limit at all: the scan and stall watchdogs already abort a sync that
+  has stopped moving, so a cap only bounds one that is still working. Existing
+  configs holding the old 3600 are cleared on upgrade; any other value was
+  chosen deliberately and is left alone.
+
+### Added
+
+- A **Time limit** field in Remote Sync settings, in minutes, empty for no
+  limit. Anything unparseable reads as no limit rather than silently
+  reinstating a cap.
+
+### Changed
+
+- Config schema version 4, for the sync-limit default.
+
 ## [4.9.0] - 2026-09-07
 
 ### Fixed

@@ -158,9 +158,12 @@ def test_run_cap_kills_when_terminate_is_ignored(monkeypatch):
     assert proc.killed is True
 
 
-def test_resolve_max_seconds_default(monkeypatch):
+def test_resolve_max_seconds_defaults_to_no_cap(monkeypatch):
+    """0 means no cap. A first sync of a large backup set runs for hours, and a
+    cap aborts a transfer that was working; SCAN_KILL_SEC / STALL_KILL_SEC are
+    what stop one that has genuinely wedged."""
     monkeypatch.setattr(sync_manager, "_load_config", lambda: {})
-    assert sync_manager._resolve_max_seconds() == 3600
+    assert sync_manager._resolve_max_seconds() == 0
 
 
 def test_resolve_max_seconds_from_config(monkeypatch):
@@ -169,8 +172,10 @@ def test_resolve_max_seconds_from_config(monkeypatch):
     assert sync_manager._resolve_max_seconds() == 600
 
 
-def test_resolve_max_seconds_invalid_falls_back(monkeypatch):
+def test_resolve_max_seconds_invalid_reads_as_no_cap(monkeypatch):
+    """Unparseable must not silently reinstate a cap: a surprise abort on a
+    working transfer is worse than no bound, which the watchdogs already cover."""
     for bad in ({"sync": {"max_seconds": "soon"}}, {"sync": {"max_seconds": 0}},
                 {"sync": {"max_seconds": -5}}, {"sync": None}):
         monkeypatch.setattr(sync_manager, "_load_config", lambda b=bad: b)
-        assert sync_manager._resolve_max_seconds() == 3600
+        assert sync_manager._resolve_max_seconds() == 0

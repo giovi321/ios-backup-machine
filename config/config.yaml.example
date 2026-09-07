@@ -146,4 +146,6 @@ sync:
   # and battery is below this percent. Kept above PiSugar's 30% auto-shutdown so
   # a long rsync isn't cut mid-transfer. SSH credentials live encrypted in sync.enc.
   min_battery_percent: 35
-  max_seconds: 3600          # total cap for one sync run (stall watchdog is separate)
+  max_seconds: 0             # overall cap for one sync run, in seconds. 0 = no cap
+                             # (default). The stall watchdogs still kill a sync that
+                             # has stopped moving; this only bounds one that is working.
