@@ -88,20 +88,27 @@ ENABLE_SERVICES=(
     wg-autoconnect.service
 )
 
+# Every unit this project has EVER shipped, not the current inventory. Two jobs:
+# stop them all before touching files, and drive the stale-unit sweep further
+# down, which disables and deletes anything in this list that services/ no longer
+# provides. The retired names below therefore have to stay: they are how a device
+# upgraded from an older version gets rid of units whose scripts are long gone.
+# Read services/ for what currently exists.
 ALL_SERVICES=(
     iosbackupmachine.service
     webui.service
-    owner-message.service
-    shutdown-display.service
     ntp-sync.service
     ntp-sync.timer
     rtc-sync.service
-    last-backup.service
     unplug-notify.service
-    button-info.service
     backup-sync.service
     wg-autoconnect.service
     usbmux-refresh.service
+    # Retired. Kept so the sweep removes them from upgraded devices.
+    owner-message.service
+    shutdown-display.service
+    last-backup.service
+    button-info.service
 )
 
 # ---------------------------------------------------------------------------
