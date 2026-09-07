@@ -24,8 +24,11 @@ not hardened for direct exposure to the public internet:
   Keep the device on your LAN or reach it over the VPN, and bind the web UI to
   the interfaces you trust.
 - The iOS backup payload is encrypted by the iPhone with a password that never
-  leaves the phone. WireGuard and remote sync credentials are encrypted at rest
-  with AES-256-GCM.
+  leaves the phone. WireGuard, remote sync, and webhook auth credentials are
+  encrypted at rest with AES-256-GCM.
+- `GET /api/health` is the one endpoint exempt from login, so an external monitor
+  can poll it while a password is set. It carries no owner info, credentials, or
+  keys.
 
 See [Security](https://giovi321.github.io/ios-backup-machine/architecture/security/)
 in the documentation for the full picture.

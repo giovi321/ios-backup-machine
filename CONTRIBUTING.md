@@ -23,8 +23,12 @@ path shim, so it runs anywhere without an e-paper panel.
   line endings, not CRLF.
 - `VERSION` in `app/webui.py` is the single source of truth for the version. Bump
   it when you cut a release.
-- Update `CHANGELOG.md`, and update `docs/` and `config/config.yaml.example` for
-  any new setting.
+- A new setting goes into `DEFAULTS` in `app/config_schema.py` first. That tree
+  is what fills a partial config and type-checks a user value, so a key the web
+  UI writes but `DEFAULTS` does not know is neither defaulted nor validated.
+  Then update `config/config.yaml.example`, `docs/`, and `CHANGELOG.md`.
+- Bump `CONFIG_VERSION` and add a migration step only when an existing key is
+  renamed or restructured. `apply_defaults` already covers plain additions.
 - Keep pull requests focused on one change.
 
 ## Reporting problems

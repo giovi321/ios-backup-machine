@@ -63,13 +63,18 @@ The same verdict is delivered as a `sync_error` notification. See [Web UI](../we
 
 ## Retention
 
-Retention is managed by the app, not logrotate. The newest 50 backup logs and the newest 50 sync logs are kept, and anything older than 90 days is pruned. Override the defaults with two environment variables:
+Retention is managed by the app, not logrotate. The newest 50 backup logs and the newest 50 sync logs are kept, anything older than 90 days is pruned, and each kind is then capped at 100 MB in total by deleting the oldest first. Pruning runs as a new run starts, so it can never delete the log being written.
 
-- `IOSBACKUP_LOG_KEEP`: how many of each log type to keep
-- `IOSBACKUP_LOG_MAX_AGE_DAYS`: maximum age in days before pruning
-- `IOSBACKUP_LOG_MAX_BYTES_PER_FILE`: size cap for a single run log
+Four environment variables override the defaults:
 
-A single run cannot grow past that last cap. When it is reached the run log says so, output is suppressed, and the last lines are appended when the run ends, so a failure loop cannot fill the rootfs and the end of the run is still readable.
+- `IOSBACKUP_LOG_KEEP`: how many of each kind to keep (default 50)
+- `IOSBACKUP_LOG_MAX_AGE_DAYS`: maximum age in days before pruning (default 90)
+- `IOSBACKUP_LOG_MAX_BYTES_PER_KIND`: aggregate size cap per kind (default 100 MB)
+- `IOSBACKUP_LOG_MAX_BYTES_PER_FILE`: size cap for a single run log (default 8 MB)
+
+The last one is enforced by the writer rather than at prune time, because nothing else bounds a file that is still being written. The daemon's backup log is one file for the whole daemon lifetime, not one per backup, so it is the log most able to fill the rootfs on its own. When a run reaches the cap the log says so, further output is suppressed, and the last 64 KB of suppressed lines are appended when the run ends. The run's verdict (`[OK]`, `[ERROR]`, `[POSTMORTEM]`) is written last, so a failure loop cannot fill the rootfs and the end of the run is still readable.
+
+Set these four in `config.yaml` under `env:` to have them survive a reboot without editing a systemd unit. That block is exported by the display daemon and by `backup-sync.py`, which are the two processes that write and prune run logs.
 
 The continuous append logs (`ntp-sync.log`, `autostart.log`, `update.log`) are size-capped by logrotate. `webui.log` self-rotates.
 
@@ -77,13 +82,17 @@ The continuous append logs (`ntp-sync.log`, `autostart.log`, `update.log`) are s
 
 The web UI Logs page can browse backup log files directly from the browser. It has separate live-tail links for the most recent backup log and the most recent sync log.
 
-A large log is shown as its head and tail rather than in full, and the page says when it has done that. Reading a very large file whole is what would take the web UI down on a device this size, precisely when it is being opened to find out what went wrong. Use the download link for the complete file.
+A large log is shown as its first 40 and last 500 lines rather than in full, with a notice line between the two halves saying so, under a hard 256 KB ceiling on the read whatever the lines look like. Reading a very large file whole is what would take the web UI down on a device this size, precisely when it is being opened to find out what went wrong. A run log is read from both ends anyway: the gates a backup passed are at the top and what it died of is at the bottom. Use the download link for the middle, which is streamed in chunks rather than buffered.
+
+The three bounds are `IOSBACKUP_LOG_VIEW_HEAD_LINES`, `IOSBACKUP_LOG_VIEW_TAIL_LINES`, and `IOSBACKUP_LOG_VIEW_MAX_BYTES`. The web UI reads them at import and does not read the `env:` block in `config.yaml`, so change them with an `Environment=` line in `webui.service`.
 
 ### System journal
 
 The display daemon and the web UI write much of their diagnostics to the systemd journal, not to a log file: panel initialisation failures, watchdog trips, a stalled main loop. The Logs page links to a journal viewer for those. It covers the display daemon, the web UI, both sync paths, the update unit, `usbmuxd`, `pisugar-server`, and an all-units view that also carries the kernel's USB disconnect messages.
 
-How far back the journal goes is a systemd setting this appliance does not configure, so the viewer reports how many boots it actually found rather than promising history. On a stock image `/var/log` is a RAM disk, so expect the current boot only.
+Pick a window of 200, 500, 1000 or 2000 lines; 500 is the default. A "problems only" filter narrows what was already read to the lines carrying `[FATAL]`, `[ERROR]`, `[WATCHDOG]`, `[WARN]`, `[DRAW]`, `[WG]` or `Traceback`. That is the two daemons' own vocabulary rather than a syslog priority, because both write plain output that systemd records at info level, so filtering by priority would look right and return nothing. A unit that reports trouble some other way (werkzeug, `usbmuxd`, the kernel) will not match the filter, so turn it off to read the window in full.
+
+How far back the journal goes is a systemd setting this appliance does not configure, so the viewer reports how many boots it actually found rather than promising history. On a stock image `/var/log` is a RAM disk, so expect the current boot only. A missing or wedged `journalctl` renders as a sentence explaining itself instead of an error page.
 
 ## Related
 

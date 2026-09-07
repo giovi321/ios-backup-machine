@@ -73,6 +73,10 @@ ntp:
     - "time.google.com"
 ```
 
+`ntp-sync.service` runs once at boot, which can easily land before any network is up. `ntp-sync.timer` covers that: it first fires two minutes into the boot and then retries every 15 minutes. The retry is cheap in the steady state, because `ntp-sync.py` exits early once `timedatectl` reports `NTPSynchronized=yes`. The installer both enables and starts the timer, so a fresh or changed timer does not wait for the next boot to begin running.
+
+The clock also gates the quiet-device alert. A board with a dead RTC cell and no network boots reading 1970, so the alert refuses to write its first record until the clock reads at least 2026, and it ignores the first 15 minutes of a boot entirely. Anchoring the record to a 1970 clock would make the next check compute an age of decades and alert on a healthy device.
+
 ## Related
 
 - [WireGuard VPN](../wireguard-vpn/) covers the VPN client and its WiFi and boot auto-connect triggers

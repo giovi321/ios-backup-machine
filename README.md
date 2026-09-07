@@ -8,7 +8,7 @@
   <a href="https://github.com/giovi321/ios-backup-machine/actions/workflows/ci.yml"><img src="https://github.com/giovi321/ios-backup-machine/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/giovi321/ios-backup-machine/actions/workflows/docs.yml"><img src="https://github.com/giovi321/ios-backup-machine/actions/workflows/docs.yml/badge.svg" alt="Docs"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/giovi321/ios-backup-machine" alt="License: MIT"></a>
-  <img src="https://img.shields.io/badge/version-4.8.1-brightgreen" alt="Version 4.8.1">
+  <img src="https://img.shields.io/badge/version-4.10.0-brightgreen" alt="Version 4.10.0">
   <img src="https://img.shields.io/badge/Python-3.13-blue?logo=python&logoColor=white" alt="Python 3.13">
 </p>
 
@@ -51,10 +51,13 @@ Full flashing steps, the manual install, and updating are in the [Installation g
 - Starts a backup automatically when an iPhone is plugged in, using the iPhone's own encryption
 - Shows progress, status, and errors on the e-ink display, with a status icon row for power, VPN, internet, WiFi, and a three-state iPhone icon
 - Keeps running on a UPS so a power cut does not corrupt a backup or the filesystem
+- Stops a running backup when the backup drive disappears, the drive fills up, or the battery drains, and reports which of the three it was
+- Kills a backup that has gone silent, and restarts the daemon if its main loop wedges, so a stuck run does not look like a working one
+- Sends one alert when no backup has succeeded for a week, because every other notification only fires when something actually happens
 - Ships backups to a remote server over rsync and SSH, with a WireGuard client for off-LAN transfers
 - Optionally verifies the sync server's SSH host key against a fingerprint you pin
-- Configures everything from a web UI, with a health endpoint for external monitoring
-- Encrypts WireGuard and remote sync credentials at rest with AES-256-GCM
+- Configures everything from a web UI, with a log and journal viewer and a health endpoint for external monitoring
+- Encrypts WireGuard, remote sync, and webhook auth credentials at rest with AES-256-GCM
 
 ## Documentation
 

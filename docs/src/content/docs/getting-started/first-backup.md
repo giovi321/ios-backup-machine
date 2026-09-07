@@ -7,7 +7,9 @@ After installation, open the web UI at `http://<device-ip>:8080` and complete th
 
 ## First-start wizard
 
-On the very first boot (when owner info has not been configured), the web UI automatically shows a guided setup wizard. It walks through nine steps:
+On the very first boot (when owner info has not been configured), the web UI automatically shows a guided setup wizard. It also re-engages if `config.yaml` ever has to be discarded, since the saved setup state goes with it.
+
+The wizard opens with an unnumbered step: plug the iPhone in over USB, click Pair Device, and tap Trust on the phone. Do that before finishing setup, because two later steps (encryption and the device filter) need a readable phone. Then it walks through nine steps:
 
 1. Owner information, displayed on the e-ink screen when idle
 2. WiFi (optional), to connect to a wireless network for NTP sync, notifications, and remote access

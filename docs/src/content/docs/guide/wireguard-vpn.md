@@ -32,7 +32,7 @@ wireguard:
 
 ### Handshake verification
 
-The reconciler verifies that the tunnel actually handshakes, not just that the `wg0` interface exists. If the interface comes up but no handshake completes within a grace window, it tears the tunnel down and reconnects. Two common causes of a missing handshake:
+The reconciler verifies that the tunnel actually handshakes, not just that the `wg0` interface exists. It re-checks every 10 seconds and tolerates an interface that is up without a handshake for 45 seconds; past that it tears the tunnel down and reconnects. Two common causes of a missing handshake:
 
 - The endpoint is unreachable
 - The clock is not yet NTP-synced, so the peer rejects the handshake

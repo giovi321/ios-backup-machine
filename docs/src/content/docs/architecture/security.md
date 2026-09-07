@@ -3,13 +3,21 @@ title: "Security"
 description: What the appliance encrypts, how the web UI authenticates, and the trust boundary it is designed for.
 ---
 
-The appliance is built for a trusted network and keeps three things encrypted: the iOS backup payload, the WireGuard config, and the remote sync credentials. It is not hardened for direct exposure to the public internet, so run it on your LAN or reach it over the VPN.
+The appliance is built for a trusted network and keeps the iOS backup payload and every stored credential encrypted. It is not hardened for direct exposure to the public internet, so run it on your LAN or reach it over the VPN.
 
 ## What is encrypted
 
 Backup payload. The backup itself is encrypted by iOS with a password you set on the iPhone. That password is sent to the phone during setup and is never stored on the appliance, so write it down. Without it a restore is not possible.
 
-Credentials. WireGuard and remote sync credentials are encrypted with AES-256-GCM, using a key derived through PBKDF2 (100,000 iterations). The encrypted files are `wireguard.enc` and `sync.enc` in the install directory.
+Credentials. WireGuard, remote sync, and webhook auth credentials are encrypted with AES-256-GCM, using a key derived through PBKDF2-HMAC-SHA256 (100,000 iterations). All three share one credential store, so all three answer to the same passphrase mode. The encrypted files in the install directory are:
+
+| File | Holds |
+|------|-------|
+| `wireguard.enc` | The uploaded WireGuard config |
+| `sync.enc` | The sync host, port, user, SSH key or password, remote path, and the pinned host key fingerprint |
+| `notify.enc` | The webhook auth header name and its value |
+
+The resolved webhook auth header is additionally cached in RAM at `/run/iosbackupmachine/webhook_auth.json`, owner-only, because most of the events that need it fire after the iPhone has been unplugged. `/run` is a systemd tmpfs: cleared at every boot and never written to the SD card, so a powered-off device still gives nothing away without the phone. Only the derived header is cached, never the passphrase, since the passphrase also unlocks the other two files. See [Web UI](../../guide/web-ui/#webhook-auth-and-the-iphone).
 
 ## Passphrase modes
 
@@ -48,4 +56,12 @@ The **Fetch from server** button reads the offered fingerprints over the network
 
 ## Config integrity
 
-`config.yaml` holds settings, the hashed web UI password, and the auto-generated Flask `secret_key`. It is written atomically and migrated automatically: on update, a single versioned migration fills in new defaults without overwriting your values. The `config_version` field is managed for you and should not be edited by hand.
+`config.yaml` holds settings, the hashed web UI password, and the auto-generated Flask `secret_key`. It is written atomically (temp file, `fsync`, rename, then an `fsync` of the directory so the rename itself survives a power loss) and migrated automatically: on update, a single versioned migration fills in new defaults without overwriting your values. The `config_version` field is managed for you and should not be edited by hand. The current schema version is 4.
+
+Reading it fails safe. Corrupt YAML, a truncated file that parses to a scalar, or a valid document that is not a settings mapping all yield the built-in defaults instead of an exception, and the unreadable original is preserved next to it as `config.yaml.bad-<timestamp>`. The web UI then shows a banner naming the specific problems.
+
+That fallback has a consequence worth stating plainly: when the file is discarded, the saved web UI password hash goes with it, so the appliance is briefly unauthenticated. The first-start wizard re-engages in that state, which is the recovery path, but if the device is reachable from anywhere you do not fully trust, treat a config-reset banner as something to act on rather than dismiss.
+
+A single mistyped key is handled without discarding anything: the value is replaced by its default, a warning is recorded, and the rest of the file is kept.
+
+Config upload through the web UI is capped at 256 KB, and an imported file is migrated and default-filled before it is saved. See [Web UI](../../guide/web-ui/#config-export-and-import).

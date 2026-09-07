@@ -36,8 +36,8 @@ The repository is cloned to `/root/ios-backup-machine/` and the application is i
 - Creates a Python virtual environment and installs dependencies
 - Clones and links the Waveshare e-Paper driver
 - Copies application files to `/root/iosbackupmachine/`
-- Migrates config, merging new defaults without overwriting existing settings
-- Installs systemd services and udev rules
+- Migrates config, merging new defaults without overwriting existing settings, and reports which keys it added
+- Installs the systemd units and udev rules, enables the six units the appliance needs, and starts any enabled timer instead of leaving it armed for the next boot
 - Prepares the backup storage directory
 - Downloads and configures the PiSugar UPS
 - Runs a post-install health check
@@ -111,8 +111,10 @@ deactivate
 cd /root
 git clone https://github.com/waveshareteam/e-Paper.git
 git clone https://github.com/giovi321/ios-backup-machine.git
-cp ios-backup-machine/epdconfig.py e-Paper/RaspberryPi_JetsonNano/python/lib/waveshare_epd/
+cp ios-backup-machine/app/epdconfig.py e-Paper/RaspberryPi_JetsonNano/python/lib/waveshare_epd/
 ```
+
+The application files live under `app/`, the systemd units under `services/`, and the udev rules and the PiSugar config under `config/`. The installer flattens `app/` into `/root/iosbackupmachine/`, which is why the modules import each other by bare name.
 
 Link the driver into the venv (adjust the Python version if needed):
 
@@ -123,16 +125,19 @@ ln -s /root/e-Paper/RaspberryPi_JetsonNano/python/lib/waveshare_epd   /root/iosb
 #### Install systemd and udev integrations
 
 ```bash
-cp ios-backup-machine/*.rules /etc/udev/rules.d/
-cp ios-backup-machine/*.service /etc/systemd/system/
+cp ios-backup-machine/config/*.rules /etc/udev/rules.d/
+cp ios-backup-machine/services/*.service ios-backup-machine/services/*.timer /etc/systemd/system/
 systemctl daemon-reload
-systemctl enable iosbackupmachine.service
-systemctl enable webui.service
-systemctl enable ntp-sync.service
+systemctl enable iosbackupmachine.service webui.service ntp-sync.service \
+  rtc-sync.service wg-autoconnect.service
+systemctl enable --now ntp-sync.timer
 udevadm control --reload-rules
+udevadm trigger
 ```
 
-`iosbackupmachine.service` is the always-on display daemon.
+`iosbackupmachine.service` is the always-on display daemon. Those five units plus the timer are exactly what the installer enables. The rest of `services/` (`backup-sync.service`, `unplug-notify.service`, `usbmux-refresh.service`) are one-shots started on demand by udev or the PiSugar button, so they are installed but deliberately not enabled. A sync started from the web UI runs in its own transient `iosbackup-web-sync` unit rather than through `backup-sync.service`.
+
+`ntp-sync.timer` needs `--now`. Enabling a timer only arms it for the next boot, and the whole point of this one is to retry a clock sync that failed while the network was still coming up.
 
 #### Prepare backup storage
 
@@ -149,8 +154,10 @@ Install from the official script and add the project config file:
 wget https://cdn.pisugar.com/release/pisugar-power-manager.sh
 bash pisugar-power-manager.sh -c release
 rm /etc/pisugar-server/config.json
-cp /root/ios-backup-machine/[pisugar]config.json /etc/pisugar-server/config.json
+cp "/root/ios-backup-machine/config/[pisugar]config.json" /etc/pisugar-server/config.json
 ```
+
+Quote that path. Unquoted, `[pisugar]` is a shell character class and the copy silently matches nothing. The file sets the three button gestures, the 30% `auto_shutdown_level`, and the soft power-off shell that lets the display daemon paint the owner screen before the board goes down.
 
 Set the RTC time from the current time of the Radxa Zero:
 

@@ -46,11 +46,14 @@ Untick the checkbox to go back to accept-new.
 
 ## Network restrictions
 
-You can limit when a sync is allowed to run:
+You can limit when a sync is allowed to run, with `sync.allowed_network`:
 
-- WiFi only
-- A specific SSID
-- iPhone USB tethering
+- `any`: no restriction, and the default
+- `wifi`: only while a WiFi address is up
+- `wifi_ssid`: only on the SSID named in `sync.allowed_ssid`. Picking Specific WiFi SSID in the web UI reveals the field that writes it, and leaving the field empty falls back to "any WiFi"
+- `usb`: only while the iPhone USB tether is up
+
+A refused sync reports `network_not_allowed` and names the restriction it hit. The check fails open if `netutil` cannot be imported.
 
 ## Connection errors
 
