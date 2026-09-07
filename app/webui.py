@@ -32,7 +32,7 @@ import config_schema
 import power
 import logutil
 
-VERSION = "4.10.2"
+VERSION = "4.10.3"
 
 CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/iosbackupmachine/config.yaml")
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webui_static")
@@ -2601,6 +2601,10 @@ def _pending_confirm():
 # 40 x 0.25s. Bounded by iterations rather than wall clock, so a test that stubs
 # time.sleep finishes instantly instead of spinning for ten seconds.
 _QUIESCE_POLLS = 40
+# Named so a test can tell this loop's sleeps apart from any other thread's:
+# patching time.sleep patches it for the whole process, background probers
+# included.
+_QUIESCE_POLL_SEC = 0.25
 
 
 def _note_sync_cancelled():
@@ -2646,7 +2650,7 @@ def _quiesce_for_destructive(busy):
         for _ in range(_QUIESCE_POLLS):
             if not os.path.exists(stop_file):
                 return True
-            time.sleep(0.25)
+            time.sleep(_QUIESCE_POLL_SEC)
         # Budget spent with the sentinel still there: the daemon is dead or
         # wedged, so nothing wrote the reason. Proceed, but say so.
         app.logger.warning("Backup did not stop within the quiesce budget; "

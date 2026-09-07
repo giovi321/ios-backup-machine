@@ -405,7 +405,12 @@ def test_the_quiesce_wait_is_bounded(monkeypatch):
         fired = []
         _collect_popen(monkeypatch, fired)
         _client().post("/api/reboot", data={"confirm": "1"})
-        assert slept and len(slept) <= webui._QUIESCE_POLLS
+        # Only this loop's sleeps. monkeypatch on webui.time.sleep reaches the
+        # whole process, so the connectivity prober's 20 s tick lands here too
+        # once some earlier test has started it - which is platform-dependent,
+        # and is why this assertion passed on Windows and failed in CI.
+        polls = [s for s in slept if s == webui._QUIESCE_POLL_SEC]
+        assert polls and len(polls) <= webui._QUIESCE_POLLS
         assert fired == [["shutdown", "-r", "+0"]]
     finally:
         if os.path.exists(stop_file):

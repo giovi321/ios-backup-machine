@@ -4,6 +4,19 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses a
 single version constant in `app/webui.py`.
 
+## [4.10.3] - 2026-09-07
+
+### Fixed
+
+- A flaky test broke CI. `test_the_quiesce_wait_is_bounded` counted every value
+  passed to `time.sleep` while the reboot route ran, but monkeypatching
+  `webui.time.sleep` replaces it for the whole process, so the background
+  connectivity monitor's 20 s tick was counted as a quiesce poll whenever an
+  earlier test had started that thread. It passed on Windows, where the tests
+  that start it are skipped, and failed on Linux. The assertion now counts only
+  sleeps of `_QUIESCE_POLL_SEC`, which is a named constant for exactly that
+  reason. No production behaviour changed.
+
 ## [4.10.2] - 2026-09-07
 
 ### Fixed
