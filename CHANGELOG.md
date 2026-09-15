@@ -4,6 +4,41 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses a
 single version constant in `app/webui.py`.
 
+## [4.11.1] - 2026-09-15
+
+### Fixed
+
+- The web UI was unreachable for the first two minutes of every boot.
+  `webui.service` ordered itself after `network-online.target`, which took 127 s
+  to activate on the appliance, and the unit started the same second the target
+  did, on its first attempt, with nothing wrong. That ordering was load-bearing
+  while the bind address was resolved once at startup: starting before the
+  network was up meant binding the wrong address permanently. The bind
+  supervisor added in 4.11.0 re-resolves on a timer, so the wait now buys
+  nothing and the dependency is gone.
+- A finished or failed install left the e-ink claiming an update was still
+  running. `install.sh` never cleared the sentinel the web UI drops before
+  launching the updater, and only a reboot removes it from the runtime dir, so
+  an install that ended without one left the panel lying until the display
+  daemon's 30 minute safety valve expired. The installer's existing exit handler
+  now clears it on every path out, and deliberately not when a reboot is coming,
+  because the panel is meant to hold that frame across the reboot.
+- An install that failed its health checks still recorded its reboot epoch.
+  `.installed_version` was already withheld in that case, to mark the install
+  unfinished, but `.reboot_epoch` was written unconditionally a few lines later.
+  The next update compared against it, concluded no reboot was owed, and never
+  asked again for the one the failed install still needed. Both files are now
+  written under the same guard.
+
+### Added
+
+- Structural tests over `install.sh` and the shipped systemd units
+  (`test_install_contract.py`, `test_service_units.py`). They assert invariants
+  rather than run the scripts, which need root and a package manager: that the
+  epoch write sits inside the health guard, that there is exactly one `EXIT`
+  trap, since a second silently replaces the first and its cleanup never runs,
+  and that the web UI does not reinstate the network-online ordering.
+
 ## [4.11.0] - 2026-09-15
 
 ### Fixed

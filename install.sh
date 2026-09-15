@@ -30,6 +30,11 @@ ARMBIAN_ENV="/boot/armbianEnv.txt"
 # zram-backed /var/log/iosbackupmachine (RUNTIME_DIR), created by the services.
 LOG_DIR="/var/lib/iosbackupmachine"
 RUNTIME_DIR="/var/log/iosbackupmachine"
+
+# Dropped by the web UI before it launches the updater; while it exists the e-ink
+# shows "Updating / Device will reboot". Cleared by cleanup() on the way out.
+UPDATING_FILE="${RUNTIME_DIR}/updating"
+REBOOTING=0
 LOCK_FILE="/tmp/iosbackupmachine-install.lock"
 VERSION_FILE="${INSTALL_DIR}/.installed_version"
 BACKUP_ARCHIVE_DIR="/root/iosbackupmachine-backups"
@@ -192,6 +197,12 @@ trap on_error ERR
 
 cleanup() {
     rm -f "${LOCK_FILE}"
+    # The panel is meant to hold the "Updating" frame right through a reboot, so
+    # leave the sentinel alone when one is coming; the reboot clears RUNTIME_DIR
+    # anyway. Every other way out of this script, a clean finish and a `set -e`
+    # abort partway through alike, has to clear it, or the e-ink goes on claiming
+    # an update is running until the daemon's 30-minute safety valve expires.
+    [ "${REBOOTING}" = "1" ] || rm -f "${UPDATING_FILE}"
 }
 trap cleanup EXIT
 
@@ -784,6 +795,10 @@ if [ "${HEALTH_OK}" = true ]; then
     # Mark the install complete only when every health check passed; otherwise
     # the next run sees the old version (or none) and treats this as unfinished.
     echo "${REPO_VERSION}" > "${VERSION_FILE}"
+    # Same rule for the reboot epoch. Recording it for an install that did not
+    # finish tells the next update that no reboot is owed, so the reboot this
+    # run still needs would never be asked for again.
+    echo "${REPO_REBOOT_EPOCH}" > "${INSTALL_DIR}/.reboot_epoch" 2>/dev/null || true
 else
     warn "Some health checks failed - review the output above"
     error "INSTALL INCOMPLETE: version file NOT written."
@@ -818,11 +833,9 @@ echo -e "  ${GREEN}✓${NC} Previous version backed up to ${BACKUP_PATH}"
 fi
 echo ""
 
-# Record the reboot epoch we just installed, so the next update can compare.
-echo "${REPO_REBOOT_EPOCH}" > "${INSTALL_DIR}/.reboot_epoch" 2>/dev/null || true
-
 if [ "${AUTO_REBOOT}" = "1" ]; then
     echo -e "  ${YELLOW}Rebooting to finish applying the update...${NC}"
+    REBOOTING=1
     reboot
 elif [ "${NEED_REBOOT}" = true ]; then
     echo -e "  ${YELLOW}⚠ A reboot is required to apply this update.${NC}"
@@ -833,6 +846,7 @@ elif [ "${NEED_REBOOT}" = true ]; then
         read -rp "  Reboot now? [y/N] " answer
         if [[ "${answer}" =~ ^[Yy]$ ]]; then
             echo "  Rebooting..."
+            REBOOTING=1
             reboot
         else
             echo -e "  ${YELLOW}Remember to reboot to finish applying the update.${NC}"

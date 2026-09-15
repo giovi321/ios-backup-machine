@@ -1,7 +1,10 @@
 [Unit]
 Description=iOS Backup Machine Web UI
-Wants=network-online.target
-After=network.target network-online.target
+# Deliberately not ordered after network-online.target: it took 127 s to
+# activate on the appliance, and the UI was unreachable for that whole
+# window every boot. BindSupervisor re-resolves the bind addresses on a
+# timer, so starting before any interface is up costs nothing.
+After=network.target
 
 [Service]
 Type=simple
