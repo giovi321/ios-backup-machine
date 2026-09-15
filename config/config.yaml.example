@@ -102,7 +102,10 @@ ntp:
 webui:
   enabled: true
   port: 8080
-  # Which interfaces the web UI listens on: wifi, usb_iphone, all
+  # Which interfaces the web UI listens on: wifi, usb_iphone, wireguard, all.
+  # Several may be selected and the UI listens on each one that currently has
+  # an address, re-checked every 20s so an interface that comes up later is
+  # served without a restart. "all" is the wildcard and overrides the rest.
   bind_interfaces:
     - "all"
   secret_key: "change-me-to-a-random-string"

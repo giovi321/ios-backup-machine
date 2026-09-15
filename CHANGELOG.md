@@ -4,6 +4,34 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses a
 single version constant in `app/webui.py`.
 
+## [4.11.0] - 2026-09-15
+
+### Fixed
+
+- `webui.bind_interfaces` is a multi-select in the settings UI, but the code
+  bound the first selected interface that happened to have an IP and ignored
+  every other one. A device set to `usb_iphone` + `wireguard` served the web UI
+  on the iPhone hotspot address alone and the WireGuard entry never took
+  effect. The UI now listens on every selected interface that has an address.
+- The bind address was resolved once at startup and never again. An interface
+  that came up later was never served, and one that went away left the UI
+  listening on an address that no longer existed. Neither is visible from
+  outside: the process stays healthy and systemd sees no failure, so the only
+  symptom is a browser that times out while SSH into the same device still
+  works. A supervisor now re-resolves the selection every 20 s and binds and
+  unbinds as addresses appear and disappear. A listener that survives a pass is
+  left alone, so open connections are not dropped every interval.
+- A selection that resolved to no address at all silently fell back to
+  `0.0.0.0`, which discarded the restriction the operator had configured. It
+  now binds nothing, logs one warning naming the selection, and starts serving
+  the moment an address appears. A listener that cannot bind, a stale address
+  still in the interface list, no longer aborts the addresses that can.
+
+### Changed
+
+- Every bind and unbind is logged, so `journalctl -u webui` names each address
+  the UI is actually listening on instead of the single host it started with.
+
 ## [4.10.3] - 2026-09-07
 
 ### Fixed

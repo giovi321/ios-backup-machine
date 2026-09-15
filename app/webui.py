@@ -32,7 +32,7 @@ import config_schema
 import power
 import logutil
 
-VERSION = "4.10.3"
+VERSION = "4.11.0"
 
 CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/iosbackupmachine/config.yaml")
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webui_static")
@@ -2715,6 +2715,117 @@ def create_app():
     app.secret_key = _ensure_secret_key()
     return app
 
+
+def _make_server(address, port):
+    """One threaded werkzeug server bound to a single address."""
+    from werkzeug.serving import make_server
+    return make_server(address, port, app, threaded=True)
+
+
+class BindSupervisor:
+    """One HTTP listener per resolved bind address, reconciled on a timer.
+
+    ``webui.bind_interfaces`` is a multi-select, so the selection resolves to a
+    set of addresses rather than one, and this device's set changes while it
+    runs: the iPhone hotspot appears when a sync starts over it, WireGuard comes
+    up after, WiFi drops and returns. ``app.run()`` takes a single host resolved
+    once at startup, which fails both ways - it serves only the first interface
+    that happened to have an IP, and it keeps that address after the interface
+    is gone. Neither failure is visible to systemd: the process is healthy, it
+    is just answering on an address nobody can reach.
+
+    So the listeners are managed instead of assumed. Each pass re-resolves the
+    selection and moves only the difference: an address that appeared gets a
+    listener, one that vanished gets shut down, one that persisted is left
+    alone so its open connections survive. A listener that cannot bind (a stale
+    address still in the interface list) is logged and retried next pass rather
+    than aborting the ones that can.
+    """
+
+    def __init__(self, app, port, bind_interfaces, interval=20.0,
+                 resolver=None, server_factory=None):
+        self.app = app
+        self.port = port
+        self.bind_interfaces = list(bind_interfaces or [])
+        self.interval = interval
+        self._resolve = resolver or (
+            lambda: netutil.resolve_bind_addresses(self.bind_interfaces))
+        self._make_server = server_factory or _make_server
+        self._servers = {}          # address -> (server, thread)
+        self._stop = threading.Event()
+        self._reported_dark = False
+
+    def bound_addresses(self):
+        return list(self._servers)
+
+    def reconcile(self):
+        """Move the live listener set to whatever the selection resolves to now."""
+        try:
+            wanted = list(self._resolve())
+        except Exception:
+            # A probe failure must not tear down working listeners: keep what is
+            # bound and try again next pass.
+            self.app.logger.exception("could not resolve bind addresses; keeping current listeners")
+            return
+        for address in [a for a in self._servers if a not in wanted]:
+            self._unbind(address)
+        for address in wanted:
+            if address not in self._servers:
+                self._bind(address)
+        self._report_coverage()
+
+    def _bind(self, address):
+        try:
+            server = self._make_server(address, self.port)
+        except Exception as exc:
+            self.app.logger.warning("cannot bind %s:%s (%s); retrying in %ss",
+                                    address, self.port, exc, int(self.interval))
+            return
+        thread = threading.Thread(target=server.serve_forever, daemon=True,
+                                  name=f"webui-{address}")
+        thread.start()
+        self._servers[address] = (server, thread)
+        self.app.logger.info("Listening on %s:%s", address, self.port)
+
+    def _unbind(self, address):
+        server, thread = self._servers.pop(address)
+        try:
+            server.shutdown()
+        except Exception as exc:
+            self.app.logger.warning("error stopping listener on %s:%s: %s",
+                                    address, self.port, exc)
+        thread.join(timeout=5)
+        self.app.logger.info("Stopped listening on %s:%s", address, self.port)
+
+    def _report_coverage(self):
+        """Log the transitions into and out of "listening nowhere".
+
+        Logged on the edge rather than every pass: a device that is dark for an
+        hour should leave one findable line in the journal, not 180 identical
+        ones. Nothing else reports this state - the process is running and
+        systemd is satisfied - so without it the only symptom is a browser that
+        times out.
+        """
+        if not self._servers and not self._reported_dark:
+            self.app.logger.warning(
+                "no selected interface has an address (bind_interfaces=%s); "
+                "not listening anywhere, retrying every %ss",
+                ",".join(self.bind_interfaces) or "all", int(self.interval))
+            self._reported_dark = True
+        elif self._servers and self._reported_dark:
+            self._reported_dark = False
+
+    def shutdown_all(self):
+        self._stop.set()
+        for address in list(self._servers):
+            self._unbind(address)
+
+    def run_forever(self):
+        while not self._stop.is_set():
+            self.reconcile()
+            self._stop.wait(self.interval)
+
+
 def main():
     # Auto-generate secret key if placeholder
     app.secret_key = _ensure_secret_key()
@@ -2722,10 +2833,16 @@ def main():
     cfg = load_config()
     webui_cfg = cfg.get("webui", {})
     port = webui_cfg.get("port", 8080)
-    bind = netutil.get_bind_address(webui_cfg.get("bind_interfaces", ["all"]))
+    bind_interfaces = webui_cfg.get("bind_interfaces", ["all"])
 
-    app.logger.info(f"Starting on {bind}:{port}")
-    app.run(host=bind, port=port, debug=False)
+    app.logger.info("Starting on %s:%s", ",".join(bind_interfaces) or "all", port)
+    supervisor = BindSupervisor(app, port, bind_interfaces)
+    try:
+        supervisor.run_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        supervisor.shutdown_all()
 
 if __name__ == "__main__":
     main()

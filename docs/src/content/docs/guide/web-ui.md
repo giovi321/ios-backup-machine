@@ -7,7 +7,7 @@ The web UI is where you configure the appliance and watch it work. Open it at `h
 
 ## Access
 
-Access the web interface at `http://<device-ip>:8080`. The port is configurable in `config.yaml` under `webui.port`, and `webui.bind_interfaces` selects which network interfaces the UI listens on (options: `all`, `wifi`, `usb_iphone`).
+Access the web interface at `http://<device-ip>:8080`. The port is configurable in `config.yaml` under `webui.port`, and `webui.bind_interfaces` selects which network interfaces the UI listens on (options: `all`, `wifi`, `usb_iphone`, `wireguard`). Select several and the UI listens on each one that has an address. The selection is re-checked every 20 seconds, so an interface that comes up later, a WireGuard tunnel or the iPhone hotspot, starts being served without a restart, and one that goes away stops being served. If none of the selected interfaces has an address the UI listens on nothing and records that in the journal, rather than falling back to every interface.
 
 ## First-start wizard
 
@@ -62,7 +62,7 @@ Settings:
 - Notifications: webhook URLs and MQTT broker settings (separate test buttons for webhook, MQTT, and both)
 - Remote Sync: enable, configure SSH credentials (encrypted), test connection, trigger sync, set network restrictions, and the overall time limit
 - WireGuard: upload and encrypt VPN config, start or stop the interface, auto-connect triggers, and a full-tunnel toggle
-- Web UI: select which network interfaces the web UI listens on
+- Web UI: select which network interfaces the web UI listens on, one or several
 - Password: protect the web UI with a password (set, change, or remove)
 
 Tools:

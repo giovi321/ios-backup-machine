@@ -129,32 +129,53 @@ def get_interface_ip(iface_name):
     ips = ifaces.get(iface_name, [])
     return ips[0] if ips else None
 
-def get_bind_address(bind_interfaces):
-    """
-    Given a list of bind_interfaces from config (e.g. ['wifi', 'usb_iphone', 'all']),
-    return the address to bind to.
-    'all' -> '0.0.0.0'
-    Otherwise try to find the first matching interface IP.
+def resolve_bind_addresses(bind_interfaces):
+    """Every address the ``webui.bind_interfaces`` selection resolves to, right now.
+
+    The setting is a multi-select in the settings UI, so it means "listen on all
+    of these", not "listen on whichever of these answers first". Returns a
+    de-duplicated list in config order; the caller binds one listener per entry.
+
+    ``all`` (or an empty selection) is the wildcard and absorbs the rest: a
+    wildcard and a specific address on the same port collide, so the two can
+    never be served together.
+
+    A selected interface that currently has no IP is skipped. It is deliberately
+    NOT a reason to fall back to the wildcard: the operator restricted where the
+    UI answers, and widening that silently is the one outcome they did not ask
+    for. The address set is re-resolved periodically by the web UI's bind
+    supervisor, so an interface that comes up later is picked up without a
+    restart.
     """
     if not bind_interfaces or "all" in bind_interfaces:
-        return "0.0.0.0"
+        return ["0.0.0.0"]
 
+    addresses = []
     for bi in bind_interfaces:
         if bi == "wifi":
             ip = get_wifi_ip()
-            if ip:
-                return ip
         elif bi == "usb_iphone":
             ip = get_usb_iphone_ip()
-            if ip:
-                return ip
         elif bi == "wireguard":
             ip = get_wireguard_ip()
-            if ip:
-                return ip
+        else:
+            log.warning("unknown bind_interfaces entry %r, ignored", bi)
+            continue
+        if ip and ip not in addresses:
+            addresses.append(ip)
+    return addresses
 
-    # Fallback: bind to all
-    return "0.0.0.0"
+
+def get_bind_address(bind_interfaces):
+    """First address the selection resolves to, or the wildcard if none does.
+
+    Kept for callers that can only hold one address. Anything that can serve
+    several should use :func:`resolve_bind_addresses` instead - collapsing the
+    selection to one address is what made a selected-but-down interface strand
+    the web UI on whichever other interface happened to be up.
+    """
+    addresses = resolve_bind_addresses(bind_interfaces)
+    return addresses[0] if addresses else "0.0.0.0"
 
 def have_connectivity(timeout=4):
     """Check if we can reach the internet via any interface."""

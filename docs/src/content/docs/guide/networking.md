@@ -41,6 +41,8 @@ The legacy single `ssid` and `password` fields are the older single-network form
 
 The WiFi route is given a higher metric than the iPhone USB tether's route. As a result, the iPhone hotspot is used when the phone is plugged in, and WiFi takes over automatically when the phone is unplugged. The WiFi connection is no longer dropped as the iPhone connects or disconnects.
 
+This handover changes which addresses the device answers on, which matters if you have restricted `webui.bind_interfaces` to specific interfaces rather than `all`. The web UI re-checks the selection every 20 seconds and binds and unbinds as addresses appear and disappear, so a handover mid-sync does not strand it. See [Web UI](../web-ui/#access).
+
 ## Scan and connect
 
 The WiFi settings page has a Scan & connect button. It forces a rescan and connects to any saved network in range. Use it when the device is not associated to a network you expect to be reachable.
