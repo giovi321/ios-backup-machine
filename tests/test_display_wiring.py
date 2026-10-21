@@ -255,10 +255,28 @@ class RecordingPanel:
         self.slept = True
 
 
+BOOT_ID = "1b4e28ba-2fa1-11d2-883f-0016d3cca427"
+
+
 @pytest.fixture
-def updating_flag():
-    open(ibm.UPDATING_FILE, "w").close()
-    yield
+def this_boot(monkeypatch):
+    """Pin the boot id and uptime, which come from /proc on the device. Returns
+    a setter so a test can move uptime on."""
+    clock = {"up": 5000.0}
+    monkeypatch.setattr(ibm, "_boot_id", lambda: BOOT_ID)
+    monkeypatch.setattr(ibm, "_uptime", lambda: clock["up"])
+    return clock
+
+
+def _write_sentinel(text):
+    with open(ibm.UPDATING_FILE, "w") as f:
+        f.write(text)
+
+
+@pytest.fixture
+def updating_flag(this_boot):
+    _write_sentinel(f"{BOOT_ID} {this_boot['up'] - 60:.0f}\n")
+    yield this_boot
     try:
         os.remove(ibm.UPDATING_FILE)
     except OSError:
@@ -315,19 +333,47 @@ def test_draw_routes_the_updating_screen_to_its_renderer():
 def test_a_stale_updating_sentinel_expires_so_the_panel_is_not_stranded(updating_flag):
     # An update that dies without rebooting leaves the file behind; the volatile
     # runtime dir only clears it on the reboot that never came.
-    old = ibm.time.time() - ibm.UPDATING_MAX_SEC - 60
-    os.utime(ibm.UPDATING_FILE, (old, old))
+    updating_flag["up"] += ibm.UPDATING_MAX_SEC
     assert ibm._updating_requested() is False
 
 
-def test_a_sentinel_from_before_this_boot_no_longer_counts(updating_flag, monkeypatch):
+def test_a_sentinel_from_an_earlier_boot_no_longer_counts(this_boot):
     # armbian-ramlog restores zram /var/log across a reboot, so the file can
-    # outlive the reboot that ends the update. Boot time is what retires it.
-    monkeypatch.setattr(ibm, "_boot_time", lambda: ibm.time.time() + 1)
+    # outlive the reboot that ends the update. The boot id is what retires it.
+    _write_sentinel(f"0f0f0f0f-0000-0000-0000-000000000000 {this_boot['up'] - 60:.0f}\n")
     assert ibm._updating_requested() is False
 
 
-def test_a_sentinel_written_after_boot_still_counts(updating_flag, monkeypatch):
+def test_a_sentinel_from_this_boot_survives_the_installer_restarting_the_daemon(
+        updating_flag):
     # The installer restarts this daemon mid-update; the screen has to survive it.
+    updating_flag["up"] += 120
+    assert ibm._updating_requested() is True
+
+
+def test_a_restored_sentinel_does_not_count_while_the_clock_runs_behind(
+        this_boot, monkeypatch):
+    # The reported bug. The daemon starts before rtc-sync and NTP, so the wall
+    # clock can sit behind the mtime of a sentinel restored from an earlier boot.
+    # The old mtime test then read it as an update in progress and painted
+    # "Updating" over a session that had nothing to do with an update.
+    _write_sentinel("0f0f0f0f-0000-0000-0000-000000000000 900\n")
+    future = ibm.time.time() + 86400
+    os.utime(ibm.UPDATING_FILE, (future, future))
     monkeypatch.setattr(ibm, "_boot_time", lambda: ibm.time.time() - 3600)
+    assert ibm._updating_requested() is False
+
+
+def test_an_unstamped_sentinel_does_not_count(this_boot):
+    # Only a pre-stamp web UI writes one, so it is a leftover, not an update.
+    _write_sentinel("1767225600")
+    assert ibm._updating_requested() is False
+
+
+def test_the_web_ui_stamp_is_what_the_daemon_reads(this_boot, monkeypatch, tmp_path):
+    # The two sides share a file format and nothing else; pin them together.
+    webui = pytest.importorskip("webui")
+    monkeypatch.setattr(webui, "_boot_stamp",
+                        lambda: f"{BOOT_ID} {this_boot['up']:.0f}\n")
+    assert webui._mark_updating(ibm.UPDATING_FILE) is True
     assert ibm._updating_requested() is True

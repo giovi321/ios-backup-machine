@@ -1291,27 +1291,56 @@ def _boot_time():
     except Exception:
         return 0.0
 
+def _boot_id():
+    """This boot's kernel boot id, or None if unreadable."""
+    try:
+        with open("/proc/sys/kernel/random/boot_id") as f:
+            return f.read().strip() or None
+    except Exception:
+        return None
+
+def _uptime():
+    """Seconds since boot from /proc/uptime, or None if unreadable. Unlike the
+    wall clock, rtc-sync and NTP never step it."""
+    try:
+        with open("/proc/uptime") as f:
+            return float(f.read().split()[0])
+    except Exception:
+        return None
+
 def _updating_requested():
     """True while a system update is running (web UI drops UPDATING_FILE).
 
     Two ways the sentinel stops counting:
 
-    - It predates this boot. The update ends in a reboot, and RUNTIME_DIR is
-      meant to go with it — but armbian-ramlog syncs zram /var/log back to disk
-      and restores it, so the file can outlive the reboot it was supposed to
-      die in. Comparing against boot time is what actually retires it, while
-      still keeping the screen up across the daemon restart the installer does
-      mid-update (same boot).
+    - It belongs to an earlier boot. The update ends in a reboot, and
+      RUNTIME_DIR is meant to go with it — but armbian-ramlog syncs zram
+      /var/log back to disk and restores it, so the file can outlive the reboot
+      it was supposed to die in. The web UI writes the boot id and uptime into
+      it, and a different boot id retires it, while the same boot id keeps the
+      screen up across the daemon restart the installer does mid-update.
     - It is older than UPDATING_MAX_SEC. Backstop for an update that dies
       without ever rebooting, so the panel isn't stranded on "Updating".
+
+    Both are measured without the wall clock. This daemon starts before rtc-sync
+    and NTP have set it, and the old mtime test read a sentinel restored from an
+    earlier boot as current whenever the clock ran behind: "Updating" came back
+    long after the update had ended, with no update anywhere near it.
+
+    A sentinel without the stamp does not count. Only a web UI from before the
+    stamp existed writes one, so it is either the update that installs this
+    code (which loses the e-ink notice once) or a stale file restored from disk.
     """
     try:
-        mtime = os.stat(UPDATING_FILE).st_mtime
+        with open(UPDATING_FILE) as f:
+            fields = f.read().split()
+        marked_id, marked_up = fields[0], float(fields[1])
     except Exception:
         return False
-    if mtime < _boot_time():
+    now_up = _uptime()
+    if now_up is None or marked_id != _boot_id():
         return False
-    return (time.time() - mtime) < UPDATING_MAX_SEC
+    return 0 <= now_up - marked_up < UPDATING_MAX_SEC
 
 _idevice_id_warned = False
 

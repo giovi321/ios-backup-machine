@@ -92,10 +92,25 @@ def test_without_systemd_run_it_falls_back_to_a_bare_bash():
 
 # --- the e-ink sentinel ------------------------------------------------------
 
+@pytest.fixture(autouse=True)
+def boot_stamp(monkeypatch):
+    # The real stamp reads /proc, which a dev machine may not have.
+    monkeypatch.setattr(webui, "_boot_stamp", lambda: "boot-id 1234\n")
+
+
 def test_marking_an_update_creates_the_sentinel_the_daemon_watches(tmp_path):
     marker = tmp_path / "rt" / "updating"
     assert webui._mark_updating(str(marker)) is True
-    assert marker.exists()
+    assert marker.read_text() == "boot-id 1234\n"
+
+
+def test_without_a_boot_stamp_no_sentinel_is_written(tmp_path, monkeypatch):
+    # The daemon ignores an unstamped sentinel, so writing one would only leave
+    # a file behind. The update itself still goes ahead (the caller ignores this).
+    monkeypatch.setattr(webui, "_boot_stamp", lambda: None)
+    marker = tmp_path / "updating"
+    assert webui._mark_updating(str(marker)) is False
+    assert not marker.exists()
 
 
 def test_clearing_the_sentinel_removes_it(tmp_path):

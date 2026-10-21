@@ -4,6 +4,23 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses a
 single version constant in `app/webui.py`.
 
+## [4.11.2] - 2026-10-21
+
+### Fixed
+
+- The e-ink showed "Updating" with no update running, seen after a failed
+  sync. The display daemon decided whether the update sentinel was current by
+  comparing its mtime with the wall clock, and the daemon starts before
+  `rtc-sync` and NTP have set that clock. armbian-ramlog restores zram
+  `/var/log` from disk at boot, so a sentinel from an earlier update can come
+  back; with the clock running behind, its mtime looked newer than the boot and
+  the age came out negative, which passed the 30 minute check. The web UI now writes the kernel boot id and
+  the uptime into the sentinel, and the daemon counts it only for the same boot
+  id and less than 30 minutes of uptime later. Neither moves when the clock is
+  stepped. An unstamped sentinel no longer counts, so the update that installs
+  this version shows the normal screens for the rest of its run instead of
+  "Updating".
+
 ## [4.11.1] - 2026-09-15
 
 ### Fixed

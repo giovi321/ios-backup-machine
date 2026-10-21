@@ -32,7 +32,7 @@ import config_schema
 import power
 import logutil
 
-VERSION = "4.11.1"
+VERSION = "4.11.2"
 
 CONFIG_PATH = os.getenv("IOSBACKUP_CONFIG", "/root/iosbackupmachine/config.yaml")
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webui_static")
@@ -1906,14 +1906,32 @@ UPDATE_ENV = {
 }
 
 
+def _boot_stamp():
+    """'<boot id> <uptime>' for the sentinel. The daemon compares both instead
+    of the file's mtime, because the wall clock is not trustworthy this early
+    in a boot (rtc-sync and NTP set it after the daemon starts). None if
+    either is unreadable."""
+    try:
+        with open("/proc/sys/kernel/random/boot_id") as f:
+            boot_id = f.read().strip()
+        with open("/proc/uptime") as f:
+            uptime = float(f.read().split()[0])
+    except Exception:
+        return None
+    return f"{boot_id} {uptime:.0f}\n" if boot_id else None
+
+
 def _mark_updating(marker=None):
     """Drop the sentinel the display daemon watches. Best-effort: a missing
     e-ink notice must not stop the update."""
     path = marker or UPDATING_FILE
+    stamp = _boot_stamp()
+    if stamp is None:
+        return False
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w") as f:
-            f.write(str(int(time.time())))
+            f.write(stamp)
         return True
     except Exception:
         return False
