@@ -4,7 +4,15 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses a
 single version constant in `app/webui.py`.
 
-## [4.11.2] - 2026-10-21
+## [4.12.0] - 2026-10-21
+
+4.11.2 was never published; its fix ships here.
+
+### Changed
+
+- The docs site moves to Astro 7.4.0, with the other docs dependency bumps
+  merged since 4.11.1.
+- `LICENSE` names the copyright holder and year.
 
 ### Fixed
 
